@@ -1,0 +1,6 @@
+fastapi==0.115.4
+uvicorn[standard]==0.30.6
+azure-servicebus==7.13.1
+opentelemetry-sdk==1.26.0
+opentelemetry-instrumentation-fastapi==0.47b0
+opentelemetry-exporter-azure-monitor==1.0.0b17
