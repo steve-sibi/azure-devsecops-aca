@@ -44,7 +44,7 @@ jobs:
             --sku Standard_LRS --kind StorageV2
           az storage container create \
             --account-name "${{ env.TFSTATE_SA }}" \
-            -n "${{ env.TFSTATE_CONTAINER }}" --auth-mode login >/dev/null
+            --container-name "${{ env.TFSTATE_CONTAINER }}" --auth-mode login >/dev/null
 
       - name: Grant Blob Data role to CI principal + verify
         run: |
@@ -84,13 +84,28 @@ jobs:
           SA="${{ env.TFSTATE_SA }}"
           CN="${{ env.TFSTATE_CONTAINER }}"
           KEY="${{ env.TFSTATE_KEY }}"
+
           # If blob doesn't exist yet, there's nothing to unlock
-          if az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null 2>&1; then
-            LEASE_STATE=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.state" -o tsv)
-            LEASE_STATUS=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.status" -o tsv)
+          if az storage blob show \
+               --account-name "$SA" \
+               --container-name "$CN" \
+               --name "$KEY" \
+               --auth-mode login >/dev/null 2>&1; then
+
+            LEASE_STATE=$(az storage blob show \
+               --account-name "$SA" --container-name "$CN" --name "$KEY" \
+               --auth-mode login --query "properties.lease.state" -o tsv || echo "")
+            LEASE_STATUS=$(az storage blob show \
+               --account-name "$SA" --container-name "$CN" --name "$KEY" \
+               --auth-mode login --query "properties.lease.status" -o tsv || echo "")
+
             if [ "$LEASE_STATE" = "leased" ] || [ "$LEASE_STATUS" = "locked" ]; then
               echo "Breaking stale lease on $CN/$KEY ..."
-              az storage blob lease break --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null
+              az storage blob lease break \
+                --account-name "$SA" \
+                --container-name "$CN" \
+                --blob-name "$KEY" \
+                --auth-mode login >/dev/null
               sleep 5
             else
               echo "No lease present on $CN/$KEY."
@@ -121,7 +136,7 @@ jobs:
       - name: Terraform Apply (infra only)
         working-directory: infra
         run: |
-          terraform apply -auto-approve -input=false -no-color \
+          terraform apply -auto-approve -input=false -no-color -lock-timeout=2m \
             -var="prefix=${{ env.PREFIX }}" \
             -var="location=${{ env.REGION }}" \
             -var="resource_group_name=${{ env.RG }}" \
@@ -203,12 +218,24 @@ jobs:
           SA="${{ env.TFSTATE_SA }}"
           CN="${{ env.TFSTATE_CONTAINER }}"
           KEY="${{ env.TFSTATE_KEY }}"
-          if az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null 2>&1; then
-            LEASE_STATE=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.state" -o tsv)
-            LEASE_STATUS=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.status" -o tsv)
+          if az storage blob show \
+               --account-name "$SA" \
+               --container-name "$CN" \
+               --name "$KEY" \
+               --auth-mode login >/dev/null 2>&1; then
+            LEASE_STATE=$(az storage blob show \
+               --account-name "$SA" --container-name "$CN" --name "$KEY" \
+               --auth-mode login --query "properties.lease.state" -o tsv || echo "")
+            LEASE_STATUS=$(az storage blob show \
+               --account-name "$SA" --container-name "$CN" --name "$KEY" \
+               --auth-mode login --query "properties.lease.status" -o tsv || echo "")
             if [ "$LEASE_STATE" = "leased" ] || [ "$LEASE_STATUS" = "locked" ]; then
               echo "Breaking stale lease on $CN/$KEY ..."
-              az storage blob lease break --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null
+              az storage blob lease break \
+                --account-name "$SA" \
+                --container-name "$CN" \
+                --blob-name "$KEY" \
+                --auth-mode login >/dev/null
               sleep 5
             fi
           fi
@@ -230,7 +257,7 @@ jobs:
       - name: Terraform Apply (create apps)
         working-directory: infra
         run: |
-          terraform apply -auto-approve -input=false -no-color \
+          terraform apply -auto-approve -input=false -no-color -lock-timeout=2m \
             -var="prefix=${{ env.PREFIX }}" \
             -var="location=${{ env.REGION }}" \
             -var="resource_group_name=${{ env.RG }}" \
