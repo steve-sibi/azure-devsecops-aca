@@ -34,3 +34,9 @@ variable "queue_name" {
     error_message = "queue_name can include letters, numbers, ., _, -, up to 260 chars."
   }
 }
+
+variable "resource_group_name" {
+  type        = string
+  default     = "rg-devsecops-aca"
+  description = "Name of an existing resource group to deploy into."
+}

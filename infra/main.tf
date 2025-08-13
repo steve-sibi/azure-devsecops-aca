@@ -26,24 +26,23 @@ locals {
   worker_name = "${var.prefix}-worker"
 }
 
-resource "azurerm_resource_group" "rg" {
-  name     = local.rg_name
-  location = var.location
+data "azurerm_resource_group" "rg" {
+  name = var.resource_group_name
 }
 
 # Log Analytics + App Insights
 resource "azurerm_log_analytics_workspace" "la" {
   name                = local.la_name
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = data.azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
   sku                 = "PerGB2018"
   retention_in_days   = 30
 }
 
 resource "azurerm_application_insights" "appi" {
   name                = local.ai_name
-  location            = var.location
-  resource_group_name = azurerm_resource_group.rg.name
+  resource_group_name = data.azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
   application_type    = "web"
   workspace_id        = azurerm_log_analytics_workspace.la.id
 }
@@ -51,8 +50,8 @@ resource "azurerm_application_insights" "appi" {
 # ACR
 resource "azurerm_container_registry" "acr" {
   name                = local.acr_name
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
+  resource_group_name = data.azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
   sku                 = "Basic"
   admin_enabled       = false
 }
@@ -73,8 +72,8 @@ resource "azurerm_key_vault" "kv" {
 # Service Bus (Standard) + queue + SAS (for simplicity)
 resource "azurerm_servicebus_namespace" "sb" {
   name                = local.sb_ns_name
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = var.location
+  resource_group_name = data.azurerm_resource_group.rg.name
+  location            = data.azurerm_resource_group.rg.location
   sku                 = "Standard"
   # zone_redundant = true  # <-- Only valid with Premium. Remove for Standard.
   minimum_tls_version = "1.2"
