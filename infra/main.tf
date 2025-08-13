@@ -10,11 +10,12 @@ terraform {
 
 provider "azurerm" {
   features {}
+  # We register providers once manually; CI should not attempt it.
   skip_provider_registration = true
 }
 
 locals {
-  rg_name     = "${var.prefix}-rg"
+  rg_name     = "${var.prefix}-rg" # kept for naming only
   acr_name    = "${var.prefix}acr"
   kv_name     = "${var.prefix}-kv"
   sb_ns_name  = "${var.prefix}-sbns"
@@ -25,11 +26,12 @@ locals {
   worker_name = "${var.prefix}-worker"
 }
 
+# Use EXISTING Resource Group
 data "azurerm_resource_group" "rg" {
   name = var.resource_group_name
 }
 
-# EXISTING foundational resources (read-only via data sources)
+# EXISTING foundation (read-only)
 data "azurerm_log_analytics_workspace" "la" {
   name                = local.la_name
   resource_group_name = data.azurerm_resource_group.rg.name
@@ -52,8 +54,7 @@ data "azurerm_servicebus_namespace" "sb" {
 
 data "azurerm_client_config" "current" {}
 
-# NEW (or imported) resources
-
+# NEW (or imported) pieces
 resource "azurerm_application_insights" "appi" {
   name                = local.ai_name
   location            = data.azurerm_resource_group.rg.location
@@ -76,7 +77,7 @@ resource "azurerm_servicebus_namespace_authorization_rule" "sas" {
   manage       = false
 }
 
-# Allow the CI identity (current principal) to set/get secrets (access policy works regardless of KV RBAC mode)
+# CI principal needs secret perms (works when KV uses access policies)
 resource "azurerm_key_vault_access_policy" "kv_ci" {
   key_vault_id       = data.azurerm_key_vault.kv.id
   tenant_id          = data.azurerm_client_config.current.tenant_id
@@ -84,6 +85,7 @@ resource "azurerm_key_vault_access_policy" "kv_ci" {
   secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
+# Store SB connection string in Key Vault
 resource "azurerm_key_vault_secret" "sb_conn" {
   name            = "ServiceBusConnection"
   value           = azurerm_servicebus_namespace_authorization_rule.sas.primary_connection_string
@@ -93,6 +95,7 @@ resource "azurerm_key_vault_secret" "sb_conn" {
   depends_on      = [azurerm_key_vault_access_policy.kv_ci]
 }
 
+# Container Apps Environment (new)
 resource "azurerm_container_app_environment" "env" {
   name                       = local.env_name
   location                   = data.azurerm_resource_group.rg.location
@@ -100,7 +103,7 @@ resource "azurerm_container_app_environment" "env" {
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
 }
 
-# API app (only when create_apps = true)
+# API app (created when create_apps = true)
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.api_name
@@ -157,7 +160,7 @@ resource "azurerm_container_app" "api" {
   }
 }
 
-# Give API MI read on secrets (if created)
+# Give API MI Key Vault read (if app created)
 resource "azurerm_key_vault_access_policy" "kv_api" {
   count              = var.create_apps ? 1 : 0
   key_vault_id       = data.azurerm_key_vault.kv.id
@@ -167,7 +170,7 @@ resource "azurerm_key_vault_access_policy" "kv_api" {
   depends_on         = [azurerm_container_app.api]
 }
 
-# Worker app (only when create_apps = true)
+# Worker app (created when create_apps = true)
 resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.worker_name
@@ -215,9 +218,10 @@ resource "azurerm_container_app" "worker" {
     min_replicas = 0
     max_replicas = 5
 
+    # KEDA: Azure Service Bus queue scaler
     custom_scale_rule {
       name             = "sb-scaler"
-      custom_rule_type = "azure-servicebus"
+      custom_rule_type = "azure-servicebus" # per docs, even for queues
       metadata = {
         queueName    = azurerm_servicebus_queue.q.name
         messageCount = "20"
@@ -230,7 +234,7 @@ resource "azurerm_container_app" "worker" {
   }
 }
 
-# ACR pull permissions (needs UA Admin/Owner)
+# ACR pull (needs User Access Administrator/Owner on RG)
 resource "azurerm_role_assignment" "acr_pull_api" {
   count                = var.create_apps ? 1 : 0
   scope                = data.azurerm_container_registry.acr.id

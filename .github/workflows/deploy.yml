@@ -8,7 +8,7 @@ env:
   REGION: eastus
   PREFIX: devsecopsaca
   RG: rg-devsecops-aca
-  TFSTATE_SA: stdevsecopsacatfstate   # must be globally-unique, 3-24 lowercase
+  TFSTATE_SA: stdevsecopsacatfstate    # must be globally unique, 3-24 lowercase
   TFSTATE_CONTAINER: tfstate
   TFSTATE_KEY: devsecopsaca.tfstate
   QUEUE_NAME: tasks
@@ -39,6 +39,21 @@ jobs:
           az storage container create \
             --account-name "${{ env.TFSTATE_SA }}" \
             -n "${{ env.TFSTATE_CONTAINER }}" --auth-mode login
+
+      - name: Grant Blob Data role to CI principal (idempotent)
+        run: |
+          set -e
+          SUB_ID=$(az account show --query id -o tsv)
+          APP_ID="${{ secrets.AZURE_CLIENT_ID }}"
+          SP_OBJ_ID=$(az ad sp show --id "$APP_ID" --query id -o tsv)
+          SCOPE="/subscriptions/$SUB_ID/resourceGroups/${{ env.RG }}/providers/Microsoft.Storage/storageAccounts/${{ env.TFSTATE_SA }}"
+          az role assignment create \
+            --assignee-object-id "$SP_OBJ_ID" \
+            --assignee-principal-type ServicePrincipal \
+            --role "Storage Blob Data Contributor" \
+            --scope "$SCOPE" >/dev/null 2>&1 || true
+          # RBAC propagation can take a moment
+          sleep 20
 
       - name: Terraform Init (remote backend)
         working-directory: infra
@@ -159,14 +174,13 @@ jobs:
             -backend-config="key=${{ env.TFSTATE_KEY }}" \
             -backend-config="use_azuread_auth=true"
 
-      - name: Terraform Import existing (safe if absent)
+      - name: Terraform Import env (safe if absent)
         working-directory: infra
         run: |
           set -e
           SUB=$(az account show --query id -o tsv)
           RG="${{ env.RG }}"
           PREFIX="${{ env.PREFIX }}"
-          QUEUE="${{ env.QUEUE_NAME }}"
           ACA_ENV_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/managedEnvironments/${PREFIX}-acaenv"
           exists () { az resource show --ids "$1" >/dev/null 2>&1; }
           instate () { terraform state show "$1" >/dev/null 2>&1; }
