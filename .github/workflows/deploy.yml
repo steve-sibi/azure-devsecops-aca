@@ -34,7 +34,8 @@ jobs:
 
       - name: Terraform Apply (infra only)
         working-directory: infra
-        run: terraform apply -auto-approve \
+        run: |
+            terraform apply -auto-approve -input=false -no-color \
              -var="prefix=${{ env.PREFIX }}" \
              -var="location=${{ env.REGION }}" \
              -var="create_apps=false"
