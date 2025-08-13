@@ -122,16 +122,59 @@ jobs:
           RG="${{ env.RG }}"
           PREFIX="${{ env.PREFIX }}"
           QUEUE="${{ env.QUEUE_NAME }}"
+
           APPINSIGHTS_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Insights/components/${PREFIX}-appi"
           SB_QUEUE_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns/queues/${QUEUE}"
           SB_SAS_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns/authorizationRules/app-shared"
           ACA_ENV_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/managedEnvironments/${PREFIX}-acaenv"
+
           exists () { az resource show --ids "$1" >/dev/null 2>&1; }
           instate () { terraform state show "$1" >/dev/null 2>&1; }
-          if exists "$APPINSIGHTS_ID" && ! instate azurerm_application_insights.appi; then terraform import azurerm_application_insights.appi "$APPINSIGHTS_ID" || true; fi
-          if exists "$SB_QUEUE_ID" && ! instate azurerm_servicebus_queue.q; then terraform import azurerm_servicebus_queue.q "$SB_QUEUE_ID" || true; fi
-          if exists "$SB_SAS_ID" && ! instate azurerm_servicebus_namespace_authorization_rule.sas; then terraform import azurerm_servicebus_namespace_authorization_rule.sas "$SB_SAS_ID" || true; fi
-          if exists "$ACA_ENV_ID" && ! instate azurerm_container_app_environment.env; then terraform import azurerm_container_app_environment.env "$ACA_ENV_ID" || true; fi
+
+          # App Insights
+          if exists "$APPINSIGHTS_ID" && ! instate azurerm_application_insights.appi; then
+            terraform import azurerm_application_insights.appi "$APPINSIGHTS_ID" || true
+          fi
+
+          # Service Bus queue
+          if exists "$SB_QUEUE_ID" && ! instate azurerm_servicebus_queue.q; then
+            terraform import azurerm_servicebus_queue.q "$SB_QUEUE_ID" || true
+          fi
+
+          # Service Bus namespace SAS rule
+          if exists "$SB_SAS_ID" && ! instate azurerm_servicebus_namespace_authorization_rule.sas; then
+            terraform import azurerm_servicebus_namespace_authorization_rule.sas "$SB_SAS_ID" || true
+          fi
+
+          # Container Apps Environment
+          if exists "$ACA_ENV_ID" && ! instate azurerm_container_app_environment.env; then
+            terraform import azurerm_container_app_environment.env "$ACA_ENV_ID" || true
+          fi
+
+          # --- NEW: Key Vault access policy for CI principal ---
+          KV_NAME="${PREFIX}-kv"
+          KV_ID=$(az keyvault show -n "$KV_NAME" -g "$RG" --query id -o tsv)
+          SP_OBJ_ID=$(az ad sp show --id "${{ secrets.AZURE_CLIENT_ID }}" --query id -o tsv)
+          KV_AP_ID="${KV_ID}/objectId/${SP_OBJ_ID}"
+
+          # Import if it exists and not already in state (or just try/ignore)
+          if ! instate azurerm_key_vault_access_policy.kv_ci; then
+            # Try to detect presence; if detection fails, import anyway and ignore failure
+            HAS_AP=$(az keyvault show -n "$KV_NAME" -g "$RG" \
+              --query "properties.accessPolicies[?objectId=='${SP_OBJ_ID}'] | length(@)" -o tsv || echo 0)
+            if [ "${HAS_AP:-0}" -gt 0 ]; then
+              terraform import azurerm_key_vault_access_policy.kv_ci "$KV_AP_ID" || true
+            else
+              terraform import azurerm_key_vault_access_policy.kv_ci "$KV_AP_ID" || true
+            fi
+          fi
+
+          # --- Optional: import SB secret if it already exists ---
+          SECRET_ID=$(az keyvault secret show --vault-name "$KV_NAME" \
+            --name ServiceBusConnection --query id -o tsv 2>/dev/null || true)
+          if [ -n "$SECRET_ID" ] && ! instate azurerm_key_vault_secret.sb_conn; then
+            terraform import azurerm_key_vault_secret.sb_conn "$SECRET_ID" || true
+          fi
 
       - name: Terraform Apply (infra only)
         working-directory: infra
