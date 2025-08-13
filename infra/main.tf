@@ -10,6 +10,7 @@ terraform {
 
 provider "azurerm" {
   features {}
+  # provider registrations are already handled out-of-band
   skip_provider_registration = true
 }
 
@@ -23,11 +24,15 @@ locals {
   env_name    = "${var.prefix}-acaenv"
   api_name    = "${var.prefix}-api"
   worker_name = "${var.prefix}-worker"
+  uami_name   = "${var.prefix}-uami" # <— new: user-assigned identity
 }
 
-data "azurerm_resource_group" "rg" { name = var.resource_group_name }
+# Existing RG
+data "azurerm_resource_group" "rg" {
+  name = var.resource_group_name
+}
 
-# Existing foundation
+# Existing foundation (read-only)
 data "azurerm_log_analytics_workspace" "la" {
   name                = local.la_name
   resource_group_name = data.azurerm_resource_group.rg.name
@@ -50,7 +55,14 @@ data "azurerm_servicebus_namespace" "sb" {
 
 data "azurerm_client_config" "current" {}
 
-# New (or imported) bits
+# --- New: user-assigned identity we can grant perms to BEFORE the apps exist ---
+resource "azurerm_user_assigned_identity" "uami" {
+  name                = local.uami_name
+  location            = data.azurerm_resource_group.rg.location
+  resource_group_name = data.azurerm_resource_group.rg.name
+}
+
+# App Insights (created or imported)
 resource "azurerm_application_insights" "appi" {
   name                = local.ai_name
   location            = data.azurerm_resource_group.rg.location
@@ -59,6 +71,7 @@ resource "azurerm_application_insights" "appi" {
   workspace_id        = data.azurerm_log_analytics_workspace.la.id
 }
 
+# Service Bus queue + SAS
 resource "azurerm_servicebus_queue" "q" {
   name                  = var.queue_name
   namespace_id          = data.azurerm_servicebus_namespace.sb.id
@@ -73,7 +86,7 @@ resource "azurerm_servicebus_namespace_authorization_rule" "sas" {
   manage       = false
 }
 
-# CI principal KV perms (policy is idempotent; no import needed)
+# CI principal needs secret perms on KV (so CI can create/update the KV secret)
 resource "azurerm_key_vault_access_policy" "kv_ci" {
   key_vault_id       = data.azurerm_key_vault.kv.id
   tenant_id          = data.azurerm_client_config.current.tenant_id
@@ -81,17 +94,25 @@ resource "azurerm_key_vault_access_policy" "kv_ci" {
   secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
-# Store SB connection string in KV
+# Store the SB connection string in KV (CI writes it)
 resource "azurerm_key_vault_secret" "sb_conn" {
   name            = "ServiceBusConnection"
   value           = azurerm_servicebus_namespace_authorization_rule.sas.primary_connection_string
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-connection"
-  expiration_date = timeadd(timestamp(), "8760h")
+  expiration_date = timeadd(timestamp(), "8760h") # ~1 year
   depends_on      = [azurerm_key_vault_access_policy.kv_ci]
 }
 
-# ACA Environment
+# Give the UAMI read on KV so apps can resolve the secret at creation time
+resource "azurerm_key_vault_access_policy" "kv_uami" {
+  key_vault_id       = data.azurerm_key_vault.kv.id
+  tenant_id          = data.azurerm_client_config.current.tenant_id
+  object_id          = azurerm_user_assigned_identity.uami.principal_id
+  secret_permissions = ["Get", "List"]
+}
+
+# Container Apps Environment
 resource "azurerm_container_app_environment" "env" {
   name                       = local.env_name
   location                   = data.azurerm_resource_group.rg.location
@@ -99,7 +120,7 @@ resource "azurerm_container_app_environment" "env" {
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
 }
 
-# API app
+# --- API app ---
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.api_name
@@ -107,7 +128,11 @@ resource "azurerm_container_app" "api" {
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
 
-  identity { type = "SystemAssigned" }
+  # Use the pre-created UAMI
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.uami.id]
+  }
 
   ingress {
     external_enabled = true
@@ -119,17 +144,19 @@ resource "azurerm_container_app" "api" {
     }
   }
 
+  # Pull images using the UAMI
   registry {
     server   = data.azurerm_container_registry.acr.login_server
-    identity = "System"
+    identity = azurerm_user_assigned_identity.uami.id
   }
 
-  # IMPORTANT: identity must be "System" (capital S) for KV-backed secrets
+  # Resolve KV secret using the UAMI
   secret {
     name                = "sb-conn"
     key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
-    identity            = "System"
+    identity            = azurerm_user_assigned_identity.uami.id
   }
+
   secret {
     name  = "appi-conn"
     value = azurerm_application_insights.appi.connection_string
@@ -156,9 +183,11 @@ resource "azurerm_container_app" "api" {
       }
     }
   }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_uami]
 }
 
-# Worker app
+# --- Worker app ---
 resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.worker_name
@@ -166,18 +195,22 @@ resource "azurerm_container_app" "worker" {
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
 
-  identity { type = "SystemAssigned" }
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.uami.id]
+  }
 
   registry {
     server   = data.azurerm_container_registry.acr.login_server
-    identity = "System"
+    identity = azurerm_user_assigned_identity.uami.id
   }
 
   secret {
     name                = "sb-conn"
     key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
-    identity            = "System"
+    identity            = azurerm_user_assigned_identity.uami.id
   }
+
   secret {
     name  = "appi-conn"
     value = azurerm_application_insights.appi.connection_string
@@ -220,19 +253,14 @@ resource "azurerm_container_app" "worker" {
       }
     }
   }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_uami]
 }
 
-# ACR pull
-resource "azurerm_role_assignment" "acr_pull_api" {
+# ACR: grant pull to the UAMI (covers both apps)
+resource "azurerm_role_assignment" "acr_pull_uami" {
   count                = var.create_apps ? 1 : 0
   scope                = data.azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
-  principal_id         = azurerm_container_app.api[0].identity[0].principal_id
-}
-
-resource "azurerm_role_assignment" "acr_pull_worker" {
-  count                = var.create_apps ? 1 : 0
-  scope                = data.azurerm_container_registry.acr.id
-  role_definition_name = "AcrPull"
-  principal_id         = azurerm_container_app.worker[0].identity[0].principal_id
+  principal_id         = azurerm_user_assigned_identity.uami.principal_id
 }
