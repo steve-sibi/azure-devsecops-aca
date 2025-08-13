@@ -4,6 +4,11 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# prevent overlapping writes to the same state from concurrent runs
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGION: eastus
   PREFIX: devsecopsaca
@@ -33,27 +38,35 @@ jobs:
 
       - name: Bootstrap TF state storage (idempotent)
         run: |
+          set -e
           az storage account create \
             -g "${{ env.RG }}" -n "${{ env.TFSTATE_SA }}" -l "${{ env.REGION }}" \
             --sku Standard_LRS --kind StorageV2
           az storage container create \
             --account-name "${{ env.TFSTATE_SA }}" \
-            -n "${{ env.TFSTATE_CONTAINER }}" --auth-mode login
+            -n "${{ env.TFSTATE_CONTAINER }}" --auth-mode login >/dev/null
 
-      - name: Grant Blob Data role to CI principal (idempotent)
+      - name: Grant Blob Data role to CI principal + verify
         run: |
           set -e
           SUB_ID=$(az account show --query id -o tsv)
           APP_ID="${{ secrets.AZURE_CLIENT_ID }}"
           SP_OBJ_ID=$(az ad sp show --id "$APP_ID" --query id -o tsv)
           SCOPE="/subscriptions/$SUB_ID/resourceGroups/${{ env.RG }}/providers/Microsoft.Storage/storageAccounts/${{ env.TFSTATE_SA }}"
-          az role assignment create \
-            --assignee-object-id "$SP_OBJ_ID" \
-            --assignee-principal-type ServicePrincipal \
-            --role "Storage Blob Data Contributor" \
-            --scope "$SCOPE" >/dev/null 2>&1 || true
-          # RBAC propagation can take a moment
-          sleep 20
+          # create assignment if missing
+          az role assignment list --assignee-object-id "$SP_OBJ_ID" --scope "$SCOPE" \
+            --role "Storage Blob Data Contributor" --query "[0].id" -o tsv | grep . || az role assignment create \
+              --assignee-object-id "$SP_OBJ_ID" \
+              --assignee-principal-type ServicePrincipal \
+              --role "Storage Blob Data Contributor" \
+              --scope "$SCOPE" >/dev/null
+          echo "Waiting for RBAC propagation..."; sleep 60
+          # probe read using AAD
+          az storage blob list \
+            --account-name "${{ env.TFSTATE_SA }}" \
+            --container-name "${{ env.TFSTATE_CONTAINER }}" \
+            --auth-mode login 1>/dev/null
+          echo "AAD data-plane access OK."
 
       - name: Terraform Init (remote backend)
         working-directory: infra
@@ -65,6 +78,27 @@ jobs:
             -backend-config="key=${{ env.TFSTATE_KEY }}" \
             -backend-config="use_azuread_auth=true"
 
+      - name: Break stale Terraform lock on backend (if any)
+        run: |
+          set -e
+          SA="${{ env.TFSTATE_SA }}"
+          CN="${{ env.TFSTATE_CONTAINER }}"
+          KEY="${{ env.TFSTATE_KEY }}"
+          # If blob doesn't exist yet, there's nothing to unlock
+          if az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null 2>&1; then
+            LEASE_STATE=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.state" -o tsv)
+            LEASE_STATUS=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.status" -o tsv)
+            if [ "$LEASE_STATE" = "leased" ] || [ "$LEASE_STATUS" = "locked" ]; then
+              echo "Breaking stale lease on $CN/$KEY ..."
+              az storage blob lease break --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null
+              sleep 5
+            else
+              echo "No lease present on $CN/$KEY."
+            fi
+          else
+            echo "State blob not found yet; nothing to unlock."
+          fi
+
       - name: Terraform Import existing (safe if absent)
         working-directory: infra
         run: |
@@ -73,27 +107,16 @@ jobs:
           RG="${{ env.RG }}"
           PREFIX="${{ env.PREFIX }}"
           QUEUE="${{ env.QUEUE_NAME }}"
-
           APPINSIGHTS_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Insights/components/${PREFIX}-appi"
           SB_QUEUE_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns/queues/${QUEUE}"
           SB_SAS_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns/authorizationRules/app-shared"
           ACA_ENV_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/managedEnvironments/${PREFIX}-acaenv"
-
           exists () { az resource show --ids "$1" >/dev/null 2>&1; }
           instate () { terraform state show "$1" >/dev/null 2>&1; }
-
-          if exists "$APPINSIGHTS_ID" && ! instate azurerm_application_insights.appi; then
-            terraform import azurerm_application_insights.appi "$APPINSIGHTS_ID" || true
-          fi
-          if exists "$SB_QUEUE_ID" && ! instate azurerm_servicebus_queue.q; then
-            terraform import azurerm_servicebus_queue.q "$SB_QUEUE_ID" || true
-          fi
-          if exists "$SB_SAS_ID" && ! instate azurerm_servicebus_namespace_authorization_rule.sas; then
-            terraform import azurerm_servicebus_namespace_authorization_rule.sas "$SB_SAS_ID" || true
-          fi
-          if exists "$ACA_ENV_ID" && ! instate azurerm_container_app_environment.env; then
-            terraform import azurerm_container_app_environment.env "$ACA_ENV_ID" || true
-          fi
+          if exists "$APPINSIGHTS_ID" && ! instate azurerm_application_insights.appi; then terraform import azurerm_application_insights.appi "$APPINSIGHTS_ID" || true; fi
+          if exists "$SB_QUEUE_ID" && ! instate azurerm_servicebus_queue.q; then terraform import azurerm_servicebus_queue.q "$SB_QUEUE_ID" || true; fi
+          if exists "$SB_SAS_ID" && ! instate azurerm_servicebus_namespace_authorization_rule.sas; then terraform import azurerm_servicebus_namespace_authorization_rule.sas "$SB_SAS_ID" || true; fi
+          if exists "$ACA_ENV_ID" && ! instate azurerm_container_app_environment.env; then terraform import azurerm_container_app_environment.env "$ACA_ENV_ID" || true; fi
 
       - name: Terraform Apply (infra only)
         working-directory: infra
@@ -173,6 +196,22 @@ jobs:
             -backend-config="container_name=${{ env.TFSTATE_CONTAINER }}" \
             -backend-config="key=${{ env.TFSTATE_KEY }}" \
             -backend-config="use_azuread_auth=true"
+
+      - name: Break stale Terraform lock on backend (if any)
+        run: |
+          set -e
+          SA="${{ env.TFSTATE_SA }}"
+          CN="${{ env.TFSTATE_CONTAINER }}"
+          KEY="${{ env.TFSTATE_KEY }}"
+          if az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null 2>&1; then
+            LEASE_STATE=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.state" -o tsv)
+            LEASE_STATUS=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.status" -o tsv)
+            if [ "$LEASE_STATE" = "leased" ] || [ "$LEASE_STATUS" = "locked" ]; then
+              echo "Breaking stale lease on $CN/$KEY ..."
+              az storage blob lease break --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null
+              sleep 5
+            fi
+          fi
 
       - name: Terraform Import env (safe if absent)
         working-directory: infra
