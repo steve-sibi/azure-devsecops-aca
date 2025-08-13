@@ -100,7 +100,7 @@ resource "azurerm_key_vault_secret" "sb_conn" {
 }
 
 # Container Apps Environment (Consumption)
-resource "azurerm_container_apps_environment" "env" {
+resource "azurerm_container_app_environment" "env" {
   name                       = local.env_name
   location                   = var.location
   resource_group_name        = azurerm_resource_group.rg.name
@@ -112,7 +112,7 @@ resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.api_name
   resource_group_name          = azurerm_resource_group.rg.name
-  container_app_environment_id = azurerm_container_apps_environment.env.id
+  container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
 
   identity {
@@ -176,7 +176,7 @@ resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.worker_name
   resource_group_name          = azurerm_resource_group.rg.name
-  container_app_environment_id = azurerm_container_apps_environment.env.id
+  container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
 
   identity {
