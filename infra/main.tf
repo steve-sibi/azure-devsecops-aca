@@ -11,7 +11,7 @@ terraform {
 provider "azurerm" {
   features {}
   # stop Terraform from attempting subscription-scoped registrations
-  resource_provider_registrations = "none"
+  skip_provider_registration = true
 }
 
 locals {
@@ -135,7 +135,7 @@ resource "azurerm_container_app" "api" {
 
   registry {
     server   = azurerm_container_registry.acr.login_server
-    identity = "system"
+    identity = "System"
   }
 
   secret {
