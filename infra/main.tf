@@ -103,7 +103,9 @@ resource "azurerm_container_app_environment" "env" {
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
 }
 
+# --------------------------
 # API app (created when create_apps = true)
+# --------------------------
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.api_name
@@ -128,11 +130,11 @@ resource "azurerm_container_app" "api" {
     identity = "System"
   }
 
-  # <-- Tell ACA which identity to use to read from Key Vault
+  # IMPORTANT: identity="system" to fetch secret from Key Vault
   secret {
     name                = "sb-conn"
-    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.versionless_id
-    identity            = "System"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
+    identity            = "system"
   }
   secret {
     name  = "appi-conn"
@@ -162,7 +164,7 @@ resource "azurerm_container_app" "api" {
   }
 }
 
-# Give API MI Key Vault read (if app created)
+# KV read access for API MI
 resource "azurerm_key_vault_access_policy" "kv_api" {
   count              = var.create_apps ? 1 : 0
   key_vault_id       = data.azurerm_key_vault.kv.id
@@ -172,7 +174,9 @@ resource "azurerm_key_vault_access_policy" "kv_api" {
   depends_on         = [azurerm_container_app.api]
 }
 
+# --------------------------
 # Worker app (created when create_apps = true)
+# --------------------------
 resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.worker_name
@@ -187,11 +191,11 @@ resource "azurerm_container_app" "worker" {
     identity = "System"
   }
 
-  # <-- Also specify identity for KV secret
+  # IMPORTANT: identity="system" to fetch secret from Key Vault
   secret {
     name                = "sb-conn"
-    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.versionless_id
-    identity            = "System"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
+    identity            = "system"
   }
   secret {
     name  = "appi-conn"
@@ -222,6 +226,7 @@ resource "azurerm_container_app" "worker" {
     min_replicas = 0
     max_replicas = 5
 
+    # KEDA: Azure Service Bus queue scaler
     custom_scale_rule {
       name             = "sb-scaler"
       custom_rule_type = "azure-servicebus"
@@ -237,7 +242,7 @@ resource "azurerm_container_app" "worker" {
   }
 }
 
-# Give WORKER MI Key Vault read as well
+# KV read access for WORKER MI
 resource "azurerm_key_vault_access_policy" "kv_worker" {
   count              = var.create_apps ? 1 : 0
   key_vault_id       = data.azurerm_key_vault.kv.id
