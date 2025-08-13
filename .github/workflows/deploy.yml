@@ -4,7 +4,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-# prevent overlapping writes to the same state from concurrent runs
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -13,7 +12,7 @@ env:
   REGION: eastus
   PREFIX: devsecopsaca
   RG: rg-devsecops-aca
-  TFSTATE_SA: stdevsecopsacatfstate    # must be globally unique, 3-24 lowercase
+  TFSTATE_SA: stdevsecopsacatfstate
   TFSTATE_CONTAINER: tfstate
   TFSTATE_KEY: devsecopsaca.tfstate
   QUEUE_NAME: tasks
@@ -21,9 +20,7 @@ env:
 jobs:
   infra-bootstrap:
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+    permissions: { id-token: write, contents: read }
     steps:
       - uses: actions/checkout@v4
 
@@ -65,7 +62,6 @@ jobs:
             --account-name "${{ env.TFSTATE_SA }}" \
             --container-name "${{ env.TFSTATE_CONTAINER }}" \
             --auth-mode login 1>/dev/null
-          echo "AAD data-plane access OK."
 
       - name: Terraform Init (remote backend)
         working-directory: infra
@@ -83,32 +79,16 @@ jobs:
           SA="${{ env.TFSTATE_SA }}"
           CN="${{ env.TFSTATE_CONTAINER }}"
           KEY="${{ env.TFSTATE_KEY }}"
-          if az storage blob show \
-               --account-name "$SA" \
-               --container-name "$CN" \
-               --name "$KEY" \
-               --auth-mode login >/dev/null 2>&1; then
-            LEASE_STATE=$(az storage blob show \
-               --account-name "$SA" --container-name "$CN" --name "$KEY" \
-               --auth-mode login --query "properties.lease.state" -o tsv || echo "")
-            LEASE_STATUS=$(az storage blob show \
-               --account-name "$SA" --container-name "$CN" --name "$KEY" \
-               --auth-mode login --query "properties.lease.status" -o tsv || echo "")
-            if [ "$LEASE_STATE" = "leased" ] || [ "$LEASE_STATUS" = "locked" ]; then
-              echo "Breaking stale lease on $CN/$KEY ..."
-              az storage blob lease break \
-                --account-name "$SA" \
-                --container-name "$CN" \
-                --blob-name "$KEY" \
-                --auth-mode login >/dev/null
+          if az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login >/dev/null 2>&1; then
+            ST=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.state" -o tsv || echo "")
+            SS=$(az storage blob show --account-name "$SA" -c "$CN" -n "$KEY" --auth-mode login --query "properties.lease.status" -o tsv || echo "")
+            if [ "$ST" = "leased" ] || [ "$SS" = "locked" ]; then
+              az storage blob lease break --account-name "$SA" -c "$CN" --blob-name "$KEY" --auth-mode login >/dev/null
               sleep 5
-            else
-              echo "No lease present on $CN/$KEY."
             fi
-          else
-            echo "State blob not found yet; nothing to unlock."
           fi
 
+      # --- SAFE IMPORTS (no KV policy here) ---
       - name: Terraform Import existing (safe if absent)
         working-directory: infra
         run: |
@@ -117,7 +97,6 @@ jobs:
           RG="${{ env.RG }}"
           PREFIX="${{ env.PREFIX }}"
           QUEUE="${{ env.QUEUE_NAME }}"
-
           APPINSIGHTS_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Insights/components/${PREFIX}-appi"
           SB_QUEUE_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns/queues/${QUEUE}"
           SB_SAS_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns/authorizationRules/app-shared"
@@ -127,23 +106,13 @@ jobs:
           instate () { terraform state show "$1" >/dev/null 2>&1; }
 
           if exists "$APPINSIGHTS_ID" && ! instate azurerm_application_insights.appi; then terraform import azurerm_application_insights.appi "$APPINSIGHTS_ID" || true; fi
-          if exists "$SB_QUEUE_ID" && ! instate azurerm_servicebus_queue.q; then terraform import azurerm_servicebus_queue.q "$SB_QUEUE_ID" || true; fi
-          if exists "$SB_SAS_ID" && ! instate azurerm_servicebus_namespace_authorization_rule.sas; then terraform import azurerm_servicebus_namespace_authorization_rule.sas "$SB_SAS_ID" || true; fi
-          if exists "$ACA_ENV_ID" && ! instate azurerm_container_app_environment.env; then terraform import azurerm_container_app_environment.env "$ACA_ENV_ID" || true; fi
+          if exists "$SB_QUEUE_ID"   && ! instate azurerm_servicebus_queue.q;           then terraform import azurerm_servicebus_queue.q "$SB_QUEUE_ID" || true; fi
+          if exists "$SB_SAS_ID"     && ! instate azurerm_servicebus_namespace_authorization_rule.sas; then terraform import azurerm_servicebus_namespace_authorization_rule.sas "$SB_SAS_ID" || true; fi
+          if exists "$ACA_ENV_ID"    && ! instate azurerm_container_app_environment.env; then terraform import azurerm_container_app_environment.env "$ACA_ENV_ID" || true; fi
 
-          # Import CI access policy if it already exists (safe if not)
-          KV_NAME="${PREFIX}-kv"
-          KV_ID=$(az keyvault show -n "$KV_NAME" -g "$RG" --query id -o tsv)
-          SP_OBJ_ID=$(az ad sp show --id "${{ secrets.AZURE_CLIENT_ID }}" --query id -o tsv)
-          KV_AP_ID="${KV_ID}/objectId/${SP_OBJ_ID}"
-          terraform import azurerm_key_vault_access_policy.kv_ci "$KV_AP_ID" || true
-
-          # Import SB secret if present (safe if absent)
-          SECRET_ID=$(az keyvault secret show --vault-name "$KV_NAME" \
-            --name ServiceBusConnection --query id -o tsv 2>/dev/null || true)
-          if [ -n "$SECRET_ID" ] && ! instate azurerm_key_vault_secret.sb_conn; then
-            terraform import azurerm_key_vault_secret.sb_conn "$SECRET_ID" || true
-          fi
+          # optional: import SB KV secret if it already exists
+          SECRET_ID=$(az keyvault secret show --vault-name "${PREFIX}-kv" --name ServiceBusConnection --query id -o tsv 2>/dev/null || true)
+          if [ -n "$SECRET_ID" ] && ! instate azurerm_key_vault_secret.sb_conn; then terraform import azurerm_key_vault_secret.sb_conn "$SECRET_ID" || true; fi
 
       - name: Terraform Apply (infra only)
         working-directory: infra
@@ -155,21 +124,12 @@ jobs:
             -var="queue_name=${{ env.QUEUE_NAME }}" \
             -var="create_apps=false"
 
-      - name: Get ACR login server
-        id: acr
-        run: |
-          ACR=$(az acr list -g "${{ env.RG }}" --query "[?contains(name, '${{ env.PREFIX }}acr')].loginServer | [0]" -o tsv)
-          echo "login_server=${ACR}" >> $GITHUB_OUTPUT
-
   build-and-push:
     needs: [infra-bootstrap]
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+    permissions: { id-token: write, contents: read }
     steps:
       - uses: actions/checkout@v4
-
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
@@ -183,18 +143,12 @@ jobs:
           ACR=$(az acr list -g "${{ env.RG }}" --query "[?contains(name, '${{ env.PREFIX }}acr')].loginServer | [0]" -o tsv)
           echo "login_server=${ACR}" >> $GITHUB_OUTPUT
 
-      - name: ACR login
-        run: az acr login --name $(echo "${{ steps.acr.outputs.login_server }}" | cut -d. -f1)
-
       - name: Debug tree (helps verify paths)
         run: |
-          echo "::group::tree"
-          ls -la
-          echo "--- app/api"
-          ls -la app/api || true
-          echo "--- app/worker"
-          ls -la app/worker || true
-          echo "::endgroup::"
+          echo "::group::tree"; ls -la; echo "--- app/api"; ls -la app/api || true; echo "--- app/worker"; ls -la app/worker || true; echo "::endgroup::"
+
+      - name: ACR login
+        run: az acr login --name $(echo "${{ steps.acr.outputs.login_server }}" | cut -d. -f1)
 
       - name: Build & push API
         working-directory: app/api
@@ -211,19 +165,15 @@ jobs:
   create-apps:
     needs: [build-and-push]
     runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
+    permissions: { id-token: write, contents: read }
     steps:
       - uses: actions/checkout@v4
-
       - name: Azure Login (OIDC)
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
       - uses: hashicorp/setup-terraform@v3
 
       - name: Terraform Init (remote backend)
@@ -236,35 +186,7 @@ jobs:
             -backend-config="key=${{ env.TFSTATE_KEY }}" \
             -backend-config="use_azuread_auth=true"
 
-      - name: Break stale Terraform lock on backend (if any)
-        run: |
-          set -e
-          SA="${{ env.TFSTATE_SA }}"
-          CN="${{ env.TFSTATE_CONTAINER }}"
-          KEY="${{ env.TFSTATE_KEY }}"
-          if az storage blob show \
-               --account-name "$SA" \
-               --container-name "$CN" \
-               --name "$KEY" \
-               --auth-mode login >/dev/null 2>&1; then
-            LEASE_STATE=$(az storage blob show \
-               --account-name "$SA" --container-name "$CN" --name "$KEY" \
-               --auth-mode login --query "properties.lease.state" -o tsv || echo "")
-            LEASE_STATUS=$(az storage blob show \
-               --account-name "$SA" --container-name "$CN" --name "$KEY" \
-               --auth-mode login --query "properties.lease.status" -o tsv || echo "")
-            if [ "$LEASE_STATE" = "leased" ] || [ "$LEASE_STATUS" = "locked" ]; then
-              echo "Breaking stale lease on $CN/$KEY ..."
-              az storage blob lease break \
-                --account-name "$SA" \
-                --container-name "$CN" \
-                --blob-name "$KEY" \
-                --auth-mode login >/dev/null
-              sleep 5
-            fi
-          fi
-
-      - name: Terraform Import env (safe if absent)
+      - name: Import env + apps (safe if absent)
         working-directory: infra
         run: |
           set -e
@@ -272,10 +194,22 @@ jobs:
           RG="${{ env.RG }}"
           PREFIX="${{ env.PREFIX }}"
           ACA_ENV_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/managedEnvironments/${PREFIX}-acaenv"
+          API_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/containerApps/${PREFIX}-api"
+          WORKER_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/containerApps/${PREFIX}-worker"
+
           exists () { az resource show --ids "$1" >/dev/null 2>&1; }
           instate () { terraform state show "$1" >/dev/null 2>&1; }
+
           if exists "$ACA_ENV_ID" && ! instate azurerm_container_app_environment.env; then
             terraform import azurerm_container_app_environment.env "$ACA_ENV_ID" || true
+          fi
+
+          # >>> FIX: import addresses include [0] because these resources use count
+          if exists "$API_ID" && ! instate 'azurerm_container_app.api[0]'; then
+            terraform import 'azurerm_container_app.api[0]' "$API_ID" || true
+          fi
+          if exists "$WORKER_ID" && ! instate 'azurerm_container_app.worker[0]'; then
+            terraform import 'azurerm_container_app.worker[0]' "$WORKER_ID" || true
           fi
 
       - name: Terraform Apply (create apps)
@@ -288,20 +222,6 @@ jobs:
             -var="queue_name=${{ env.QUEUE_NAME }}" \
             -var="create_apps=true" \
             -var="image_tag=${{ github.sha }}"
-
-      # NEW: quick nudge if first revision failed due to ACR RBAC lag
-      - name: Nudge failed revisions if ACR RBAC lagged
-        run: |
-          set -e
-          for APP in "${{ env.PREFIX }}-api" "${{ env.PREFIX }}-worker"; do
-            sleep 60
-            # If app has no FQDN yet, try a restart to retrigger image pull
-            HAS_FQDN=$(az containerapp show -g "${{ env.RG }}" -n "$APP" --query "properties.latestRevisionFqdn" -o tsv 2>/dev/null || true)
-            if [ -z "$HAS_FQDN" ]; then
-              echo "Restarting $APP to retrigger revision after RBAC propagation..."
-              az containerapp restart -g "${{ env.RG }}" -n "$APP" || true
-            fi
-          done
 
       - name: Output API URL
         working-directory: infra

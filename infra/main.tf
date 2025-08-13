@@ -10,12 +10,11 @@ terraform {
 
 provider "azurerm" {
   features {}
-  # We register providers once manually; CI should not attempt it.
   skip_provider_registration = true
 }
 
 locals {
-  rg_name     = "${var.prefix}-rg" # kept for naming only
+  rg_name     = "${var.prefix}-rg"
   acr_name    = "${var.prefix}acr"
   kv_name     = "${var.prefix}-kv"
   sb_ns_name  = "${var.prefix}-sbns"
@@ -26,12 +25,9 @@ locals {
   worker_name = "${var.prefix}-worker"
 }
 
-# Use EXISTING Resource Group
-data "azurerm_resource_group" "rg" {
-  name = var.resource_group_name
-}
+data "azurerm_resource_group" "rg" { name = var.resource_group_name }
 
-# EXISTING foundation (read-only)
+# Existing foundation
 data "azurerm_log_analytics_workspace" "la" {
   name                = local.la_name
   resource_group_name = data.azurerm_resource_group.rg.name
@@ -54,7 +50,7 @@ data "azurerm_servicebus_namespace" "sb" {
 
 data "azurerm_client_config" "current" {}
 
-# NEW (or imported) pieces
+# New (or imported) bits
 resource "azurerm_application_insights" "appi" {
   name                = local.ai_name
   location            = data.azurerm_resource_group.rg.location
@@ -77,7 +73,7 @@ resource "azurerm_servicebus_namespace_authorization_rule" "sas" {
   manage       = false
 }
 
-# CI principal needs secret perms (works when KV uses access policies)
+# CI principal KV perms (policy is idempotent; no import needed)
 resource "azurerm_key_vault_access_policy" "kv_ci" {
   key_vault_id       = data.azurerm_key_vault.kv.id
   tenant_id          = data.azurerm_client_config.current.tenant_id
@@ -85,17 +81,17 @@ resource "azurerm_key_vault_access_policy" "kv_ci" {
   secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
-# Store SB connection string in Key Vault
+# Store SB connection string in KV
 resource "azurerm_key_vault_secret" "sb_conn" {
   name            = "ServiceBusConnection"
   value           = azurerm_servicebus_namespace_authorization_rule.sas.primary_connection_string
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-connection"
-  expiration_date = timeadd(timestamp(), "8760h") # ~1 year
+  expiration_date = timeadd(timestamp(), "8760h")
   depends_on      = [azurerm_key_vault_access_policy.kv_ci]
 }
 
-# Container Apps Environment (new)
+# ACA Environment
 resource "azurerm_container_app_environment" "env" {
   name                       = local.env_name
   location                   = data.azurerm_resource_group.rg.location
@@ -103,7 +99,7 @@ resource "azurerm_container_app_environment" "env" {
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
 }
 
-# API app (created when create_apps = true)
+# API app
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.api_name
@@ -128,13 +124,12 @@ resource "azurerm_container_app" "api" {
     identity = "System"
   }
 
-  # ----------- FIX: add identity = "System" -----------
+  # IMPORTANT: identity must be "System" (capital S) for KV-backed secrets
   secret {
     name                = "sb-conn"
     key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
     identity            = "System"
   }
-  # This one is a literal value, so no identity needed
   secret {
     name  = "appi-conn"
     value = azurerm_application_insights.appi.connection_string
@@ -163,17 +158,7 @@ resource "azurerm_container_app" "api" {
   }
 }
 
-# Give API MI Key Vault read (if app created)
-resource "azurerm_key_vault_access_policy" "kv_api" {
-  count              = var.create_apps ? 1 : 0
-  key_vault_id       = data.azurerm_key_vault.kv.id
-  tenant_id          = data.azurerm_client_config.current.tenant_id
-  object_id          = azurerm_container_app.api[0].identity[0].principal_id
-  secret_permissions = ["Get", "List"]
-  depends_on         = [azurerm_container_app.api]
-}
-
-# Worker app (created when create_apps = true)
+# Worker app
 resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.worker_name
@@ -188,7 +173,6 @@ resource "azurerm_container_app" "worker" {
     identity = "System"
   }
 
-  # ----------- FIX: add identity = "System" -----------
   secret {
     name                = "sb-conn"
     key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
@@ -223,7 +207,6 @@ resource "azurerm_container_app" "worker" {
     min_replicas = 0
     max_replicas = 5
 
-    # KEDA: Azure Service Bus queue scaler
     custom_scale_rule {
       name             = "sb-scaler"
       custom_rule_type = "azure-servicebus"
@@ -239,7 +222,7 @@ resource "azurerm_container_app" "worker" {
   }
 }
 
-# ACR pull (needs User Access Administrator/Owner on RG)
+# ACR pull
 resource "azurerm_role_assignment" "acr_pull_api" {
   count                = var.create_apps ? 1 : 0
   scope                = data.azurerm_container_registry.acr.id
