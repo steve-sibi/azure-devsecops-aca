@@ -83,7 +83,7 @@ resource "azurerm_servicebus_namespace_authorization_rule" "sas" {
   namespace_id = data.azurerm_servicebus_namespace.sb.id
   listen       = true
   send         = true
-  manage       = false
+  manage       = true
 }
 
 # CI principal needs secret perms on KV (so CI can create/update the KV secret)
