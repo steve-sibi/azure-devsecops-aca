@@ -128,9 +128,11 @@ resource "azurerm_container_app" "api" {
     identity = "System"
   }
 
+  # <-- Tell ACA which identity to use to read from Key Vault
   secret {
     name                = "sb-conn"
-    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
+    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.versionless_id
+    identity            = "System"
   }
   secret {
     name  = "appi-conn"
@@ -185,9 +187,11 @@ resource "azurerm_container_app" "worker" {
     identity = "System"
   }
 
+  # <-- Also specify identity for KV secret
   secret {
     name                = "sb-conn"
-    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
+    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.versionless_id
+    identity            = "System"
   }
   secret {
     name  = "appi-conn"
@@ -218,10 +222,9 @@ resource "azurerm_container_app" "worker" {
     min_replicas = 0
     max_replicas = 5
 
-    # KEDA: Azure Service Bus queue scaler
     custom_scale_rule {
       name             = "sb-scaler"
-      custom_rule_type = "azure-servicebus" # per docs, even for queues
+      custom_rule_type = "azure-servicebus"
       metadata = {
         queueName    = azurerm_servicebus_queue.q.name
         messageCount = "20"
@@ -232,6 +235,16 @@ resource "azurerm_container_app" "worker" {
       }
     }
   }
+}
+
+# Give WORKER MI Key Vault read as well
+resource "azurerm_key_vault_access_policy" "kv_worker" {
+  count              = var.create_apps ? 1 : 0
+  key_vault_id       = data.azurerm_key_vault.kv.id
+  tenant_id          = data.azurerm_client_config.current.tenant_id
+  object_id          = azurerm_container_app.worker[0].identity[0].principal_id
+  secret_permissions = ["Get", "List"]
+  depends_on         = [azurerm_container_app.worker]
 }
 
 # ACR pull (needs User Access Administrator/Owner on RG)
