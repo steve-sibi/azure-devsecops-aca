@@ -217,15 +217,28 @@ jobs:
       - name: ACR login
         run: az acr login --name $(echo "${{ steps.acr.outputs.login_server }}" | cut -d. -f1)
 
-      - name: Build & push API
+      - name: Debug tree (helps verify paths)
         run: |
-          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}" -f app/api/Dockerfile app/api
+          echo "::group::tree"
+          ls -la
+          echo "--- app/api"
+          ls -la app/api || true
+          echo "--- app/worker"
+          ls -la app/worker || true
+          echo "::endgroup::"
+
+      - name: Build & push API
+        working-directory: app/api
+        run: |
+          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}" -f Dockerfile .
           docker push "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}"
 
       - name: Build & push Worker
+        working-directory: app/worker
         run: |
-          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}" -f app/worker/Dockerfile app/worker
+          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}" -f Dockerfile .
           docker push "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}"
+
 
   create-apps:
     needs: [build-and-push]
