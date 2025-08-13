@@ -1,0 +1,111 @@
+name: Deploy
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  TF_IN_AUTOMATION: true
+  REGION: eastus
+  PREFIX: devsecopsaca
+  RG: rg-devsecops-aca
+
+jobs:
+  infra-bootstrap:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init
+        working-directory: infra
+        run: terraform init
+
+      - name: Terraform Apply (infra only)
+        working-directory: infra
+        run: terraform apply -auto-approve \
+             -var="prefix=${{ env.PREFIX }}" \
+             -var="location=${{ env.REGION }}" \
+             -var="create_apps=false"
+
+      - name: Get ACR login server
+        id: acr
+        run: |
+          ACR=$(az acr list -g "${{ env.RG }}" --query "[0].loginServer" -o tsv)
+          echo "login_server=${ACR}" >> $GITHUB_OUTPUT
+
+  build-and-push:
+    needs: [infra-bootstrap]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ACR login server
+        id: acr
+        run: |
+          ACR=$(az acr list -g "${{ env.RG }}" --query "[0].loginServer" -o tsv)
+          echo "login_server=${ACR}" >> $GITHUB_OUTPUT
+
+      - name: ACR login
+        run: az acr login --name $(echo "${{ steps.acr.outputs.login_server }}" | cut -d. -f1)
+
+      - name: Build & push API
+        run: |
+          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}" -f app/api/Dockerfile app/api
+          docker push "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}"
+
+      - name: Build & push Worker
+        run: |
+          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}" -f app/worker/Dockerfile app/worker
+          docker push "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}"
+
+  create-apps:
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Apply (create apps w/ images)
+        working-directory: infra
+        run: terraform apply -auto-approve \
+             -var="prefix=${{ env.PREFIX }}" \
+             -var="location=${{ env.REGION }}" \
+             -var="create_apps=true" \
+             -var="image_tag=${{ github.sha }}"
+
+      - name: Output API URL
+        working-directory: infra
+        run: terraform output fastapi_url
