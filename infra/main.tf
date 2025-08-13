@@ -10,6 +10,8 @@ terraform {
 
 provider "azurerm" {
   features {}
+  # stop Terraform from attempting subscription-scoped registrations
+  resource_provider_registrations = "none"
 }
 
 locals {
