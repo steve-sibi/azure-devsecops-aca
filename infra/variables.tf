@@ -25,7 +25,7 @@ variable "create_apps" {
 variable "image_tag" {
   type        = string
   default     = "dev"
-  description = "Image tag to deploy (CI sets to commit SHA)."
+  description = "Tag for images to deploy (CI sets to commit SHA)."
 }
 
 variable "queue_name" {

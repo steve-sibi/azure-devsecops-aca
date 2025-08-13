@@ -1,31 +1,29 @@
 skip-check:
   - id: CKV_AZURE_165
-    comment: "Budget ACR (Basic) — no geo-replication yet."
+    comment: "ACR geo-replication deferred (Basic sku)."
   - id: CKV_AZURE_237
-    comment: "Dedicated data endpoint requires ACR Premium."
+    comment: "ACR dedicated data endpoint requires Premium."
   - id: CKV_AZURE_164
-    comment: "Content trust/signing deferred; covered by CI (Trivy/CodeQL) for now."
+    comment: "Image signing deferred; CI scanners used."
   - id: CKV_AZURE_233
-    comment: "Zone redundancy requires ACR Premium."
+    comment: "ACR zone redundancy requires Premium."
   - id: CKV_AZURE_166
-    comment: "Quarantine/verification requires Premium & policy; defer."
+    comment: "Quarantine/verification out of scope for starter."
   - id: CKV_AZURE_163
-    comment: "Defender vuln scanning is subscription-level (paid); CI scans with Trivy."
+    comment: "Defender scanning is paid; using CI scanners."
   - id: CKV_AZURE_139
-    comment: "Public network access needed (no Private Link/VNet in this starter)."
+    comment: "Private networking deferred (no Private Link/VNet)."
   - id: CKV_AZURE_189
-    comment: "KV PNA can’t be disabled without Private Link/VNet."
+    comment: "KV public access disabled later with Private Link."
   - id: CKV_AZURE_109
-    comment: "KV firewall rules not feasible with Container Apps public egress."
+    comment: "KV firewall rules require VNet scenario."
   - id: CKV2_AZURE_32
-    comment: "KV Private Endpoint out of scope for student-budget v1."
+    comment: "KV Private Endpoint out of scope for v1."
   - id: CKV_AZURE_199
     comment: "SB double encryption (CMK) requires Premium."
   - id: CKV_AZURE_204
-    comment: "SB private access requires Private Link/VNet; defer."
+    comment: "SB private access requires Private Link/VNet."
   - id: CKV_AZURE_201
     comment: "SB CMK requires Premium."
   - id: CKV_AZURE_203
-    comment: "SB local auth (SAS) used for KEDA; AAD-only is a later hardening step."
-  - id: CKV_AZURE_202
-    comment: "SB MI provider needed only when moving to AAD-only auth."
+    comment: "SB local auth used for KEDA; AAD-only later."
