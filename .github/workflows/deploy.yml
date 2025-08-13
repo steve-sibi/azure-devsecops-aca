@@ -41,10 +41,11 @@ jobs:
           set -e
           az storage account create \
             -g "${{ env.RG }}" -n "${{ env.TFSTATE_SA }}" -l "${{ env.REGION }}" \
-            --sku Standard_LRS --kind StorageV2
+            --sku Standard_LRS --kind StorageV2 >/dev/null
           az storage container create \
             --account-name "${{ env.TFSTATE_SA }}" \
-            --container-name "${{ env.TFSTATE_CONTAINER }}" --auth-mode login >/dev/null
+            --name "${{ env.TFSTATE_CONTAINER }}" \
+            --auth-mode login >/dev/null
 
       - name: Grant Blob Data role to CI principal + verify
         run: |
@@ -85,7 +86,6 @@ jobs:
           CN="${{ env.TFSTATE_CONTAINER }}"
           KEY="${{ env.TFSTATE_KEY }}"
 
-          # If blob doesn't exist yet, there's nothing to unlock
           if az storage blob show \
                --account-name "$SA" \
                --container-name "$CN" \
