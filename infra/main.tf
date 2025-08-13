@@ -10,12 +10,11 @@ terraform {
 
 provider "azurerm" {
   features {}
-  # CI should not try to register providers (register once manually)
   skip_provider_registration = true
 }
 
 locals {
-  rg_name     = "${var.prefix}-rg" # kept for naming, even if RG is external
+  rg_name     = "${var.prefix}-rg"
   acr_name    = "${var.prefix}acr"
   kv_name     = "${var.prefix}-kv"
   sb_ns_name  = "${var.prefix}-sbns"
@@ -26,16 +25,11 @@ locals {
   worker_name = "${var.prefix}-worker"
 }
 
-# ------------------------------------------------------------
-# Use EXISTING Resource Group
-# ------------------------------------------------------------
 data "azurerm_resource_group" "rg" {
   name = var.resource_group_name
 }
 
-# ------------------------------------------------------------
-# Use EXISTING Log Analytics, ACR, Key Vault, Service Bus NS
-# ------------------------------------------------------------
+# EXISTING foundational resources (read-only via data sources)
 data "azurerm_log_analytics_workspace" "la" {
   name                = local.la_name
   resource_group_name = data.azurerm_resource_group.rg.name
@@ -58,9 +52,8 @@ data "azurerm_servicebus_namespace" "sb" {
 
 data "azurerm_client_config" "current" {}
 
-# ------------------------------------------------------------
-# Create NEW Application Insights (bound to existing LA)
-# ------------------------------------------------------------
+# NEW (or imported) resources
+
 resource "azurerm_application_insights" "appi" {
   name                = local.ai_name
   location            = data.azurerm_resource_group.rg.location
@@ -69,9 +62,6 @@ resource "azurerm_application_insights" "appi" {
   workspace_id        = data.azurerm_log_analytics_workspace.la.id
 }
 
-# ------------------------------------------------------------
-# Service Bus queue + SAS on the EXISTING namespace
-# ------------------------------------------------------------
 resource "azurerm_servicebus_queue" "q" {
   name                  = var.queue_name
   namespace_id          = data.azurerm_servicebus_namespace.sb.id
@@ -86,34 +76,23 @@ resource "azurerm_servicebus_namespace_authorization_rule" "sas" {
   manage       = false
 }
 
-# ------------------------------------------------------------
-# Give CI principal (GitHub OIDC) secret perms via ACCESS POLICY
-# (works even if KV is not RBAC-enabled)
-# ------------------------------------------------------------
+# Allow the CI identity (current principal) to set/get secrets (access policy works regardless of KV RBAC mode)
 resource "azurerm_key_vault_access_policy" "kv_ci" {
-  key_vault_id = data.azurerm_key_vault.kv.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = data.azurerm_client_config.current.object_id
-
+  key_vault_id       = data.azurerm_key_vault.kv.id
+  tenant_id          = data.azurerm_client_config.current.tenant_id
+  object_id          = data.azurerm_client_config.current.object_id
   secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
-# Store SB connection string into EXISTING Key Vault
 resource "azurerm_key_vault_secret" "sb_conn" {
-  name         = "ServiceBusConnection"
-  value        = azurerm_servicebus_namespace_authorization_rule.sas.primary_connection_string
-  key_vault_id = data.azurerm_key_vault.kv.id
-
-  # helpful metadata (and closes Checkov findings)
+  name            = "ServiceBusConnection"
+  value           = azurerm_servicebus_namespace_authorization_rule.sas.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-connection"
   expiration_date = timeadd(timestamp(), "8760h") # ~1 year
-
-  depends_on = [azurerm_key_vault_access_policy.kv_ci]
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci]
 }
 
-# ------------------------------------------------------------
-# Container Apps Environment (new) using EXISTING LA
-# ------------------------------------------------------------
 resource "azurerm_container_app_environment" "env" {
   name                       = local.env_name
   location                   = data.azurerm_resource_group.rg.location
@@ -121,9 +100,7 @@ resource "azurerm_container_app_environment" "env" {
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
 }
 
-# ------------------------------------------------------------
-# API app (created only when create_apps = true)
-# ------------------------------------------------------------
+# API app (only when create_apps = true)
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.api_name
@@ -143,13 +120,11 @@ resource "azurerm_container_app" "api" {
     }
   }
 
-  # Use EXISTING ACR; Container Apps will pull via MI (AcrPull role below)
   registry {
     server   = data.azurerm_container_registry.acr.login_server
     identity = "System"
   }
 
-  # secrets from Key Vault
   secret {
     name                = "sb-conn"
     key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
@@ -182,20 +157,17 @@ resource "azurerm_container_app" "api" {
   }
 }
 
-# Give the API's managed identity secret read via ACCESS POLICY (if apps created)
+# Give API MI read on secrets (if created)
 resource "azurerm_key_vault_access_policy" "kv_api" {
-  count        = var.create_apps ? 1 : 0
-  key_vault_id = data.azurerm_key_vault.kv.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = azurerm_container_app.api[0].identity[0].principal_id
-
+  count              = var.create_apps ? 1 : 0
+  key_vault_id       = data.azurerm_key_vault.kv.id
+  tenant_id          = data.azurerm_client_config.current.tenant_id
+  object_id          = azurerm_container_app.api[0].identity[0].principal_id
   secret_permissions = ["Get", "List"]
   depends_on         = [azurerm_container_app.api]
 }
 
-# ------------------------------------------------------------
-# Worker app (created only when create_apps = true)
-# ------------------------------------------------------------
+# Worker app (only when create_apps = true)
 resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.worker_name
@@ -240,17 +212,15 @@ resource "azurerm_container_app" "worker" {
       }
     }
 
-    # scaling lives here (no 'scale {}' block)
     min_replicas = 0
     max_replicas = 5
 
-    # KEDA: Azure Service Bus queue scaler
     custom_scale_rule {
       name             = "sb-scaler"
       custom_rule_type = "azure-servicebus"
       metadata = {
         queueName    = azurerm_servicebus_queue.q.name
-        messageCount = "20" # strings!
+        messageCount = "20"
       }
       authentication {
         secret_name       = "sb-conn"
@@ -260,20 +230,7 @@ resource "azurerm_container_app" "worker" {
   }
 }
 
-# Key Vault access for WORKER MI (if apps created)
-resource "azurerm_key_vault_access_policy" "kv_worker" {
-  count        = var.create_apps ? 1 : 0
-  key_vault_id = data.azurerm_key_vault.kv.id
-  tenant_id    = data.azurerm_client_config.current.tenant_id
-  object_id    = azurerm_container_app.worker[0].identity[0].principal_id
-
-  secret_permissions = ["Get", "List"]
-  depends_on         = [azurerm_container_app.worker]
-}
-
-# ------------------------------------------------------------
-# ACR pull permissions (role assignments) — needs UA Admin/Owner on RG
-# ------------------------------------------------------------
+# ACR pull permissions (needs UA Admin/Owner)
 resource "azurerm_role_assignment" "acr_pull_api" {
   count                = var.create_apps ? 1 : 0
   scope                = data.azurerm_container_registry.acr.id
