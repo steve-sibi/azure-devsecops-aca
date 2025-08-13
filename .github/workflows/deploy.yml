@@ -217,26 +217,16 @@ jobs:
       - name: ACR login
         run: az acr login --name $(echo "${{ steps.acr.outputs.login_server }}" | cut -d. -f1)
 
-      - name: Debug tree (helps verify paths)
-        run: |
-          echo "::group::tree"
-          ls -la
-          echo "--- app/api"
-          ls -la app/api || true
-          echo "--- app/worker"
-          ls -la app/worker || true
-          echo "::endgroup::"
-
       - name: Build & push API
         working-directory: app/api
         run: |
-          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}" -f Dockerfile .
+          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}" .
           docker push "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}"
 
       - name: Build & push Worker
         working-directory: app/worker
         run: |
-          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}" -f Dockerfile .
+          docker build -t "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}" .
           docker push "${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}"
 
 
