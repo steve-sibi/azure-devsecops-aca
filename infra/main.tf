@@ -61,13 +61,14 @@ data "azurerm_client_config" "current" {}
 # Key Vault
 resource "azurerm_key_vault" "kv" {
   name                       = local.kv_name
-  resource_group_name        = azurerm_resource_group.rg.name
-  location                   = var.location
+  resource_group_name        = data.azurerm_resource_group.rg.name     # was azurerm_resource_group.rg.name
+  location                   = data.azurerm_resource_group.rg.location # was var.location
   tenant_id                  = data.azurerm_client_config.current.tenant_id
   sku_name                   = "standard"
   purge_protection_enabled   = true
   soft_delete_retention_days = 7
 }
+
 
 # Service Bus (Standard) + queue + SAS (for simplicity)
 resource "azurerm_servicebus_namespace" "sb" {
@@ -103,16 +104,17 @@ resource "azurerm_key_vault_secret" "sb_conn" {
 # Container Apps Environment (Consumption)
 resource "azurerm_container_app_environment" "env" {
   name                       = local.env_name
-  location                   = var.location
-  resource_group_name        = azurerm_resource_group.rg.name
+  location                   = data.azurerm_resource_group.rg.location # was var.location
+  resource_group_name        = data.azurerm_resource_group.rg.name     # was azurerm_resource_group.rg.name
   log_analytics_workspace_id = azurerm_log_analytics_workspace.la.id
 }
+
 
 # API app (created only when create_apps = true)
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.api_name
-  resource_group_name          = azurerm_resource_group.rg.name
+  resource_group_name          = data.azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
 
@@ -176,7 +178,7 @@ resource "azurerm_container_app" "api" {
 resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.worker_name
-  resource_group_name          = azurerm_resource_group.rg.name
+  resource_group_name          = data.azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
 
