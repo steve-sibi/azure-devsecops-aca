@@ -67,6 +67,8 @@ resource "azurerm_key_vault" "kv" {
   sku_name                   = "standard"
   purge_protection_enabled   = true
   soft_delete_retention_days = 7
+
+  enable_rbac_authorization = true
 }
 
 
@@ -99,7 +101,14 @@ resource "azurerm_key_vault_secret" "sb_conn" {
   name         = "ServiceBusConnection"
   value        = azurerm_servicebus_namespace_authorization_rule.sas.primary_connection_string
   key_vault_id = azurerm_key_vault.kv.id
+
+  # helpful metadata (and satisfies Checkov)
+  content_type    = "servicebus-connection"
+  expiration_date = timeadd(timestamp(), "8760h") # ~1 year
+
+  depends_on = [azurerm_role_assignment.kv_ci_secrets_officer]
 }
+
 
 # Container Apps Environment (Consumption)
 resource "azurerm_container_app_environment" "env" {
@@ -275,4 +284,10 @@ resource "azurerm_role_assignment" "acr_pull_worker" {
   scope                = azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_container_app.worker[0].identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "kv_ci_secrets_officer" {
+  scope                = azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets Officer" # or "Key Vault Administrator"
+  principal_id         = data.azurerm_client_config.current.object_id
 }
