@@ -103,9 +103,7 @@ resource "azurerm_container_app_environment" "env" {
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
 }
 
-# --------------------------
 # API app (created when create_apps = true)
-# --------------------------
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.api_name
@@ -130,12 +128,13 @@ resource "azurerm_container_app" "api" {
     identity = "System"
   }
 
-  # IMPORTANT: identity="system" to fetch secret from Key Vault
+  # ----------- FIX: add identity = "System" -----------
   secret {
     name                = "sb-conn"
     key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
-    identity            = "system"
+    identity            = "System"
   }
+  # This one is a literal value, so no identity needed
   secret {
     name  = "appi-conn"
     value = azurerm_application_insights.appi.connection_string
@@ -164,7 +163,7 @@ resource "azurerm_container_app" "api" {
   }
 }
 
-# KV read access for API MI
+# Give API MI Key Vault read (if app created)
 resource "azurerm_key_vault_access_policy" "kv_api" {
   count              = var.create_apps ? 1 : 0
   key_vault_id       = data.azurerm_key_vault.kv.id
@@ -174,9 +173,7 @@ resource "azurerm_key_vault_access_policy" "kv_api" {
   depends_on         = [azurerm_container_app.api]
 }
 
-# --------------------------
 # Worker app (created when create_apps = true)
-# --------------------------
 resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
   name                         = local.worker_name
@@ -191,11 +188,11 @@ resource "azurerm_container_app" "worker" {
     identity = "System"
   }
 
-  # IMPORTANT: identity="system" to fetch secret from Key Vault
+  # ----------- FIX: add identity = "System" -----------
   secret {
     name                = "sb-conn"
     key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
-    identity            = "system"
+    identity            = "System"
   }
   secret {
     name  = "appi-conn"
@@ -240,16 +237,6 @@ resource "azurerm_container_app" "worker" {
       }
     }
   }
-}
-
-# KV read access for WORKER MI
-resource "azurerm_key_vault_access_policy" "kv_worker" {
-  count              = var.create_apps ? 1 : 0
-  key_vault_id       = data.azurerm_key_vault.kv.id
-  tenant_id          = data.azurerm_client_config.current.tenant_id
-  object_id          = azurerm_container_app.worker[0].identity[0].principal_id
-  secret_permissions = ["Get", "List"]
-  depends_on         = [azurerm_container_app.worker]
 }
 
 # ACR pull (needs User Access Administrator/Owner on RG)
