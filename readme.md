@@ -132,6 +132,36 @@ Terraform **creates / manages**:
 ## 4) Repository layout
 
 ## 5) CI/CD workflow (deploy.yml)
+The pipeline runs on pushes to `main` (and on demand):
+
+1. **infra-bootstrap**
+    
+    - Azure OIDC login
+        
+    - Creates/ensures the **Terraform state storage** (Storage Account + container)
+        
+    - Grants the CI principal **Storage Blob Data Contributor** on the SA (for AAD data-plane auth)
+        
+    - `terraform init` with backend config (AAD auth)
+        
+    - Imports existing resources (safe if absent)
+        
+    - `terraform apply` for **infra only** (no apps yet)
+        
+2. **build-and-push**
+    
+    - Builds API and Worker images and pushes to **ACR**
+        
+3. **create-apps**
+    
+    - `terraform init` (same backend)
+        
+    - Imports Container Apps if they already exist (safe if absent)
+        
+    - `terraform apply` to deploy **api/worker** with the new image tags
+        
+
+> The workflow is idempotent and includes small guards: breaking stale TF state lease, safe imports, and a few retries.
 
 ## 6) First-run values (env)
 
