@@ -84,3 +84,23 @@ Terraform **creates / manages**:
     
 
 > Import logic is included in the CI so if an object already exists, it’s **imported into TF state** instead of failing.
+
+3) Prerequisites
+
+4) Repository layout
+
+5) CI/CD workflow (deploy.yml)
+
+6) First-run values (env)
+
+7) Running it
+
+8) Using the API
+
+9) Observability & troubleshooting
+
+10) Working with Terraform locally
+
+11) Costs & clean-up
+
+12) Security notes
