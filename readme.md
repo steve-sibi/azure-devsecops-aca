@@ -112,6 +112,22 @@ Terraform **creates / manages**:
 > Import logic is included in the CI so if an object already exists, it’s **imported into TF state** instead of failing.
 
 ## 3) Prerequisites
+- Azure subscription + resource group (e.g. `rg-devsecops-aca`) in a region that supports Container Apps.
+    
+- GitHub repository with **Actions OIDC** wired to your tenant/subscription.
+    
+- Create a service principal for CI (or reuse one), add a **Federated Credential** for GitHub Actions, then grant it:
+    
+    - At the **resource group** scope: **Contributor** and **User Access Administrator**  
+        (User Access Administrator is needed so Terraform can create role assignments, e.g., ACR Pull.)
+        
+- Repo **Secrets**:
+    
+    - `AZURE_CLIENT_ID`
+        
+    - `AZURE_TENANT_ID`
+        
+    - `AZURE_SUBSCRIPTION_ID`
 
 ## 4) Repository layout
 
