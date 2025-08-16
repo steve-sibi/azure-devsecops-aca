@@ -1,4 +1,4 @@
-DevSecOps Microservice on Azure
+# DevSecOps Microservice on Azure
 
 Spin up a tiny **event-driven system** on Azure using **Terraform** and **GitHub Actions (OIDC)**:
 
@@ -20,7 +20,8 @@ Spin up a tiny **event-driven system** on Azure using **Terraform** and **GitHub
 
 > This README explains **what you get**, **how it works**, **how to run it**, **how to test/observe it**, and **how to clean up**. It also captures the snags we hit (and fixes), plus ideas for future expansion.
 
-1) Architecture
+## 1) Architecture
+
 ```
             ┌──────────────┐       (SAS conn string stored in Key Vault)
 HTTP POST ─►│  FastAPI     │ ───────────────────────────────────────────────────┐
@@ -45,9 +46,34 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
            │ App Insights + LA   │   (logs/metrics/trace)
            └─────────────────────┘
 ```
+*Runtime Sequence*
+```mermaid
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant API as FastAPI (Container App)
+  participant KV as Key Vault
+  participant SB as Service Bus Queue (tasks)
+  participant W as Worker (Container App)
+  participant KEDA as KEDA Scaler
 
+  C->>API: POST /enqueue {payload}
+  API->>KV: Get secret "ServiceBusConnection" (Managed Identity)
+  KV-->>API: connection string
+  API->>SB: Send message
 
-2) What gets created vs. re-used
+  KEDA->>SB: Poll queue length
+  SB-->>KEDA: messageCount
+  KEDA-->>W: Scale out (threshold met)
+
+  W->>KV: Get secret "ServiceBusConnection" (Managed Identity)
+  KV-->>W: connection string
+  W->>SB: Receive message (lock)
+  W->>W: Process payload
+  W->>SB: Complete message
+```
+
+## 2) What gets created vs. re-used
 
 This project **re-uses** several “foundation” resources (looked up as Terraform **data** sources):
 
@@ -81,26 +107,26 @@ Terraform **creates / manages**:
 - **ACR Pull** role assignments for the two apps
     
 - **Key Vault access policies** for CI (to set secret) and the app MIs (to read secret)
-    
+
 
 > Import logic is included in the CI so if an object already exists, it’s **imported into TF state** instead of failing.
 
-3) Prerequisites
+## 3) Prerequisites
 
-4) Repository layout
+## 4) Repository layout
 
-5) CI/CD workflow (deploy.yml)
+## 5) CI/CD workflow (deploy.yml)
 
-6) First-run values (env)
+## 6) First-run values (env)
 
-7) Running it
+## 7) Running it
 
-8) Using the API
+## 8) Using the API
 
-9) Observability & troubleshooting
+## 9) Observability & troubleshooting
 
-10) Working with Terraform locally
+## 10) Working with Terraform locally
 
-11) Costs & clean-up
+## 11) Costs & clean-up
 
-12) Security notes
+## 12) Security notes
