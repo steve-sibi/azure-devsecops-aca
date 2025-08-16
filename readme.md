@@ -170,6 +170,31 @@ The pipeline runs on pushes to `main` (and on demand):
 ## 8) Using the API
 
 ## 9) Observability & troubleshooting
+### Logs (CLI)
+
+- **API (console)**
+    
+    bash
+    
+    CopyEdit
+    
+    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type console --follow --container api`
+    
+- **Worker (console)**
+    
+    bash
+    
+    CopyEdit
+    
+    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-worker --type console --follow --container worker`
+    
+- **System logs**
+    
+    bash
+    
+    CopyEdit
+    
+    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type system --follow`
 
 ## 10) Working with Terraform locally
 
