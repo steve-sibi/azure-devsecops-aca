@@ -19,3 +19,68 @@ Spin up a tiny **event-driven system** on Azure using **Terraform** and **GitHub
 - **Terraform backend** in a Storage Account (RBAC/AAD auth)
 
 > This README explains **what you get**, **how it works**, **how to run it**, **how to test/observe it**, and **how to clean up**. It also captures the snags we hit (and fixes), plus ideas for future expansion.
+
+1) Architecture
+
+            ┌──────────────┐       (SAS conn string stored in Key Vault)
+HTTP POST ─►│  FastAPI     │ ───────────────────────────────────────────────────┐
+            │  /enqueue    │                                                    │
+            └──────┬───────┘                                                    │
+                   │ (send message)                                             │
+                   ▼                                                            │
+           ┌────────────────┐         KV ref ┌────────────────────┐             │
+           │ Service Bus    │◄───────────────│ Azure Key Vault    │             │
+           │ Queue (tasks)  │                │ secret: sb-conn    │             │
+           └────────┬───────┘                └────────────────────┘             │
+                    │ (scale trigger)                                           │
+                    │ via KEDA                                                  │
+                    ▼                                                           │
+           ┌────────────────────┐         MI + KV ref                           │
+           │ Worker (Container  │◄──────────────────────────────────────────────┘
+           │ Apps, min=0)       │
+           └────────────────────┘
+                   │
+                   ▼
+           ┌─────────────────────┐
+           │ App Insights + LA   │   (logs/metrics/trace)
+           └─────────────────────┘
+
+
+
+2) What gets created vs. re-used
+
+This project **re-uses** several “foundation” resources (looked up as Terraform **data** sources):
+
+- `rg-<prefix>` resource group (you provide it)
+    
+- `st<tfstate>` storage account + `tfstate` container (the workflow bootstraps it)
+    
+- `devsecopsacaacr` ACR
+    
+- `devsecopsaca-kv` Key Vault
+    
+- `devsecopsaca-sbns` Service Bus namespace
+    
+- `devsecopsaca-la` Log Analytics workspace
+    
+
+Terraform **creates / manages**:
+
+- `devsecopsaca-appi` **Application Insights**
+    
+- `tasks` **Service Bus queue** + `app-shared` **namespace SAS rule**
+    
+- **Key Vault secret** `ServiceBusConnection` (`sb-conn`)
+    
+- `devsecopsaca-acaenv` **Container Apps Environment (Consumption)**
+    
+- `devsecopsaca-api` FastAPI app (ingress)
+    
+- `devsecopsaca-worker` Worker app (KEDA scaler)
+    
+- **ACR Pull** role assignments for the two apps
+    
+- **Key Vault access policies** for CI (to set secret) and the app MIs (to read secret)
+    
+
+> Import logic is included in the CI so if an object already exists, it’s **imported into TF state** instead of failing.
