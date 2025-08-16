@@ -21,7 +21,7 @@ Spin up a tiny **event-driven system** on Azure using **Terraform** and **GitHub
 > This README explains **what you get**, **how it works**, **how to run it**, **how to test/observe it**, and **how to clean up**. It also captures the snags we hit (and fixes), plus ideas for future expansion.
 
 1) Architecture
-
+```
             ┌──────────────┐       (SAS conn string stored in Key Vault)
 HTTP POST ─►│  FastAPI     │ ───────────────────────────────────────────────────┐
             │  /enqueue    │                                                    │
@@ -44,7 +44,7 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
            ┌─────────────────────┐
            │ App Insights + LA   │   (logs/metrics/trace)
            └─────────────────────┘
-
+```
 
 
 2) What gets created vs. re-used
