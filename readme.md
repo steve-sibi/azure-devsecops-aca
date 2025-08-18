@@ -40,13 +40,14 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
            │ Worker (Container  │◄──────────────────────────────────────────────┘
            │ Apps, min=0)       │
            └────────────────────┘
-                   │
-                   ▼
+                    │
+                    ▼
            ┌─────────────────────┐
            │ App Insights + LA   │   (logs/metrics/trace)
            └─────────────────────┘
 ```
 *Runtime Sequence*
+
 ```mermaid
 sequenceDiagram
   autonumber
@@ -130,6 +131,26 @@ Terraform **creates / manages**:
     - `AZURE_SUBSCRIPTION_ID`
 
 ## 4) Repository layout
+```
+.
+├─ .github/workflows/
+│  ├─ ci.yml              # security CI (Checkov + Trivy)
+│  └─ deploy.yml          # infra bootstrap + build/push + deploy
+├─ app/
+│  ├─ api/                # FastAPI producer
+│  │  ├─ DOCKERFILE
+│  │  ├─ main.py
+│  │  └─ requirements.txt
+│  └─ worker/             # queue consumer
+│     ├─ DOCKERFILE
+│     ├─ worker.py
+│     └─ requirements.txt
+└─ infra/
+   ├─ backend.tf
+   ├─ main.tf
+   ├─ outputs.tf
+   └─ variables.tf
+```
 
 ## 5) CI/CD workflow (deploy.yml)
 The pipeline runs on pushes to `main` (and on demand):
