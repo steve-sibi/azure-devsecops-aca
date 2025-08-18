@@ -201,3 +201,9 @@ The pipeline runs on pushes to `main` (and on demand):
 ## 11) Costs & clean-up
 
 ## 12) Security notes
+
+## 13) How the app code works (quick tour)
+
+## 14) Extending this project (future work)
+
+## 15) FAQ
