@@ -274,6 +274,13 @@ Send a burst of messages to see it scale:
     `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type system --follow`
 
 ## 10) Working with Terraform locally
+If you want to inspect or modify:
+
+`cd infra  terraform init \   -backend-config="resource_group_name=rg-devsecops-aca" \   -backend-config="storage_account_name=stdevsecopsacatfstate" \   -backend-config="container_name=tfstate" \   -backend-config="key=devsecopsaca.tfstate" \   -backend-config="use_azuread_auth=true"  terraform plan \   -var="prefix=devsecopsaca" \   -var="location=eastus" \   -var="resource_group_name=rg-devsecops-aca" \   -var="queue_name=tasks" \   -var="create_apps=true" \   -var="image_tag=<some-tag>"`
+
+> If you see a state **lease** error, break the stale lease:
+> 
+> `az storage blob lease break \   --account-name stdevsecopsacatfstate \   --container-name tfstate \   --blob-name devsecopsaca.tfstate \   --auth-mode login`
 
 ## 11) Costs & clean-up
 
