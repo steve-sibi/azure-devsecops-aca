@@ -196,6 +196,67 @@ The pipeline runs on pushes to `main` (and on demand):
 `infra/outputs.tf` also exposes a `fastapi_url` output if you run Terraform locally.
 
 ## 8) Using the API
+### Logs (CLI)
+
+- **API (console)**
+    
+    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type console --follow --container api`
+    
+- **Worker (console)**
+    
+    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-worker --type console --follow --container worker`
+    
+- **System logs**
+    
+    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type system --follow`
+    
+
+### KEDA scaling
+
+Worker is configured:
+
+- `min_replicas = 0`, `max_replicas = 5`
+    
+- 1 replica per **20 messages**:
+    
+    `custom_scale_rule {   name             = "sb-scaler"   custom_rule_type = "azure-servicebus"   metadata = { queueName = var.queue_name, messageCount = "20" }   authentication {     secret_name       = "sb-conn"     trigger_parameter = "connection"   } }`
+    
+
+Verify replicas:
+
+`az containerapp show -g rg-devsecops-aca -n devsecopsaca-worker \   --query properties.template.replicas -o tsv`
+
+Send a burst of messages to see it scale:
+
+`for i in {1..100}; do   curl -sS -X POST "https://${API_FQDN}/enqueue" \        -H "content-type: application/json" \        -d '{"hello":"world"}' >/dev/null done`
+
+### Common errors & fixes
+
+- **403 listing blobs during `terraform init`**  
+    Make sure the CI principal has **Storage Blob Data Contributor** on the state **storage account**. The workflow grants it; allow 30–60s for RBAC to propagate.
+    
+- **Resource already exists — import required**  
+    The workflow does imports before apply. If running locally:  
+    `terraform import <addr> <id>` using the IDs echoed in the error.
+    
+- **`Failed to provision revision: 'sb-conn' unable to get value using Managed identity 'System'`**
+    
+    - In `azurerm_container_app.secret` blocks, ensure `identity = "System"`.
+        
+    - Ensure Key Vault **access policies** allow each app’s **system-assigned MI** to **Get/List secrets**.
+        
+    - Ensure the CI principal had permission to initially **create** `ServiceBusConnection` (policy `kv_ci`).
+        
+- **KEDA not scaling**
+    
+    - Make sure the SAS rule used for the connection string has **Listen** permission (we set Listen+Send on `app-shared`).
+        
+    - Queue name in the scaler metadata matches the actual queue.
+        
+    - Generate enough messages to exceed `messageCount` threshold.
+        
+- **Max delivery count / DLQ**  
+    Your worker must `complete_message()` (or `abandon/dead_letter` appropriately) and auto-renew locks for long work. See the “max delivery” notes in the discussion above.
 
 ## 9) Observability & troubleshooting
 ### Logs (CLI)
