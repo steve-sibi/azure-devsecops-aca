@@ -283,6 +283,20 @@ If you want to inspect or modify:
 > `az storage blob lease break \   --account-name stdevsecopsacatfstate \   --container-name tfstate \   --blob-name devsecopsaca.tfstate \   --auth-mode login`
 
 ## 11) Costs & clean-up
+- **Service Bus Standard**, **App Insights/Log Analytics**, and image storage can incur cost even when apps scale to zero.
+    
+- Easiest **stop** options:
+    
+    1. **Scale to zero** the API as well (set `min_replicas = 0`) or disable ingress.
+        
+    2. **Terraform destroy** (recommended; only removes Terraform-managed resources):
+        
+        `cd infra terraform destroy \   -var="prefix=devsecopsaca" \   -var="location=eastus" \   -var="resource_group_name=rg-devsecops-aca" \   -var="queue_name=tasks" \   -var="create_apps=true"`
+        
+    3. As a last resort: delete the **resource group** (will also delete base resources you might want to keep).
+        
+
+To restart later, just re-run the **Deploy** workflow.
 
 ## 12) Security notes
 
