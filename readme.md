@@ -299,6 +299,13 @@ If you want to inspect or modify:
 To restart later, just re-run the **Deploy** workflow.
 
 ## 12) Security notes
+- CI uses **OIDC** (no long-lived secrets).
+    
+- Terraform backend uses **AAD** for data-plane auth (no account keys).
+    
+- Secrets are in **Key Vault**; Container Apps read them via **managed identity** + **secret references**.
+    
+- Role assignments are minimal for runtime (ACR Pull, KV Read).
 
 ## 13) How the app code works (quick tour)
 
