@@ -308,7 +308,33 @@ To restart later, just re-run the **Deploy** workflow.
 - Role assignments are minimal for runtime (ACR Pull, KV Read).
 
 ## 13) How the app code works (quick tour)
+**API (`app/api/main.py`)**
+
+- `POST /enqueue` -> validates JSON, sends to queue using the connection string from KV secret `sb-conn`.
+    
+- `GET /health` -> basic health.
+    
+
+**Worker (`app/worker/worker.py`)**
+
+- Uses `azure-servicebus` to receive messages.
+    
+- Logs `"Processing: <payload>"`.
+    
+- In a production scenario you would **renew the lock** during long work and call `complete_message()` on success.
 
 ## 14) Extending this project (future work)
 
 ## 15) FAQ
+
+**Where is my API URL?**  
+`az containerapp show -g rg-devsecops-aca -n devsecopsaca-api --query properties.configuration.ingress.fqdn -o tsv`
+
+**How do I tail logs?**  
+`az containerapp logs show -g <rg> -n <app> --type console --follow`
+
+**Why did Terraform say “resource already exists”?**  
+Because you pre-created it. Import it into state (the workflow does this automatically).
+
+**Why can’t the app read `sb-conn` from Key Vault?**  
+Make sure the secret block has `identity = "System"` and the app’s MI has KV secret **Get/List** via access policy.
