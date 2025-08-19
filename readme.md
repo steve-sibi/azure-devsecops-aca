@@ -187,6 +187,13 @@ The pipeline runs on pushes to `main` (and on demand):
 ## 6) First-run values (env)
 
 ## 7) Running it
+- Push to `main` or trigger the **Deploy** workflow.
+    
+- After **create-apps**, get the public API URL:
+
+`az containerapp show \   -g rg-devsecops-aca \   -n devsecopsaca-api \   --query properties.configuration.ingress.fqdn -o tsv`
+
+`infra/outputs.tf` also exposes a `fastapi_url` output if you run Terraform locally.
 
 ## 8) Using the API
 
@@ -195,25 +202,13 @@ The pipeline runs on pushes to `main` (and on demand):
 
 - **API (console)**
     
-    bash
-    
-    CopyEdit
-    
     `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type console --follow --container api`
     
 - **Worker (console)**
     
-    bash
-    
-    CopyEdit
-    
     `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-worker --type console --follow --container worker`
     
 - **System logs**
-    
-    bash
-    
-    CopyEdit
     
     `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type system --follow`
 
