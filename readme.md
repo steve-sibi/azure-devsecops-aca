@@ -1,26 +1,20 @@
 # DevSecOps Microservice on Azure
 
-Spin up a tiny **event-driven system** on Azure using **Terraform** and **GitHub Actions (OIDC)**:
+Spin up a tiny **event-driven system** on **Azure Container Apps (ACA)** using **Terraform** and **GitHub Actions (OIDC)**:
 
-- **FastAPI** “producer” (HTTP) → pushes JSON to **Azure Service Bus** (queue)
-    
-- **Worker** “consumer” → reads the queue and logs processing
-    
-- **KEDA** auto-scales the worker based on queue depth
-    
-- **Key Vault** holds the Service Bus connection string; apps read it via **managed identity**
-    
-- **Application Insights** + **Log Analytics** for observability
-    
-- **Container Apps** (Consumption) for serverless containers
-    
-- **ACR** for container images
-    
-- **Terraform backend** in a Storage Account (RBAC/AAD auth)
+- **FastAPI** service (`POST /tasks`) enqueues JSON to **Azure Service Bus** (queue)
+- **Worker** service consumes messages and processes them (scales 0→N with **KEDA**)
+- **Terraform** provisions all cloud resources
+- **GitHub Actions** handles **CI** (scan) + **Deploy** + **Destroy**
+- **Key Vault** stores **queue-level SAS** (send, listen, manage) resolved at deploy time
+- **User-Assigned Managed Identity (UAMI)** pulls images from ACR and resolves KV secrets
+- **Log Analytics + (optional) App Insights (OTel)** for observability
 
-> This README explains **what you get**, **how it works**, **how to run it**, **how to test/observe it**, and **how to clean up**. It also captures the snags I hit (and fixes), plus ideas for future expansion.
+> Shareable, reproducible, “nuke-and-recreate” demo or starter for lightweight production.
 
 ## 1) Architecture
+
+*High-Level Overview*
 
 ```
             ┌──────────────┐       (SAS conn string stored in Key Vault)
@@ -43,7 +37,7 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
                     │
                     ▼
            ┌─────────────────────┐
-           │ App Insights + LA   │   (logs/metrics/trace)
+           │    Log Analytics    │   (logs/metrics/trace)
            └─────────────────────┘
 ```
 *Runtime Sequence*
@@ -53,89 +47,107 @@ sequenceDiagram
   autonumber
   participant C as Client
   participant API as FastAPI (Container App)
-  participant KV as Key Vault
   participant SB as Service Bus Queue (tasks)
-  participant W as Worker (Container App)
   participant KEDA as KEDA Scaler
+  participant W as Worker (Container App)
+  participant LA as Log Analytics
 
-  C->>API: POST /enqueue {payload}
-  API->>KV: Get secret "ServiceBusConnection" (Managed Identity)
-  KV-->>API: connection string
-  API->>SB: Send message
+  Note over API,W: SERVICEBUS_CONN is injected from Key Vault via ACA<br/>secret references at deploy time (using UAMI). No runtime KV calls.
 
-  KEDA->>SB: Poll queue length
+  C->>API: POST /tasks {payload}
+  API->>SB: Send message (Send SAS)
+
+  KEDA->>SB: Poll queue length (Manage SAS)
   SB-->>KEDA: messageCount
-  KEDA-->>W: Scale out (threshold met)
+  KEDA-->>W: Scale out replicas (min 0..max 5)
 
-  W->>KV: Get secret "ServiceBusConnection" (Managed Identity)
-  KV-->>W: connection string
-  W->>SB: Receive message (lock)
+  W->>SB: Receive messages (Listen SAS)
   W->>W: Process payload
   W->>SB: Complete message
+  W-->>LA: Console logs (processing info)
+
 ```
-
-## 2) What gets created vs. re-used
-
-This project **re-uses** several “foundation” resources (looked up as Terraform **data** sources):
-
-- `rg-<prefix>` resource group (you provide it)
+*Flow*
+- Client calls `POST /tasks` on the API → message goes to the Service Bus **queue**
     
-- `st<tfstate>` storage account + `tfstate` container (the workflow bootstraps it)
+- KEDA scales the worker based on **queue depth**
     
-- `devsecopsacaacr` ACR
+- Worker receives, processes, and completes messages
     
-- `devsecopsaca-kv` Key Vault
-    
-- `devsecopsaca-sbns` Service Bus namespace
-    
-- `devsecopsaca-la` Log Analytics workspace
-    
-
-Terraform **creates / manages**:
-
-- `devsecopsaca-appi` **Application Insights**
-    
-- `tasks` **Service Bus queue** + `app-shared` **namespace SAS rule**
-    
-- **Key Vault secret** `ServiceBusConnection` (`sb-conn`)
-    
-- `devsecopsaca-acaenv` **Container Apps Environment (Consumption)**
-    
-- `devsecopsaca-api` FastAPI app (ingress)
-    
-- `devsecopsaca-worker` Worker app (KEDA scaler)
-    
-- **ACR Pull** role assignments for the two apps
-    
-- **Key Vault access policies** for CI (to set secret) and the app MIs (to read secret)
+- Logs land in **Log Analytics**; optional traces in **App Insights**
 
 
-> Import logic is included in the CI so if an object already exists, it’s **imported into TF state** instead of failing.
+## 2) What Terraform Deploys
+
+- **Resource Group**: `rg-<prefix>` (created by workflow)
+    
+- **Log Analytics**: `<prefix>-la` (workspace)
+    
+- **Application Insights**: `<prefix>-appi` (workspace-based)
+    
+- **Key Vault**: `<prefix>-kv` (secrets for queue-level SAS)
+    
+- **ACR**: `<prefix>acr`
+    
+- **Service Bus**:
+    
+    - Namespace: `<prefix>-sbns`
+        
+    - Queue: `tasks` (default)
+        
+    - **Queue SAS rules**:
+        
+        - `api-send` (**Send**)
+            
+        - `worker-listen` (**Listen**)
+            
+        - `scale-manage` (**Manage** + Listen + Send; scaler needs Manage)
+            
+- **UAMI**: `<prefix>-uami` (granted ACR pull + KV secret read)
+    
+- **ACA Environment**: `<prefix>-acaenv`
+    
+- **Container Apps**:
+    
+    - `<prefix>-api` (FastAPI; ingress on `:8000`)
+        
+    - `<prefix>-worker` (KEDA scale rule on the queue; min=0, max=5)
+        
+
+**Secrets (via Key Vault references, resolved by ACA):**
+
+- API container env `SERVICEBUS_CONN` ← KV secret **(send)**, secretRef e.g. `sb-send`
+    
+- Worker container env `SERVICEBUS_CONN` ← KV secret **(listen)**, secretRef e.g. `sb-listen`
+    
+- KEDA scale rule auth uses KV secret **(manage)**, secretRef e.g. `sb-manage` (not injected into container)
+    
+
+> The apps use the connection string path by default. You can toggle **Managed Identity** in the API for Service Bus (`USE_MANAGED_IDENTITY=true` + `SERVICEBUS_FQDN`), but it’s optional.
 
 ## 3) Prerequisites
-- Azure subscription + resource group (e.g. `rg-devsecops-aca`) in a region that supports Container Apps.
+
+- **GitHub OIDC** wired to your Azure tenant/subscription (no secrets).
     
-- GitHub repository with **Actions OIDC** wired to your tenant/subscription.
+- **Repo secrets**:
     
-- Create a service principal for CI (or reuse one), add a **Federated Credential** for GitHub Actions, then grant it:
-    
-    - At the **resource group** scope: **Contributor** and **User Access Administrator**  
-        (User Access Administrator is needed so Terraform can create role assignments, e.g., ACR Pull.)
+    - `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
         
-- Repo **Secrets**:
+- **One-time role assignments** (run by a Subscription Owner):
     
-    - `AZURE_CLIENT_ID`
+    - Assign your GitHub OIDC app **Contributor** + **User Access Administrator** at the **subscription** scope.  
+        This allows the workflows to **create the RG**, assign RG-scoped roles, and grant the **Storage Blob Data Contributor** role on the Terraform state account.
         
-    - `AZURE_TENANT_ID`
-        
-    - `AZURE_SUBSCRIPTION_ID`
+
+> The workflows create the **RG, ACR, KV, LA, TF state storage** if missing, and recover a **soft-deleted KV** automatically.
 
 ## 4) Repository layout
 ```
 .
 ├─ .github/workflows/
 │  ├─ ci.yml              # security CI (Checkov + Trivy)
-│  └─ deploy.yml          # infra bootstrap + build/push + deploy
+│  ├─ deploy.yml          # infra bootstrap + build/push + deploy
+│  └─ destroy.yml 
 ├─ app/
 │  ├─ api/                # FastAPI producer
 │  │  ├─ DOCKERFILE
@@ -152,37 +164,38 @@ Terraform **creates / manages**:
    └─ variables.tf
 ```
 
-## 5) CI/CD workflow (deploy.yml)
-The pipeline runs on pushes to `main` (and on demand):
+## 5) CI/CD workflow
+### CI (`.github/workflows/ci.yml`)
 
-1. **infra-bootstrap**
+- Build API & Worker (Docker Buildx, with cache)
     
-    - Azure OIDC login
-        
-    - Creates/ensures the **Terraform state storage** (Storage Account + container)
-        
-    - Grants the CI principal **Storage Blob Data Contributor** on the SA (for AAD data-plane auth)
-        
-    - `terraform init` with backend config (AAD auth)
-        
-    - Imports existing resources (safe if absent)
-        
-    - `terraform apply` for **infra only** (no apps yet)
-        
-2. **build-and-push**
+- Trivy image scan (HIGH/CRITICAL)
     
-    - Builds API and Worker images and pushes to **ACR**
-        
-3. **create-apps**
+- Checkov Terraform scan
     
-    - `terraform init` (same backend)
-        
-    - Imports Container Apps if they already exist (safe if absent)
-        
-    - `terraform apply` to deploy **api/worker** with the new image tags
-        
 
-> The workflow is idempotent and includes small guards: breaking stale TF state lease, safe imports, and a few retries.
+### Deploy (`.github/workflows/deploy.yml`)
+
+- Bootstrap **RG + KV (recover if soft-deleted) + ACR + LA + TF state**
+    
+- Ensure CI has **Storage Blob Data Contributor** on TF state SA (AAD backend)
+    
+- Terraform **apply** core infra (SB, KV secrets, ACA env, UAMI, etc.)
+    
+- Build & push images to ACR (tagged with commit SHA)
+    
+- Terraform **apply** apps (pull from ACR; KV secret refs; UAMI-backed)
+    
+- Prints the public **FastAPI URL** as output
+    
+
+### Destroy (`.github/workflows/destroy.yml`)
+
+- Terraform **destroy** all resources
+    
+- **Delete the entire RG** (async) to hit **$0**
+    
+- You can re-run **Deploy** anytime to fully recreate everything (including the RG)
 
 ## 6) First-run values (env)
 
