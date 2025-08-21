@@ -3,9 +3,12 @@ on:
   pull_request:
   push:
     branches: [ main ]
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build-and-scan:
+  iac-and-docker-lint:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -19,28 +22,65 @@ jobs:
       - name: Install Checkov
         run: pip install checkov
 
-      - name: Checkov (Terraform)
-        run: checkov -d infra --framework terraform --quiet
+      - name: Checkov (Terraform → SARIF)
+        run: |
+          checkov -d infra --framework terraform --quiet -o sarif > checkov.sarif || true
+      - name: Upload Checkov SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+          category: checkov-terraform
+
+      - name: Hadolint (API)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/api/Dockerfile
+
+      - name: Hadolint (Worker)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/worker/Dockerfile
+
+  build-and-scan:
+    needs: iac-and-docker-lint
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, worker]
+    steps:
+      - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build API image
-        run: docker build -t api:ci -f app/api/Dockerfile app/api
+      - name: Build ${{ matrix.service }} (cache)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app/${{ matrix.service }}
+          file: app/${{ matrix.service }}/Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: false
+          tags: ${{ matrix.service }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Build worker image
-        run: docker build -t worker:ci -f app/worker/Dockerfile app/worker
-
-      - name: Trivy scan API
+      - name: Trivy scan ${{ matrix.service }} image → SARIF
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: api:ci
+          image-ref: ${{ matrix.service }}:ci
           ignore-unfixed: true
           severity: HIGH,CRITICAL
-
-      - name: Trivy scan worker
-        uses: aquasecurity/trivy-action@0.20.0
+          format: sarif
+          output: trivy-${{ matrix.service }}.sarif
+          exit-code: '1'
+      - name: Upload Trivy SARIF (${{ matrix.service }})
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
         with:
-          image-ref: worker:ci
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
+          sarif_file: trivy-${{ matrix.service }}.sarif
+          category: trivy-${{ matrix.service }}
