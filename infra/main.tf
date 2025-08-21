@@ -15,7 +15,6 @@ provider "azurerm" {
 }
 
 locals {
-  rg_name     = "${var.prefix}-rg"
   acr_name    = "${var.prefix}acr"
   kv_name     = "${var.prefix}-kv"
   sb_ns_name  = "${var.prefix}-sbns"
@@ -24,7 +23,7 @@ locals {
   env_name    = "${var.prefix}-acaenv"
   api_name    = "${var.prefix}-api"
   worker_name = "${var.prefix}-worker"
-  uami_name   = "${var.prefix}-uami" # <— new: user-assigned identity
+  uami_name   = "${var.prefix}-uami"
 }
 
 # Existing RG
@@ -48,45 +47,69 @@ data "azurerm_key_vault" "kv" {
   resource_group_name = data.azurerm_resource_group.rg.name
 }
 
-data "azurerm_servicebus_namespace" "sb" {
+# ADD this:
+resource "azurerm_servicebus_namespace" "sb" {
   name                = local.sb_ns_name
+  location            = data.azurerm_resource_group.rg.location
   resource_group_name = data.azurerm_resource_group.rg.name
+  sku                 = var.servicebus_sku
+  tags                = var.tags
 }
+
 
 data "azurerm_client_config" "current" {}
 
-# --- New: user-assigned identity we can grant perms to BEFORE the apps exist ---
+# --- User-assigned identity we can grant perms to BEFORE the apps exist ---
 resource "azurerm_user_assigned_identity" "uami" {
   name                = local.uami_name
   location            = data.azurerm_resource_group.rg.location
   resource_group_name = data.azurerm_resource_group.rg.name
+  tags                = var.tags
 }
 
-# App Insights (created or imported)
+# Application Insights (workspace-linked)
 resource "azurerm_application_insights" "appi" {
   name                = local.ai_name
   location            = data.azurerm_resource_group.rg.location
   resource_group_name = data.azurerm_resource_group.rg.name
   application_type    = "web"
   workspace_id        = data.azurerm_log_analytics_workspace.la.id
+  tags                = var.tags
 }
 
-# Service Bus queue + SAS
+# Service Bus queue
 resource "azurerm_servicebus_queue" "q" {
   name                  = var.queue_name
-  namespace_id          = data.azurerm_servicebus_namespace.sb.id
+  namespace_id          = azurerm_servicebus_namespace.sb.id
   max_size_in_megabytes = 1024
 }
 
-resource "azurerm_servicebus_namespace_authorization_rule" "sas" {
-  name         = "app-shared"
-  namespace_id = data.azurerm_servicebus_namespace.sb.id
-  listen       = true
-  send         = true
-  manage       = true
+# ---------- Least-privilege authorization rules at QUEUE scope ----------
+resource "azurerm_servicebus_queue_authorization_rule" "q_send" {
+  name     = "api-send"
+  queue_id = azurerm_servicebus_queue.q.id
+  send     = true
 }
 
-# CI principal needs secret perms on KV (so CI can create/update the KV secret)
+resource "azurerm_servicebus_queue_authorization_rule" "q_listen" {
+  name     = "worker-listen"
+  queue_id = azurerm_servicebus_queue.q.id
+  listen   = true
+}
+
+# KEDA scaler needs Manage to read queue metrics
+resource "azurerm_servicebus_queue_authorization_rule" "q_manage" {
+  name     = "scale-manage"
+  queue_id = azurerm_servicebus_queue.q.id
+
+  # Manage implies both of these must be true
+  manage = true
+  listen = true
+  send   = true
+}
+
+# ---------- Key Vault access & secrets ----------
+# CI principal can manage secrets (used to create/update secrets & allow destroy)
 resource "azurerm_key_vault_access_policy" "kv_ci" {
   key_vault_id       = data.azurerm_key_vault.kv.id
   tenant_id          = data.azurerm_client_config.current.tenant_id
@@ -94,17 +117,35 @@ resource "azurerm_key_vault_access_policy" "kv_ci" {
   secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
-# Store the SB connection string in KV (CI writes it)
-resource "azurerm_key_vault_secret" "sb_conn" {
-  name            = "ServiceBusConnection"
-  value           = azurerm_servicebus_namespace_authorization_rule.sas.primary_connection_string
+# Store distinct SB connection strings in KV
+resource "azurerm_key_vault_secret" "sb_send" {
+  name            = "ServiceBusSend"
+  value           = azurerm_servicebus_queue_authorization_rule.q_send.primary_connection_string
   key_vault_id    = data.azurerm_key_vault.kv.id
-  content_type    = "servicebus-connection"
+  content_type    = "servicebus-send"
   expiration_date = timeadd(timestamp(), "8760h") # ~1 year
   depends_on      = [azurerm_key_vault_access_policy.kv_ci]
 }
 
-# Give the UAMI read on KV so apps can resolve the secret at creation time
+resource "azurerm_key_vault_secret" "sb_listen" {
+  name            = "ServiceBusListen"
+  value           = azurerm_servicebus_queue_authorization_rule.q_listen.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "servicebus-listen"
+  expiration_date = timeadd(timestamp(), "8760h")
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci]
+}
+
+resource "azurerm_key_vault_secret" "sb_manage" {
+  name            = "ServiceBusManage"
+  value           = azurerm_servicebus_queue_authorization_rule.q_manage.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "servicebus-manage"
+  expiration_date = timeadd(timestamp(), "8760h")
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci]
+}
+
+# Give the UAMI read on KV so apps can resolve secrets at creation time
 resource "azurerm_key_vault_access_policy" "kv_uami" {
   key_vault_id       = data.azurerm_key_vault.kv.id
   tenant_id          = data.azurerm_client_config.current.tenant_id
@@ -118,6 +159,7 @@ resource "azurerm_container_app_environment" "env" {
   location                   = data.azurerm_resource_group.rg.location
   resource_group_name        = data.azurerm_resource_group.rg.name
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
+  tags                       = var.tags
 }
 
 # --- API app ---
@@ -127,8 +169,8 @@ resource "azurerm_container_app" "api" {
   resource_group_name          = data.azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
+  tags                         = var.tags
 
-  # Use the pre-created UAMI
   identity {
     type         = "UserAssigned"
     identity_ids = [azurerm_user_assigned_identity.uami.id]
@@ -144,16 +186,15 @@ resource "azurerm_container_app" "api" {
     }
   }
 
-  # Pull images using the UAMI
   registry {
     server   = data.azurerm_container_registry.acr.login_server
     identity = azurerm_user_assigned_identity.uami.id
   }
 
-  # Resolve KV secret using the UAMI
+  # Secrets from Key Vault (and App Insights connection string)
   secret {
-    name                = "sb-conn"
-    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
+    name                = "sb-send"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_send.id
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
@@ -171,7 +212,7 @@ resource "azurerm_container_app" "api" {
 
       env {
         name        = "SERVICEBUS_CONN"
-        secret_name = "sb-conn"
+        secret_name = "sb-send"
       }
       env {
         name  = "QUEUE_NAME"
@@ -194,6 +235,7 @@ resource "azurerm_container_app" "worker" {
   resource_group_name          = data.azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
+  tags                         = var.tags
 
   identity {
     type         = "UserAssigned"
@@ -205,9 +247,16 @@ resource "azurerm_container_app" "worker" {
     identity = azurerm_user_assigned_identity.uami.id
   }
 
+  # KV-backed secrets for runtime and scaling
   secret {
-    name                = "sb-conn"
-    key_vault_secret_id = azurerm_key_vault_secret.sb_conn.id
+    name                = "sb-listen"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_listen.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
+  secret {
+    name                = "sb-manage"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_manage.id
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
@@ -225,7 +274,7 @@ resource "azurerm_container_app" "worker" {
 
       env {
         name        = "SERVICEBUS_CONN"
-        secret_name = "sb-conn"
+        secret_name = "sb-listen"
       }
       env {
         name  = "QUEUE_NAME"
@@ -248,7 +297,7 @@ resource "azurerm_container_app" "worker" {
         messageCount = "20"
       }
       authentication {
-        secret_name       = "sb-conn"
+        secret_name       = "sb-manage"
         trigger_parameter = "connection"
       }
     }
@@ -263,4 +312,28 @@ resource "azurerm_role_assignment" "acr_pull_uami" {
   scope                = data.azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.uami.principal_id
+}
+
+# -------- Optional: basic diagnostic metrics to Log Analytics --------
+# (Using only metrics = safest cross-resource option)
+resource "azurerm_monitor_diagnostic_setting" "sb_diag" {
+  name                       = "${local.sb_ns_name}-diag"
+  target_resource_id         = azurerm_servicebus_namespace.sb.id
+  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
+}
+
+resource "azurerm_monitor_diagnostic_setting" "aca_env_diag" {
+  name                       = "${local.env_name}-diag"
+  target_resource_id         = azurerm_container_app_environment.env.id
+  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
+
+  metric {
+    category = "AllMetrics"
+    enabled  = true
+  }
 }

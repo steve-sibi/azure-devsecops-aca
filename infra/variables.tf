@@ -33,3 +33,18 @@ variable "queue_name" {
   default     = "tasks"
   description = "Service Bus queue name."
 }
+
+variable "tags" {
+  type = map(string)
+  default = {
+    env = "dev"
+    app = "devsecopsaca"
+  }
+  description = "Common tags applied to tagged resources."
+}
+
+variable "servicebus_sku" {
+  type        = string
+  default     = "Basic" # or "Standard"
+  description = "SKU for the Service Bus namespace."
+}
