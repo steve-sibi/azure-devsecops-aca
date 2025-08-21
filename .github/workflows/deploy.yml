@@ -39,13 +39,41 @@ jobs:
         shell: bash
         run: |
           set -e
-          az group create -n "${{ env.RG }}" -l "${{ env.REGION }}" >/dev/null
-          az keyvault show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-kv" >/dev/null 2>&1 || \
-            az keyvault create -g "${{ env.RG }}" -n "${{ env.PREFIX }}-kv" -l "${{ env.REGION }}" >/dev/null
-          az acr show -g "${{ env.RG }}" -n "${{ env.PREFIX }}acr" >/dev/null 2>&1 || \
-            az acr create -g "${{ env.RG }}" -n "${{ env.PREFIX }}acr" -l "${{ env.REGION }}" --sku Basic >/dev/null
-          az monitor log-analytics workspace show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-la" >/dev/null 2>&1 || \
-            az monitor log-analytics workspace create -g "${{ env.RG }}" -n "${{ env.PREFIX }}-la" -l "${{ env.REGION }}" >/dev/null
+          RG="${{ env.RG }}"
+          REGION="${{ env.REGION }}"
+          PREFIX="${{ env.PREFIX }}"
+          KV="${PREFIX}-kv"
+          ACR="${PREFIX}acr"
+          LA="${PREFIX}-la"
+
+          # Ensure RG exists
+          az group create -n "$RG" -l "$REGION" >/dev/null
+
+          # --- Key Vault: create OR recover if soft-deleted ---
+          if az keyvault show -g "$RG" -n "$KV" >/dev/null 2>&1; then
+            echo "Key Vault $KV exists"
+          else
+            if az keyvault show-deleted -n "$KV" >/dev/null 2>&1; then
+              echo "Recovering soft-deleted Key Vault $KV"
+              az keyvault recover -n "$KV" >/dev/null
+              # Wait until recovery surfaces in RG
+              for i in {1..30}; do
+                az keyvault show -g "$RG" -n "$KV" >/dev/null 2>&1 && break
+                echo "Waiting for Key Vault recovery... ($i/30)"; sleep 5
+              done
+            else
+              echo "Creating Key Vault $KV"
+              az keyvault create -g "$RG" -n "$KV" -l "$REGION" >/dev/null
+            fi
+          fi
+
+          # --- ACR (idempotent) ---
+          az acr show -g "$RG" -n "$ACR" >/dev/null 2>&1 || \
+            az acr create -g "$RG" -n "$ACR" -l "$REGION" --sku Basic >/dev/null
+
+          # --- Log Analytics (idempotent) ---
+          az monitor log-analytics workspace show -g "$RG" -n "$LA" >/dev/null 2>&1 || \
+            az monitor log-analytics workspace create -g "$RG" -n "$LA" -l "$REGION" >/dev/null
 
       # TF state storage bootstrap (idempotent)
       - name: Bootstrap TF state storage
