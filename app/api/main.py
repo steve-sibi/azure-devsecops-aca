@@ -1,5 +1,4 @@
 # app/api/main.py
-import asyncio
 import json
 import os
 from contextlib import asynccontextmanager
@@ -19,6 +18,7 @@ SERVICEBUS_FQDN = os.getenv(
     "SERVICEBUS_FQDN"
 )  # e.g. "mynamespace.servicebus.windows.net"
 USE_MI = os.getenv("USE_MANAGED_IDENTITY", "false").lower() in ("1", "true", "yes")
+APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN")  # optional
 
 # Globals set during app startup
 sb_client: Optional[ServiceBusClient] = None
@@ -34,9 +34,10 @@ class TaskIn(BaseModel):
 async def lifespan(app: FastAPI):
     global sb_client, sb_sender
 
+    cred = None  # will hold DefaultAzureCredential if MI is used
+
     # --- Build Service Bus client ---
     if USE_MI:
-        # Optional MI path (requires azure-identity if you enable it)
         try:
             from azure.identity.aio import DefaultAzureCredential
         except Exception as e:
@@ -62,11 +63,10 @@ async def lifespan(app: FastAPI):
     await sb_sender.__aenter__()
 
     # --- Optional OpenTelemetry tracing (only if packages + conn are present) ---
-    APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN")
     if APPINSIGHTS_CONN:
         try:
+            from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
             from opentelemetry import trace
-            from opentelemetry.exporter.azure.monitor import AzureMonitorTraceExporter
             from opentelemetry.sdk.resources import SERVICE_NAME, Resource
             from opentelemetry.sdk.trace import TracerProvider
             from opentelemetry.sdk.trace.export import BatchSpanProcessor
@@ -79,7 +79,7 @@ async def lifespan(app: FastAPI):
             )
             provider.add_span_processor(BatchSpanProcessor(exporter))
         except Exception as e:
-            # Safe: telemetry is optional
+            # Optional; don't fail app startup on telemetry wiring issues
             print("OTel init skipped:", e)
 
     yield  # ---- App runs ----
@@ -89,13 +89,9 @@ async def lifespan(app: FastAPI):
         await sb_sender.__aexit__(None, None, None)
     if sb_client:
         await sb_client.__aexit__(None, None, None)
-
-    # Close MI credential if used
-    if USE_MI:
-        try:
-            await cred.__aexit__(None, None, None)  # type: ignore[name-defined]
-        except Exception:
-            pass
+    if cred:
+        # Properly close the async credential if used
+        await cred.close()
 
 
 app = FastAPI(title="FastAPI on Azure Container Apps", lifespan=lifespan)
@@ -120,7 +116,6 @@ async def enqueue_task(task: TaskIn):
         await sb_sender.send_messages(msg)
         return {"status": "queued", "item": task.payload}
     except ServiceBusError as e:
-        # Surface a safe error; logs will have the details
         raise HTTPException(
             status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
         )

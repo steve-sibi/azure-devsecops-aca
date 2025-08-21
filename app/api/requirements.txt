@@ -1,8 +1,10 @@
 fastapi==0.115.4
 uvicorn[standard]==0.30.6
 azure-servicebus~=7.12
-opencensus-ext-azure==1.1.13
+# Optional, for MI path in main.py:
 azure-identity>=1.16.0
+
+# OpenTelemetry (modern Azure Monitor exporter)
 opentelemetry-api>=1.22.0
 opentelemetry-sdk>=1.22.0
-opentelemetry-exporter-azure-monitor>=1.0.0b14
+azure-monitor-opentelemetry-exporter>=1.0.0b15
