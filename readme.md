@@ -18,7 +18,7 @@ Spin up a tiny **event-driven system** on Azure using **Terraform** and **GitHub
     
 - **Terraform backend** in a Storage Account (RBAC/AAD auth)
 
-> This README explains **what you get**, **how it works**, **how to run it**, **how to test/observe it**, and **how to clean up**. It also captures the snags we hit (and fixes), plus ideas for future expansion.
+> This README explains **what you get**, **how it works**, **how to run it**, **how to test/observe it**, and **how to clean up**. It also captures the snags I hit (and fixes), plus ideas for future expansion.
 
 ## 1) Architecture
 
