@@ -47,7 +47,6 @@ data "azurerm_key_vault" "kv" {
   resource_group_name = data.azurerm_resource_group.rg.name
 }
 
-# ADD this:
 resource "azurerm_servicebus_namespace" "sb" {
   name                = local.sb_ns_name
   location            = data.azurerm_resource_group.rg.location
