@@ -52,20 +52,19 @@ sequenceDiagram
   participant W as Worker (Container App)
   participant LA as Log Analytics
 
-  Note over API,W: SERVICEBUS_CONN is injected from Key Vault via ACA<br/>secret references at deploy time (using UAMI). No runtime KV calls.
+  Note over API,W: SERVICEBUS_CONN comes from Key Vault via ACA<br/>secret references at deploy time using the UAMI (no runtime KV calls).
 
   C->>API: POST /tasks {payload}
-  API->>SB: Send message (Send SAS)
+  API->>SB: Send message (SAS connection string)
 
-  KEDA->>SB: Poll queue length (Manage SAS)
+  KEDA->>SB: Poll queue length
   SB-->>KEDA: messageCount
   KEDA-->>W: Scale out replicas (min 0..max 5)
 
-  W->>SB: Receive messages (Listen SAS)
+  W->>SB: Receive messages
   W->>W: Process payload
   W->>SB: Complete message
   W-->>LA: Console logs (processing info)
-
 ```
 *Flow*
 - Client calls `POST /tasks` on the API → message goes to the Service Bus **queue**
@@ -143,11 +142,11 @@ sequenceDiagram
 
 ## 4) Repository layout
 ```
-.
+azure-devsecops-aca/
 ├─ .github/workflows/
 │  ├─ ci.yml              # security CI (Checkov + Trivy)
 │  ├─ deploy.yml          # infra bootstrap + build/push + deploy
-│  └─ destroy.yml 
+│  └─ destroy.yml         # terraform destroy (+ optional RG delete)
 ├─ app/
 │  ├─ api/                # FastAPI producer
 │  │  ├─ DOCKERFILE
@@ -157,11 +156,14 @@ sequenceDiagram
 │     ├─ DOCKERFILE
 │     ├─ worker.py
 │     └─ requirements.txt
-└─ infra/
-   ├─ backend.tf
-   ├─ main.tf
-   ├─ outputs.tf
-   └─ variables.tf
+├─ infra/
+│  ├─ backend.tf
+│  ├─ main.tf
+│  ├─ outputs.tf
+│  └─ variables.tf
+├─ docs/
+├─ checkov.yml
+└─ README.md
 ```
 
 ## 5) CI/CD workflow
