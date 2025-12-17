@@ -179,6 +179,13 @@ resource "azurerm_key_vault_access_policy" "kv_uami" {
   secret_permissions = ["Get", "List"]
 }
 
+# RBAC (preferred for KV): allow UAMI to read secrets
+resource "azurerm_role_assignment" "kv_secrets_uami" {
+  scope                = data.azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = azurerm_user_assigned_identity.uami.principal_id
+}
+
 # Container Apps Environment
 resource "azurerm_container_app_environment" "env" {
   name                       = local.env_name
