@@ -87,7 +87,7 @@ sequenceDiagram
 - **Key Vault**: `<prefix>-kv` (secrets for queue-level SAS)
     
 - **ACR**: `<prefix>acr`
-    
+
 - **Service Bus**:
     
     - Namespace: `<prefix>-sbns`
@@ -97,11 +97,19 @@ sequenceDiagram
     - **Queue SAS rules**:
         
         - `api-send` (**Send**)
-            
+        
         - `worker-listen` (**Listen**)
             
         - `scale-manage` (**Manage** + Listen + Send; scaler needs Manage)
             
+- **Storage (results)**:
+    
+    - Account: `<prefix>scan`
+        
+    - Table: `scanresults` (default)
+        
+    - KV secret: `ScanResultsConn` (table connection string for API/worker)
+        
 - **UAMI**: `<prefix>-uami` (granted ACR pull + KV secret read)
     
 - **ACA Environment**: `<prefix>-acaenv`
@@ -120,6 +128,8 @@ sequenceDiagram
 - Worker container env `SERVICEBUS_CONN` ← KV secret **(listen)**, secretRef e.g. `sb-listen`
     
 - KEDA scale rule auth uses KV secret **(manage)**, secretRef e.g. `sb-manage` (not injected into container)
+    
+- API/worker env `RESULT_STORE_CONN` and `RESULT_TABLE` for scan status storage (from Storage Table)
     
 
 > The apps use the connection string path by default. You can toggle **Managed Identity** in the API for Service Bus (`USE_MANAGED_IDENTITY=true` + `SERVICEBUS_FQDN`), but it’s optional.
@@ -325,7 +335,11 @@ To restart later, just re-run the **Deploy** workflow.
 ## 13) How the app code works (quick tour)
 **API (`app/api/main.py`)**
 
-- `POST /enqueue` -> validates JSON, sends to queue using the connection string from KV secret `sb-conn`.
+- `POST /tasks` -> validates JSON, sends to queue using the connection string from KV secret `sb-conn`.
+    
+- `POST /scan` -> accepts an HTTPS URL + optional metadata, enqueues a scan job with `job_id`/`correlation_id`, and records a queued status in the results table.
+    
+- `GET /scan/{job_id}` -> reads the results table and returns the current status/verdict.
     
 - `GET /health` -> basic health.
     
@@ -334,9 +348,7 @@ To restart later, just re-run the **Deploy** workflow.
 
 - Uses `azure-servicebus` to receive messages.
     
-- Logs `"Processing: <payload>"`.
-    
-- In a production scenario you would **renew the lock** during long work and call `complete_message()` on success.
+- For scan jobs: downloads HTTPS content with size/time caps, runs a lightweight heuristic scan placeholder, and writes status/verdicts to the table. DLQs after `MAX_RETRIES`.
 
 ## 14) Extending this project (future work)
 

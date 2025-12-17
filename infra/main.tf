@@ -24,6 +24,8 @@ locals {
   api_name    = "${var.prefix}-api"
   worker_name = "${var.prefix}-worker"
   uami_name   = "${var.prefix}-uami"
+  results_sa  = "${var.prefix}scan"
+  results_table = var.results_table_name
 }
 
 # Existing RG
@@ -81,6 +83,23 @@ resource "azurerm_servicebus_queue" "q" {
   name                  = var.queue_name
   namespace_id          = azurerm_servicebus_namespace.sb.id
   max_size_in_megabytes = 1024
+}
+
+# Storage for scan results (Table)
+resource "azurerm_storage_account" "results" {
+  name                            = local.results_sa
+  resource_group_name             = data.azurerm_resource_group.rg.name
+  location                        = data.azurerm_resource_group.rg.location
+  account_tier                    = "Standard"
+  account_replication_type        = "LRS"
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+  tags                            = var.tags
+}
+
+resource "azurerm_storage_table" "results" {
+  name                 = local.results_table
+  storage_account_name = azurerm_storage_account.results.name
 }
 
 # ---------- Least-privilege authorization rules at QUEUE scope ----------
@@ -144,6 +163,14 @@ resource "azurerm_key_vault_secret" "sb_manage" {
   depends_on      = [azurerm_key_vault_access_policy.kv_ci]
 }
 
+resource "azurerm_key_vault_secret" "results_conn" {
+  name            = "ScanResultsConn"
+  value           = azurerm_storage_account.results.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "table-connection-string"
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci]
+}
+
 # Give the UAMI read on KV so apps can resolve secrets at creation time
 resource "azurerm_key_vault_access_policy" "kv_uami" {
   key_vault_id       = data.azurerm_key_vault.kv.id
@@ -202,6 +229,12 @@ resource "azurerm_container_app" "api" {
     value = azurerm_application_insights.appi.connection_string
   }
 
+  secret {
+    name                = "results-conn"
+    key_vault_secret_id = azurerm_key_vault_secret.results_conn.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
   template {
     container {
       name   = "api"
@@ -220,6 +253,14 @@ resource "azurerm_container_app" "api" {
       env {
         name        = "APPINSIGHTS_CONN"
         secret_name = "appi-conn"
+      }
+      env {
+        name        = "RESULT_STORE_CONN"
+        secret_name = "results-conn"
+      }
+      env {
+        name  = "RESULT_TABLE"
+        value = local.results_table
       }
     }
   }
@@ -264,6 +305,12 @@ resource "azurerm_container_app" "worker" {
     value = azurerm_application_insights.appi.connection_string
   }
 
+  secret {
+    name                = "results-conn"
+    key_vault_secret_id = azurerm_key_vault_secret.results_conn.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
   template {
     container {
       name   = "worker"
@@ -282,6 +329,14 @@ resource "azurerm_container_app" "worker" {
       env {
         name        = "APPINSIGHTS_CONN"
         secret_name = "appi-conn"
+      }
+      env {
+        name        = "RESULT_STORE_CONN"
+        secret_name = "results-conn"
+      }
+      env {
+        name  = "RESULT_TABLE"
+        value = local.results_table
       }
     }
 

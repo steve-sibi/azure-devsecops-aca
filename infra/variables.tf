@@ -48,3 +48,9 @@ variable "servicebus_sku" {
   default     = "Basic" # or "Standard"
   description = "SKU for the Service Bus namespace."
 }
+
+variable "results_table_name" {
+  type        = string
+  default     = "scanresults"
+  description = "Table name for storing scan results."
+}
