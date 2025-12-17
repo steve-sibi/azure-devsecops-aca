@@ -64,7 +64,7 @@ jobs:
           file: app/${{ matrix.service }}/Dockerfile
           platforms: linux/amd64
           push: false
-          load: false
+          load: true # load into local Docker so Trivy can scan
           tags: ${{ matrix.service }}:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
