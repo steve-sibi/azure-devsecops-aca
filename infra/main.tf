@@ -135,6 +135,13 @@ resource "azurerm_key_vault_access_policy" "kv_ci" {
   secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
+# Ensure the principal running Terraform can use Key Vault when RBAC is enabled
+resource "azurerm_role_assignment" "kv_tf" {
+  scope                = data.azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets Officer"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
 # Store distinct SB connection strings in KV
 resource "azurerm_key_vault_secret" "sb_send" {
   name            = "ServiceBusSend"
@@ -142,7 +149,7 @@ resource "azurerm_key_vault_secret" "sb_send" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-send"
   expiration_date = timeadd(timestamp(), "8760h") # ~1 year
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci]
+  depends_on      = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_listen" {
@@ -151,7 +158,7 @@ resource "azurerm_key_vault_secret" "sb_listen" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-listen"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci]
+  depends_on      = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_manage" {
@@ -160,7 +167,7 @@ resource "azurerm_key_vault_secret" "sb_manage" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-manage"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci]
+  depends_on      = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "results_conn" {
@@ -168,7 +175,7 @@ resource "azurerm_key_vault_secret" "results_conn" {
   value           = azurerm_storage_account.results.primary_connection_string
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "table-connection-string"
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci]
+  depends_on      = [azurerm_role_assignment.kv_tf]
 }
 
 # Give the UAMI read on KV so apps can resolve secrets at creation time
