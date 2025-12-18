@@ -13,7 +13,7 @@ from urllib.parse import urljoin, urlparse
 import requests
 from azure.servicebus import ServiceBusClient
 from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
-from azure.data.tables import TableServiceClient
+from azure.data.tables import TableClient, TableServiceClient
 from azure.core.exceptions import HttpResponseError
 
 # ---- Config via env ----
@@ -51,7 +51,7 @@ if APPINSIGHTS_CONN:
         logging.warning(f"App Insights logging not enabled: {e}")
 
 shutdown = False
-table_client: Optional[TableServiceClient] = None
+table_client: Optional[TableClient] = None
 
 
 def _signal_handler(*_):
@@ -248,11 +248,9 @@ def main():
         SERVICEBUS_CONN, logging_enable=True
     )
     global table_client
-    table_service = TableServiceClient.from_connection_string(
-        conn_str=RESULT_STORE_CONN
-    )
+    table_service = TableServiceClient.from_connection_string(conn_str=RESULT_STORE_CONN)
+    table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
     table_client = table_service.get_table_client(table_name=RESULT_TABLE)
-    table_client.create_table_if_not_exists()
 
     logging.info("[worker] started; waiting for messages...")
 
