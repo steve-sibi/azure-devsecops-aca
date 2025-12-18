@@ -1,14 +1,15 @@
-# DevSecOps Microservice on Azure
+# DevSecOps URL Scanner on Azure (ACA)
 
-Spin up a tiny **event-driven system** on **Azure Container Apps (ACA)** using **Terraform** and **GitHub Actions (OIDC)**:
+End-to-end, cloud-native **URL scanning pipeline** on **Azure Container Apps (ACA)** using **Terraform** and **GitHub Actions (OIDC)**.
 
-- **FastAPI** service (`POST /tasks`) enqueues JSON to **Azure Service Bus** (queue)
-- **Worker** service consumes messages and processes them (scales 0→N with **KEDA**)
-- **Terraform** provisions all cloud resources
-- **GitHub Actions** handles **CI** (scan) + **Deploy** + **Destroy**
-- **Key Vault** stores **queue-level SAS** (send, listen, manage) resolved at deploy time
-- **User-Assigned Managed Identity (UAMI)** pulls images from ACR and resolves KV secrets
-- **Log Analytics + (optional) App Insights (OTel)** for observability
+What this project demonstrates (resume-friendly):
+
+- **Secure API surface**: `X-API-Key` auth + per-key rate limiting + SSRF protections
+- **Async job processing**: API enqueues scan jobs to **Service Bus**, worker processes jobs (KEDA autoscaling)
+- **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`)
+- **DevSecOps CI/CD**: Checkov + Trivy in CI; Deploy workflow includes health + end-to-end smoke tests
+- **Cloud-native secrets**: **Key Vault** stores secrets, resolved by **UAMI** at deploy/runtime
+- **Built-in UI**: minimal dashboard at `/` plus Swagger at `/docs`
 
 > Shareable, reproducible, “nuke-and-recreate” demo or starter for lightweight production.
 
@@ -19,13 +20,13 @@ Spin up a tiny **event-driven system** on **Azure Container Apps (ACA)** using *
 ```
             ┌──────────────┐       (SAS conn string stored in Key Vault)
 HTTP POST ─►│  FastAPI     │ ───────────────────────────────────────────────────┐
-            │  /tasks      │                                                    │
+            │  /scan       │                                                    │
             └──────┬───────┘                                                    │
                    │ (send message)                                             │
                    ▼                                                            │
            ┌────────────────┐         KV ref ┌────────────────────┐             │
            │ Service Bus    │◄───────────────│ Azure Key Vault    │             │
-           │ Queue (tasks)  │                │ secrets: sb-*      │             │
+           │ Queue (tasks)  │                │ secrets: sb-* + ApiKey           │
            └────────┬───────┘                └────────────────────┘             │
                     │ (scale trigger)                                           │
                     │ via KEDA                                                  │
@@ -34,11 +35,13 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
            │ Worker (Container  │◄──────────────────────────────────────────────┘
            │ Apps, min=0)       │
            └────────────────────┘
-                    │
-                    ▼
-           ┌─────────────────────┐
-           │    Log Analytics    │   (logs/metrics; optional traces to App Insights)
-           └─────────────────────┘
+                 │         │
+        (writes results)   │ (logs/metrics)
+                 ▼         ▼
+      ┌────────────────┐  ┌─────────────────────┐
+      │ Azure Table    │  │    Log Analytics    │   (optional traces to App Insights)
+      │ scanresults    │  └─────────────────────┘
+      └────────────────┘
 ```
 *Runtime Sequence*
 
@@ -50,11 +53,13 @@ sequenceDiagram
   participant SB as Service Bus Queue (tasks)
   participant KEDA as KEDA Scaler
   participant W as Worker (Container App)
+  participant T as Azure Table Storage (scanresults)
   participant LA as Log Analytics
 
-  Note over API,W: SERVICEBUS_CONN comes from Key Vault via ACA<br/>secret references at deploy time using the UAMI (no runtime KV calls).
+  Note over API,W: Secrets (Service Bus + ApiKey + results conn) come from Key Vault via ACA<br/>secret references at deploy time using the UAMI (no runtime KV calls).
 
-  C->>API: POST /tasks {payload}
+  C->>API: POST /scan {url}
+  API->>T: Upsert status=queued
   API->>SB: Send message (SAS connection string)
 
   KEDA->>SB: Poll queue length
@@ -62,17 +67,23 @@ sequenceDiagram
   KEDA-->>W: Scale out replicas (min 0..max 5)
 
   W->>SB: Receive messages
-  W->>W: Process payload
+  W->>W: Download + scan (SSRF protected)
+  W->>T: Upsert status=completed/error
   W->>SB: Complete message
   W-->>LA: Console logs (processing info)
+
+  C->>API: GET /scan/{job_id}
+  API->>T: Read status/verdict
+  API-->>C: JSON result
 ```
 *Flow*
-- Client calls `POST /tasks` on the API → message goes to the Service Bus **queue**
+- Client calls `POST /scan` on the API → message goes to the Service Bus **queue**
     
 - KEDA scales the worker based on **queue depth**
     
 - Worker receives, processes, and completes messages
     
+- Results are written to **Table Storage** (`scanresults`) and can be fetched via `GET /scan/{job_id}`
 - Logs land in **Log Analytics**; optional traces in **App Insights**
 
 
@@ -84,7 +95,7 @@ sequenceDiagram
     
 - **Application Insights**: `<prefix>-appi` (workspace-based)
     
-- **Key Vault**: `<prefix>-kv` (secrets for queue-level SAS)
+- **Key Vault**: `<prefix>-kv` (secrets: Service Bus SAS, scan results conn, API key)
     
 - **ACR**: `<prefix>acr`
 
@@ -124,6 +135,7 @@ sequenceDiagram
 **Secrets (via Key Vault references, resolved by ACA):**
 
 - API container env `SERVICEBUS_CONN` ← KV secret **(send)**, secretRef e.g. `sb-send`
+- API container env `API_KEY` ← KV secret `ApiKey`, secretRef `api-key`
     
 - Worker container env `SERVICEBUS_CONN` ← KV secret **(listen)**, secretRef e.g. `sb-listen`
     
@@ -150,6 +162,21 @@ sequenceDiagram
 
 > The workflows create the **RG, ACR, KV, LA, TF state storage** if missing, and recover a **soft-deleted KV** automatically.
 
+### One-time setup (Azure + GitHub OIDC checklist)
+
+1. Create an **Entra ID App Registration** (service principal) for GitHub Actions.
+2. Add a **Federated Credential** to the app registration (no client secret):
+   - Issuer: `https://token.actions.githubusercontent.com`
+   - Subject: `repo:<owner>/<repo>:ref:refs/heads/main`
+   - Audience: `api://AzureADTokenExchange`
+3. Assign the service principal:
+   - `Contributor` (subscription scope)
+   - `User Access Administrator` (subscription scope; needed so the workflow can create RBAC assignments for the TF state data plane)
+4. Add GitHub repo secrets:
+   - `AZURE_CLIENT_ID` (app/client id)
+   - `AZURE_TENANT_ID`
+   - `AZURE_SUBSCRIPTION_ID`
+
 ## 4) Repository layout
 ```
 azure-devsecops-aca/
@@ -159,11 +186,11 @@ azure-devsecops-aca/
 │  └─ destroy.yml         # terraform destroy (+ optional RG delete)
 ├─ app/
 │  ├─ api/                # FastAPI producer
-│  │  ├─ DOCKERFILE
+│  │  ├─ Dockerfile
 │  │  ├─ main.py
 │  │  └─ requirements.txt
 │  └─ worker/             # queue consumer
-│     ├─ DOCKERFILE
+│     ├─ Dockerfile
 │     ├─ worker.py
 │     └─ requirements.txt
 ├─ infra/
@@ -173,7 +200,7 @@ azure-devsecops-aca/
 │  └─ variables.tf
 ├─ docs/
 ├─ checkov.yml
-└─ README.md
+└─ readme.md
 ```
 
 ## 5) CI/CD workflow
@@ -199,6 +226,12 @@ azure-devsecops-aca/
 - Terraform **apply** apps (pull from ACR; KV secret refs; UAMI-backed)
     
 - Prints the public **FastAPI URL** as output
+
+- Runs smoke tests:
+    - `GET /healthz`
+    - end-to-end scan: `POST /scan` then poll `GET /scan/{job_id}` until `completed`
+
+> Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI/Deploy on push.
     
 
 ### Destroy (`.github/workflows/destroy.yml`)
@@ -213,27 +246,67 @@ azure-devsecops-aca/
 
 ### API key (required)
 
-The **Deploy** workflow generates an API key and stores it in **Key Vault** as the secret `ApiKey`.
+The **Deploy** workflow generates a (shared) API key and stores it in **Key Vault** as the secret `ApiKey`.
+
+- The deploy workflow uses the key for its smoke/e2e tests, but **does not print it** to GitHub Actions logs.
+- If you’re consuming someone else’s deployment, you’ll need the owner to share an API key (there is no self-service signup yet).
 
 Retrieve it with Azure CLI (example):
 
-`KV_NAME="<prefix>-kv"  API_KEY="$(az keyvault secret show --vault-name "$KV_NAME" --name ApiKey --query value -o tsv)"`
+```bash
+KV_NAME="<prefix>-kv"
+API_KEY="$(az keyvault secret show --vault-name "$KV_NAME" --name ApiKey --query value -o tsv)"
+```
+
+If you get `ForbiddenByRbac`, your identity doesn’t have Key Vault RBAC to read secrets. Grant yourself the **Key Vault Secrets User** role on the vault (example):
+
+```bash
+RG="<resource-group>"
+KV_NAME="<prefix>-kv"
+KV_ID="$(az keyvault show -g "$RG" -n "$KV_NAME" --query id -o tsv)"
+ME_OID="$(az ad signed-in-user show --query id -o tsv)"
+
+az role assignment create \
+  --assignee-object-id "$ME_OID" \
+  --assignee-principal-type User \
+  --role "Key Vault Secrets User" \
+  --scope "$KV_ID"
+```
+
+Then wait ~30–60 seconds for RBAC propagation and retry.
 
 Use it on requests:
 
 `-H "X-API-Key: $API_KEY"`
 
+#### Rotate the API key (optional)
+
+If you want to rotate the shared key, replace the Terraform resource and apply again:
+
+```bash
+cd infra
+terraform apply \
+  -replace="random_password.api_key" \
+  -var="create_apps=true" \
+  -var="image_tag=<tag>"
+```
+
 ### Security defaults
 
 - **SSRF protection**: only `https://` targets on port **443**; blocks targets that resolve to non-public IP ranges.
 - **Rate limiting**: `60` requests/minute per API key (configure via Terraform var `api_rate_limit_rpm`).
+- **Defense in depth**: the worker re-validates targets and validates every redirect hop.
 
 ## 7) Running it
 - Push to `main` or trigger the **Deploy** workflow.
     
 - After **create-apps**, get the public API URL:
 
-`az containerapp show \   -g rg-devsecops-aca \   -n devsecopsaca-api \   --query properties.configuration.ingress.fqdn -o tsv`
+```bash
+API_FQDN="$(az containerapp show -g rg-devsecops-aca -n devsecopsaca-api --query properties.configuration.ingress.fqdn -o tsv)"
+API_URL="https://${API_FQDN}"
+echo "$API_URL"
+```
 
 `infra/outputs.tf` also exposes a `fastapi_url` output if you run Terraform locally.
 
@@ -245,6 +318,14 @@ Use it on requests:
 4. Open the web UI at `https://<api-fqdn>/` and paste the API key.
 5. Submit a scan and watch status/results update in the UI.
 
+Example CLI setup:
+
+```bash
+API_FQDN="$(az containerapp show -g rg-devsecops-aca -n devsecopsaca-api --query properties.configuration.ingress.fqdn -o tsv)"
+API_URL="https://${API_FQDN}"
+API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --query value -o tsv)"
+```
+
 ## 8) Using the API
 
 ### GUI + Swagger
@@ -255,10 +336,46 @@ Use it on requests:
 
 ### Endpoints
 
+- `GET /` (no auth; dashboard UI)
 - `GET /healthz` (no auth)
 - `POST /tasks` (requires API key)
 - `POST /scan` (requires API key)
 - `GET /scan/{job_id}` (requires API key)
+
+### Try it (CLI)
+
+Submit a scan:
+
+```bash
+submit="$(curl -sS -X POST "${API_URL}/scan" \
+  -H "content-type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{"url":"https://example.com","type":"url"}')"
+
+JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_id"])' <<<"$submit")"
+echo "JOB_ID=$JOB_ID"
+```
+
+Poll for status/result:
+
+```bash
+curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}" | python3 -m json.tool
+```
+
+Test “malicious” behavior (demo heuristic): use a URL containing `test-malicious`:
+
+```bash
+curl -sS -X POST "${API_URL}/scan" \
+  -H "content-type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{"url":"https://example.com/test-malicious","type":"url"}'
+```
+
+### Where are scan results stored?
+
+- **Primary**: `GET /scan/{job_id}` (reads from Table Storage)
+- **GitHub Actions**: open the Deploy run and find the `job_id=...` line under “End-to-end scan test” (you can query it via the API afterwards)
+- **Azure Portal (optional)**: Storage account `<prefix>scan` → Table service → `scanresults` (PartitionKey `scan`)
 
 ### Logs (CLI)
 
@@ -282,23 +399,51 @@ Worker is configured:
 - `min_replicas = 0`, `max_replicas = 5`
     
 - 1 replica per **20 messages**:
-    
-    `custom_scale_rule {   name             = "sb-scaler"   custom_rule_type = "azure-servicebus"   metadata = { queueName = var.queue_name, messageCount = "20" }   authentication {     secret_name       = "sb-manage"     trigger_parameter = "connection"   } }`
+```hcl
+custom_scale_rule {
+  name             = "sb-scaler"
+  custom_rule_type = "azure-servicebus"
+  metadata = {
+    queueName    = var.queue_name
+    messageCount = "20"
+  }
+  authentication {
+    secret_name       = "sb-manage"
+    trigger_parameter = "connection"
+  }
+}
+```
     
 
 Verify replicas:
 
-`az containerapp show -g rg-devsecops-aca -n devsecopsaca-worker \   --query properties.template.replicas -o tsv`
+```bash
+az containerapp show -g rg-devsecops-aca -n devsecopsaca-worker \
+  --query properties.template.replicas -o tsv
+```
 
 Send a burst of messages to see it scale:
 
-`for i in {1..100}; do   curl -sS -X POST "https://${API_FQDN}/tasks" \        -H "content-type: application/json" \        -H "X-API-Key: $API_KEY" \        -d '{"payload":{"hello":"world"}}' >/dev/null; done`
+```bash
+for i in {1..25}; do
+  curl -sS -X POST "${API_URL}/scan" \
+    -H "content-type: application/json" \
+    -H "X-API-Key: ${API_KEY}" \
+    -d '{"url":"https://example.com","type":"url"}' >/dev/null
+done
+```
 
 Submit a scan job and poll for completion:
 
-`JOB_ID="$(curl -sS -X POST "https://${API_FQDN}/scan" -H "content-type: application/json" -H "X-API-Key: $API_KEY" -d '{"url":"https://example.com","type":"url"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])')"`
+```bash
+JOB_ID="$(curl -sS -X POST "${API_URL}/scan" \
+  -H "content-type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{"url":"https://example.com","type":"url"}' \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])')"
 
-`curl -sS "https://${API_FQDN}/scan/${JOB_ID}" -H "X-API-Key: $API_KEY"`
+curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}"
+```
 
 ### Common errors & fixes
 
@@ -318,11 +463,15 @@ Submit a scan job and poll for completion:
         
 - **KEDA not scaling**
     
-    - Make sure the SAS rule used for the connection string has **Listen** permission (we set Listen+Send on `app-shared`).
+    - Ensure the scaler secret `sb-manage` comes from the `scale-manage` SAS rule (it must include **Manage**).
         
     - Queue name in the scaler metadata matches the actual queue.
         
     - Generate enough messages to exceed `messageCount` threshold.
+
+- **Scan stays `queued`**
+    - The worker likely isn’t processing messages. Check worker logs:
+      `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-worker --type console --follow --container worker`
         
 - **Max delivery count / DLQ**  
     Your worker must `complete_message()` (or `abandon/dead_letter` appropriately) and auto-renew locks for long work. See the “max delivery” notes in the discussion above.
@@ -352,14 +501,36 @@ Submit a scan job and poll for completion:
 ## 10) Working with Terraform locally
 If you want to inspect or modify:
 
-`cd infra  terraform init \   -backend-config="resource_group_name=rg-devsecops-aca" \   -backend-config="storage_account_name=stdevsecopsacatfstate" \   -backend-config="container_name=tfstate" \   -backend-config="key=devsecopsaca.tfstate" \   -backend-config="use_azuread_auth=true"  terraform plan \   -var="prefix=devsecopsaca" \   -var="location=eastus" \   -var="resource_group_name=rg-devsecops-aca" \   -var="queue_name=tasks" \   -var="create_apps=true" \   -var="image_tag=<some-tag>"`
+```bash
+cd infra
+terraform init \
+  -backend-config="resource_group_name=rg-devsecops-aca" \
+  -backend-config="storage_account_name=stdevsecopsacatfstate" \
+  -backend-config="container_name=tfstate" \
+  -backend-config="key=devsecopsaca.tfstate" \
+  -backend-config="use_azuread_auth=true"
+
+terraform plan \
+  -var="prefix=devsecopsaca" \
+  -var="location=eastus" \
+  -var="resource_group_name=rg-devsecops-aca" \
+  -var="queue_name=tasks" \
+  -var="create_apps=true" \
+  -var="image_tag=<some-tag>"
+```
 
 > If you see a state **lease** error, break the stale lease:
 > 
-> `az storage blob lease break \   --account-name stdevsecopsacatfstate \   --container-name tfstate \   --blob-name devsecopsaca.tfstate \   --auth-mode login`
+> ```bash
+> az storage blob lease break \
+>   --account-name stdevsecopsacatfstate \
+>   --container-name tfstate \
+>   --blob-name devsecopsaca.tfstate \
+>   --auth-mode login
+> ```
 
 ## 11) Costs & clean-up
-- **Service Bus Standard**, **App Insights/Log Analytics**, and image storage can incur cost even when apps scale to zero.
+- **Service Bus (Basic by default)**, **App Insights/Log Analytics**, and image storage can incur cost even when apps scale to zero.
     
 - Easiest **stop** options:
     
@@ -367,7 +538,15 @@ If you want to inspect or modify:
         
     2. **Terraform destroy** (recommended; only removes Terraform-managed resources):
         
-        `cd infra terraform destroy \   -var="prefix=devsecopsaca" \   -var="location=eastus" \   -var="resource_group_name=rg-devsecops-aca" \   -var="queue_name=tasks" \   -var="create_apps=true"`
+        ```bash
+        cd infra
+        terraform destroy \
+          -var="prefix=devsecopsaca" \
+          -var="location=eastus" \
+          -var="resource_group_name=rg-devsecops-aca" \
+          -var="queue_name=tasks" \
+          -var="create_apps=true"
+        ```
         
     3. As a last resort: delete the **resource group** (will also delete base resources you might want to keep).
         
@@ -388,7 +567,7 @@ To restart later, just re-run the **Deploy** workflow.
 
 - `POST /tasks` -> validates JSON, sends to queue using the connection string from the ACA secret `sb-send` (sourced from Key Vault).
     
-- `POST /scan` -> accepts an HTTPS URL + optional metadata, enqueues a scan job with `job_id`/`correlation_id`, and records a queued status in the results table.
+- `POST /scan` -> requires `X-API-Key`, enforces SSRF protections, enqueues a scan job, and records a queued status in the results table.
     
 - `GET /scan/{job_id}` -> reads the results table and returns the current status/verdict.
     
@@ -403,10 +582,23 @@ To restart later, just re-run the **Deploy** workflow.
 
 ## 14) Extending this project (future work)
 
+- **Per-user API keys**: store *hashed* keys in Table Storage, add admin endpoints to mint/revoke keys, and attach per-key quotas.
+- **Replace the scan placeholder**: add a real engine (YARA rules, ClamAV, headless browser analysis, etc.) inside the worker.
+- **Front the API**: add API Management / Front Door + WAF, request validation, and centralized auth.
+- **DAST in CI**: run OWASP ZAP against the deployed `/scan` endpoint using a non-prod API key.
+- **Supply-chain hardening**: SBOM generation (Syft), vulnerability gating (Grype), image signing (Cosign), and provenance.
+- **Alerting**: create Log Analytics queries + Azure Monitor alerts for spikes in 4xx/5xx, queue depth, and worker DLQs.
+
 ## 15) FAQ
 
 **Where is my API URL?**  
 `az containerapp show -g rg-devsecops-aca -n devsecopsaca-api --query properties.configuration.ingress.fqdn -o tsv`
+
+**How do I view the end-to-end scan test result?**  
+Open the Deploy workflow logs → “End-to-end scan test” prints `job_id=...`. Query it with `GET /scan/{job_id}` (or use the web UI at `/`).
+
+**How do I get an API key?**  
+If you deployed your own instance, read Key Vault secret `ApiKey`. Otherwise, the deployment owner must share a key (no public signup yet).
 
 **How do I tail logs?**  
 `az containerapp logs show -g <rg> -n <app> --type console --follow`
