@@ -11,3 +11,6 @@ azure-monitor-opentelemetry-exporter>=1.0.0b15
 
 # Table storage for scan results
 azure-data-tables>=12.6.0
+
+# Required for azure-* async clients (azure.data.tables.aio -> AioHttpTransport)
+aiohttp>=3.9.5,<4.0.0
