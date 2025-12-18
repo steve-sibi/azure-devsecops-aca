@@ -1,9 +1,10 @@
-# DevSecOps URL Scanner on Azure (ACA)
+# URL Scanner Pipeline on Azure (ACA)
 
 End-to-end, cloud-native **URL scanning pipeline** on **Azure Container Apps (ACA)** using **Terraform** and **GitHub Actions (OIDC)**.
 
 What this project demonstrates (resume-friendly):
 
+- **DevSecOps Approach**: Focused on implementing infrastructure in an automated, shift-left manner
 - **Secure API surface**: `X-API-Key` auth + per-key rate limiting + SSRF protections
 - **Async job processing**: API enqueues scan jobs to **Service Bus**, worker processes jobs (KEDA autoscaling)
 - **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`)
