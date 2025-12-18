@@ -309,16 +309,32 @@ jobs:
           set -euo pipefail
           API_URL="$(terraform output -raw fastapi_url)"
           echo "API_URL=$API_URL"
+          RG="${{ env.RG }}"
+          APP="${{ env.PREFIX }}-api"
+
+          diagnose () {
+            az containerapp show -g "$RG" -n "$APP" -o table || true
+            az containerapp revision list -g "$RG" -n "$APP" -o table || true
+            az containerapp logs show -g "$RG" -n "$APP" --type system --tail 200 || true
+            az containerapp logs show -g "$RG" -n "$APP" --type console --tail 200 || true
+          }
+
           for i in {1..30}; do
-            code="$(curl -sS -o /dev/null -w '%{http_code}' "${API_URL}/healthz" || true)"
+            code="$(curl --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "${API_URL}/healthz" || true)"
             if [ "$code" = "200" ]; then
               echo "API is healthy."
               exit 0
             fi
             echo "Waiting for API... ($i/30) HTTP $code"
+            if [ "$i" = "1" ] || [ "$i" = "10" ] || [ "$i" = "20" ]; then
+              echo "---- ACA diagnostics (attempt $i) ----"
+              diagnose
+              echo "--------------------------------------"
+            fi
             sleep 10
           done
           echo "API did not become healthy in time."
+          diagnose
           exit 1
 
       - name: Dump ACA logs (on smoke failure)
