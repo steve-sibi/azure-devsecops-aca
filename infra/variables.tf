@@ -28,6 +28,18 @@ variable "image_tag" {
   description = "Tag for images to deploy (CI sets to commit SHA)."
 }
 
+variable "api_min_replicas" {
+  type        = number
+  default     = 1
+  description = "Minimum replicas for the API Container App."
+}
+
+variable "api_max_replicas" {
+  type        = number
+  default     = 3
+  description = "Maximum replicas for the API Container App."
+}
+
 variable "queue_name" {
   type        = string
   default     = "tasks"

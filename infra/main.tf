@@ -15,16 +15,16 @@ provider "azurerm" {
 }
 
 locals {
-  acr_name    = "${var.prefix}acr"
-  kv_name     = "${var.prefix}-kv"
-  sb_ns_name  = "${var.prefix}-sbns"
-  la_name     = "${var.prefix}-la"
-  ai_name     = "${var.prefix}-appi"
-  env_name    = "${var.prefix}-acaenv"
-  api_name    = "${var.prefix}-api"
-  worker_name = "${var.prefix}-worker"
-  uami_name   = "${var.prefix}-uami"
-  results_sa  = "${var.prefix}scan"
+  acr_name      = "${var.prefix}acr"
+  kv_name       = "${var.prefix}-kv"
+  sb_ns_name    = "${var.prefix}-sbns"
+  la_name       = "${var.prefix}-la"
+  ai_name       = "${var.prefix}-appi"
+  env_name      = "${var.prefix}-acaenv"
+  api_name      = "${var.prefix}-api"
+  worker_name   = "${var.prefix}-worker"
+  uami_name     = "${var.prefix}-uami"
+  results_sa    = "${var.prefix}scan"
   results_table = var.results_table_name
 }
 
@@ -149,7 +149,7 @@ resource "azurerm_key_vault_secret" "sb_send" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-send"
   expiration_date = timeadd(timestamp(), "8760h") # ~1 year
-  depends_on      = [azurerm_role_assignment.kv_tf]
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_listen" {
@@ -158,7 +158,7 @@ resource "azurerm_key_vault_secret" "sb_listen" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-listen"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_role_assignment.kv_tf]
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_manage" {
@@ -167,15 +167,15 @@ resource "azurerm_key_vault_secret" "sb_manage" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-manage"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_role_assignment.kv_tf]
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "results_conn" {
-  name            = "ScanResultsConn"
-  value           = azurerm_storage_account.results.primary_connection_string
-  key_vault_id    = data.azurerm_key_vault.kv.id
-  content_type    = "table-connection-string"
-  depends_on      = [azurerm_role_assignment.kv_tf]
+  name         = "ScanResultsConn"
+  value        = azurerm_storage_account.results.primary_connection_string
+  key_vault_id = data.azurerm_key_vault.kv.id
+  content_type = "table-connection-string"
+  depends_on   = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 # Give the UAMI read on KV so apps can resolve secrets at creation time
@@ -277,9 +277,16 @@ resource "azurerm_container_app" "api" {
         value = local.results_table
       }
     }
+
+    min_replicas = var.api_min_replicas
+    max_replicas = var.api_max_replicas
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_uami]
+  depends_on = [
+    azurerm_key_vault_access_policy.kv_uami,
+    azurerm_role_assignment.kv_secrets_uami,
+    azurerm_role_assignment.acr_pull_uami,
+  ]
 }
 
 # --- Worker app ---
@@ -371,12 +378,15 @@ resource "azurerm_container_app" "worker" {
     }
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_uami]
+  depends_on = [
+    azurerm_key_vault_access_policy.kv_uami,
+    azurerm_role_assignment.kv_secrets_uami,
+    azurerm_role_assignment.acr_pull_uami,
+  ]
 }
 
 # ACR: grant pull to the UAMI (covers both apps)
 resource "azurerm_role_assignment" "acr_pull_uami" {
-  count                = var.create_apps ? 1 : 0
   scope                = data.azurerm_container_registry.acr.id
   role_definition_name = "AcrPull"
   principal_id         = azurerm_user_assigned_identity.uami.principal_id

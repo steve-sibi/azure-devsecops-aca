@@ -299,3 +299,39 @@ jobs:
       - name: Output API URL
         working-directory: infra
         run: terraform output fastapi_url
+
+      - name: Smoke test API (/healthz)
+        id: smoke
+        continue-on-error: true
+        working-directory: infra
+        shell: bash
+        run: |
+          set -euo pipefail
+          API_URL="$(terraform output -raw fastapi_url)"
+          echo "API_URL=$API_URL"
+          for i in {1..30}; do
+            code="$(curl -sS -o /dev/null -w '%{http_code}' "${API_URL}/healthz" || true)"
+            if [ "$code" = "200" ]; then
+              echo "API is healthy."
+              exit 0
+            fi
+            echo "Waiting for API... ($i/30) HTTP $code"
+            sleep 10
+          done
+          echo "API did not become healthy in time."
+          exit 1
+
+      - name: Dump ACA logs (on smoke failure)
+        if: steps.smoke.outcome == 'failure'
+        shell: bash
+        run: |
+          set -e
+          az containerapp show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" -o table || true
+          az containerapp revision list -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" -o table || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" --type system --tail 200 || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" --type console --tail 200 || true
+
+      - name: Fail deploy if smoke test failed
+        if: steps.smoke.outcome == 'failure'
+        shell: bash
+        run: exit 1

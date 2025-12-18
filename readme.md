@@ -25,7 +25,7 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
                    ▼                                                            │
            ┌────────────────┐         KV ref ┌────────────────────┐             │
            │ Service Bus    │◄───────────────│ Azure Key Vault    │             │
-           │ Queue (tasks)  │                │ secret: sb-conn    │             │
+           │ Queue (tasks)  │                │ secrets: sb-*      │             │
            └────────┬───────┘                └────────────────────┘             │
                     │ (scale trigger)                                           │
                     │ via KEDA                                                  │
@@ -244,7 +244,7 @@ Worker is configured:
     
 - 1 replica per **20 messages**:
     
-    `custom_scale_rule {   name             = "sb-scaler"   custom_rule_type = "azure-servicebus"   metadata = { queueName = var.queue_name, messageCount = "20" }   authentication {     secret_name       = "sb-conn"     trigger_parameter = "connection"   } }`
+    `custom_scale_rule {   name             = "sb-scaler"   custom_rule_type = "azure-servicebus"   metadata = { queueName = var.queue_name, messageCount = "20" }   authentication {     secret_name       = "sb-manage"     trigger_parameter = "connection"   } }`
     
 
 Verify replicas:
@@ -253,7 +253,7 @@ Verify replicas:
 
 Send a burst of messages to see it scale:
 
-`for i in {1..100}; do   curl -sS -X POST "https://${API_FQDN}/enqueue" \        -H "content-type: application/json" \        -d '{"hello":"world"}' >/dev/null done`
+`for i in {1..100}; do   curl -sS -X POST "https://${API_FQDN}/tasks" \        -H "content-type: application/json" \        -d '{"payload":{"hello":"world"}}' >/dev/null; done`
 
 ### Common errors & fixes
 
@@ -264,11 +264,10 @@ Send a burst of messages to see it scale:
     The workflow does imports before apply. If running locally:  
     `terraform import <addr> <id>` using the IDs echoed in the error.
     
-- **`Failed to provision revision: 'sb-conn' unable to get value using Managed identity 'System'`**
+- **`Failed to provision revision: '<secret>' unable to get value using Managed identity`**
     
-    - In `azurerm_container_app.secret` blocks, ensure `identity = "System"`.
-        
-    - Ensure Key Vault **access policies** allow each app’s **system-assigned MI** to **Get/List secrets**.
+    - In `azurerm_container_app.secret` blocks, ensure `identity` points at the **UAMI resource ID** (or `"System"` if you intentionally use system-assigned MI).
+    - Ensure the app identity has Key Vault secret **Get/List** (via access policy or RBAC).
         
     - Ensure the CI principal had permission to initially **create** `ServiceBusConnection` (policy `kv_ci`).
         
@@ -335,13 +334,13 @@ To restart later, just re-run the **Deploy** workflow.
 ## 13) How the app code works (quick tour)
 **API (`app/api/main.py`)**
 
-- `POST /tasks` -> validates JSON, sends to queue using the connection string from KV secret `sb-conn`.
+- `POST /tasks` -> validates JSON, sends to queue using the connection string from the ACA secret `sb-send` (sourced from Key Vault).
     
 - `POST /scan` -> accepts an HTTPS URL + optional metadata, enqueues a scan job with `job_id`/`correlation_id`, and records a queued status in the results table.
     
 - `GET /scan/{job_id}` -> reads the results table and returns the current status/verdict.
     
-- `GET /health` -> basic health.
+- `GET /healthz` -> basic health.
     
 
 **Worker (`app/worker/worker.py`)**
@@ -363,5 +362,5 @@ To restart later, just re-run the **Deploy** workflow.
 **Why did Terraform say “resource already exists”?**  
 Because you pre-created it. Import it into state (the workflow does this automatically).
 
-**Why can’t the app read `sb-conn` from Key Vault?**  
-Make sure the secret block has `identity = "System"` and the app’s MI has KV secret **Get/List** via access policy.
+**Why can’t the app read secrets from Key Vault?**  
+Make sure the `azurerm_container_app.secret` block uses the correct `identity` and that identity has Key Vault secret **Get/List**.
