@@ -366,12 +366,7 @@ jobs:
             -H "X-API-Key: ${API_KEY}" \
             -d '{"url":"https://example.com","type":"url"}')"
 
-          job_id="$(python3 - <<'PY'
-import json, sys
-doc = json.loads(sys.stdin.read() or "{}")
-print(doc.get("job_id") or "")
-PY
-          <<<"$submit")"
+          job_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("job_id") or "")' <<<"$submit" || true)"
 
           if [ -z "$job_id" ]; then
             echo "Failed to get job_id from /scan response:"
@@ -382,16 +377,7 @@ PY
           echo "job_id=$job_id"
           for i in {1..40}; do
             resp="$(curl -sS "${API_URL}/scan/${job_id}" -H "X-API-Key: ${API_KEY}" || true)"
-            status="$(python3 - <<'PY'
-import json, sys
-try:
-  doc = json.loads(sys.stdin.read() or "{}")
-except Exception:
-  print("")
-  raise
-print(doc.get("status") or "")
-PY
-            <<<"$resp" 2>/dev/null || true)"
+            status="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("status") or "")' <<<"$resp" 2>/dev/null || true)"
 
             if [ "$status" = "completed" ]; then
               echo "E2E scan completed."
