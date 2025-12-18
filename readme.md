@@ -211,6 +211,23 @@ azure-devsecops-aca/
 
 ## 6) First-run values (env)
 
+### API key (required)
+
+The **Deploy** workflow generates an API key and stores it in **Key Vault** as the secret `ApiKey`.
+
+Retrieve it with Azure CLI (example):
+
+`KV_NAME="<prefix>-kv"  API_KEY="$(az keyvault secret show --vault-name "$KV_NAME" --name ApiKey --query value -o tsv)"`
+
+Use it on requests:
+
+`-H "X-API-Key: $API_KEY"`
+
+### Security defaults
+
+- **SSRF protection**: only `https://` targets on port **443**; blocks targets that resolve to non-public IP ranges.
+- **Rate limiting**: `60` requests/minute per API key (configure via Terraform var `api_rate_limit_rpm`).
+
 ## 7) Running it
 - Push to `main` or trigger the **Deploy** workflow.
     
@@ -220,7 +237,29 @@ azure-devsecops-aca/
 
 `infra/outputs.tf` also exposes a `fastapi_url` output if you run Terraform locally.
 
+### Quickstart (user workflow)
+
+1. Run **Deploy** (or push to `main`).
+2. Get the API URL (output or `az containerapp show ...`).
+3. Get the API key from Key Vault: `ApiKey`.
+4. Open the web UI at `https://<api-fqdn>/` and paste the API key.
+5. Submit a scan and watch status/results update in the UI.
+
 ## 8) Using the API
+
+### GUI + Swagger
+
+- Web UI: `https://<api-fqdn>/`
+- Swagger: `https://<api-fqdn>/docs`
+- ReDoc: `https://<api-fqdn>/redoc`
+
+### Endpoints
+
+- `GET /healthz` (no auth)
+- `POST /tasks` (requires API key)
+- `POST /scan` (requires API key)
+- `GET /scan/{job_id}` (requires API key)
+
 ### Logs (CLI)
 
 - **API (console)**
@@ -253,7 +292,13 @@ Verify replicas:
 
 Send a burst of messages to see it scale:
 
-`for i in {1..100}; do   curl -sS -X POST "https://${API_FQDN}/tasks" \        -H "content-type: application/json" \        -d '{"payload":{"hello":"world"}}' >/dev/null; done`
+`for i in {1..100}; do   curl -sS -X POST "https://${API_FQDN}/tasks" \        -H "content-type: application/json" \        -H "X-API-Key: $API_KEY" \        -d '{"payload":{"hello":"world"}}' >/dev/null; done`
+
+Submit a scan job and poll for completion:
+
+`JOB_ID="$(curl -sS -X POST "https://${API_FQDN}/scan" -H "content-type: application/json" -H "X-API-Key: $API_KEY" -d '{"url":"https://example.com","type":"url"}' | python3 -c 'import json,sys; print(json.load(sys.stdin)["job_id"])')"`
+
+`curl -sS "https://${API_FQDN}/scan/${JOB_ID}" -H "X-API-Key: $API_KEY"`
 
 ### Common errors & fixes
 
@@ -281,6 +326,13 @@ Send a burst of messages to see it scale:
         
 - **Max delivery count / DLQ**  
     Your worker must `complete_message()` (or `abandon/dead_letter` appropriately) and auto-renew locks for long work. See the “max delivery” notes in the discussion above.
+
+- **401/403 from the API**
+    - Include `X-API-Key` on `/tasks`, `/scan`, and `/scan/{job_id}`.
+    - Retrieve the key from Key Vault secret `ApiKey`.
+
+- **400 “URL resolves to a non-public IP address”**
+    - SSRF protections block private/link-local/loopback destinations (intended).
 
 ## 9) Observability & troubleshooting
 ### Logs (CLI)

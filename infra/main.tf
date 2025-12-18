@@ -5,6 +5,10 @@ terraform {
       source  = "hashicorp/azurerm"
       version = "~> 3.116"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
   }
 }
 
@@ -142,6 +146,21 @@ resource "azurerm_role_assignment" "kv_tf" {
   principal_id         = data.azurerm_client_config.current.object_id
 }
 
+# Generate and store an API key for the public API (KV-backed)
+resource "random_password" "api_key" {
+  length  = 32
+  special = false
+}
+
+resource "azurerm_key_vault_secret" "api_key" {
+  name            = "ApiKey"
+  value           = random_password.api_key.result
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "api-key"
+  expiration_date = timeadd(timestamp(), "8760h")
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+}
+
 # Store distinct SB connection strings in KV
 resource "azurerm_key_vault_secret" "sb_send" {
   name            = "ServiceBusSend"
@@ -249,6 +268,12 @@ resource "azurerm_container_app" "api" {
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
+  secret {
+    name                = "api-key"
+    key_vault_secret_id = azurerm_key_vault_secret.api_key.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
   template {
     container {
       name   = "api"
@@ -275,6 +300,22 @@ resource "azurerm_container_app" "api" {
       env {
         name  = "RESULT_TABLE"
         value = local.results_table
+      }
+      env {
+        name        = "API_KEY"
+        secret_name = "api-key"
+      }
+      env {
+        name  = "REQUIRE_API_KEY"
+        value = "true"
+      }
+      env {
+        name  = "RATE_LIMIT_RPM"
+        value = tostring(var.api_rate_limit_rpm)
+      }
+      env {
+        name  = "BLOCK_PRIVATE_NETWORKS"
+        value = "true"
       }
     }
 
@@ -358,6 +399,14 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "RESULT_TABLE"
         value = local.results_table
+      }
+      env {
+        name  = "BLOCK_PRIVATE_NETWORKS"
+        value = "true"
+      }
+      env {
+        name  = "MAX_REDIRECTS"
+        value = "5"
       }
     }
 

@@ -40,6 +40,12 @@ variable "api_max_replicas" {
   description = "Maximum replicas for the API Container App."
 }
 
+variable "api_rate_limit_rpm" {
+  type        = number
+  default     = 60
+  description = "API rate limit (requests per minute) per API key."
+}
+
 variable "queue_name" {
   type        = string
   default     = "tasks"

@@ -4,9 +4,11 @@ import os
 import signal
 import time
 import hashlib
+import ipaddress
+import socket
 from datetime import datetime, timezone
 from typing import List, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import requests
 from azure.servicebus import ServiceBusClient
@@ -29,6 +31,12 @@ RESULT_TABLE = os.getenv("RESULT_TABLE", "scanresults")
 RESULT_PARTITION = os.getenv("RESULT_PARTITION", "scan")
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(1024 * 1024)))  # 1MB
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "10"))  # seconds
+MAX_REDIRECTS = int(os.getenv("MAX_REDIRECTS", "5"))
+BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 # ---- Logging (console + optional App Insights) ----
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -115,21 +123,71 @@ def process(task: dict):
 
 
 def _download(url: str) -> tuple[bytes, int]:
-    with requests.get(
-        url, timeout=REQUEST_TIMEOUT, stream=True, allow_redirects=True
-    ) as resp:
-        resp.raise_for_status()
-        final_scheme = urlparse(resp.url).scheme.lower()
-        if final_scheme != "https":
-            raise ValueError("redirected to non-https")
-        data = b""
-        for chunk in resp.iter_content(chunk_size=8192):
-            if not chunk:
+    session = requests.Session()
+    current = url
+
+    for _ in range(MAX_REDIRECTS + 1):
+        _validate_url_for_download(current)
+        with session.get(
+            current,
+            timeout=REQUEST_TIMEOUT,
+            stream=True,
+            allow_redirects=False,
+        ) as resp:
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("Location")
+                if not location:
+                    raise ValueError("redirect without Location header")
+                current = urljoin(current, location)
                 continue
-            data += chunk
-            if len(data) > MAX_DOWNLOAD_BYTES:
-                raise ValueError("content too large")
-        return data, len(data)
+
+            resp.raise_for_status()
+            data = b""
+            for chunk in resp.iter_content(chunk_size=8192):
+                if not chunk:
+                    continue
+                data += chunk
+                if len(data) > MAX_DOWNLOAD_BYTES:
+                    raise ValueError("content too large")
+            return data, len(data)
+
+    raise ValueError("too many redirects")
+
+
+def _validate_url_for_download(url: str):
+    parsed = urlparse(url)
+    if parsed.scheme.lower() != "https":
+        raise ValueError("only https is allowed")
+    if not parsed.netloc:
+        raise ValueError("url host is required")
+    if parsed.username or parsed.password:
+        raise ValueError("userinfo in url is not allowed")
+    if parsed.port and parsed.port != 443:
+        raise ValueError("only default https port 443 is allowed")
+
+    host = parsed.hostname
+    if not host:
+        raise ValueError("url host is required")
+    if host.lower() == "localhost":
+        raise ValueError("localhost is not allowed")
+    if not BLOCK_PRIVATE_NETWORKS:
+        return
+
+    try:
+        ip_literal = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+        except socket.gaierror as e:
+            raise ValueError(f"dns resolution failed: {e}") from e
+        ips = {ipaddress.ip_address(info[4][0]) for info in infos}
+        if not ips:
+            raise ValueError("no a/aaaa records found")
+        if any(not ip.is_global for ip in ips):
+            raise ValueError("destination resolves to a non-public ip address (blocked)")
+    else:
+        if not ip_literal.is_global:
+            raise ValueError("direct ip destinations must be publicly routable")
 
 
 def _scan_bytes(content: bytes, url: str) -> tuple[str, dict]:
