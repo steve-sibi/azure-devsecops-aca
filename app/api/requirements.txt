@@ -4,10 +4,12 @@ azure-servicebus~=7.12
 # Optional, for MI path in main.py:
 azure-identity>=1.16.0
 
-# OpenTelemetry (modern Azure Monitor exporter)
-opentelemetry-api>=1.22.0
-opentelemetry-sdk>=1.22.0
-azure-monitor-opentelemetry-exporter>=1.0.0b15
+# OpenTelemetry (Azure Monitor exporter) — pin versions to avoid breaking API changes
+# NOTE: azure-monitor-opentelemetry-exporter currently imports LogData from opentelemetry.sdk._logs
+# which was removed in newer OpenTelemetry releases; keep these in a compatible range.
+opentelemetry-api~=1.35.0
+opentelemetry-sdk~=1.35.0
+azure-monitor-opentelemetry-exporter==1.0.0b45
 
 # Table storage for scan results
 azure-data-tables>=12.6.0

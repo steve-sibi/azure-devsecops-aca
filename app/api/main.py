@@ -257,6 +257,41 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="FastAPI on Azure Container Apps", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def otel_request_spans(request: Request, call_next):
+    if not APPINSIGHTS_CONN or request.url.path == "/healthz":
+        return await call_next(request)
+
+    from opentelemetry import trace
+    from opentelemetry.trace import SpanKind, Status, StatusCode
+
+    tracer = trace.get_tracer("aca-fastapi-api")
+    span_name = f"{request.method} {request.url.path}"
+
+    with tracer.start_as_current_span(span_name, kind=SpanKind.SERVER) as span:
+        span.set_attribute("http.method", request.method)
+        span.set_attribute("http.target", request.url.path)
+        span.set_attribute("http.url", str(request.url))
+
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            span.record_exception(exc)
+            span.set_status(Status(StatusCode.ERROR, str(exc)))
+            raise
+
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", None)
+        if route_path:
+            span.update_name(f"{request.method} {route_path}")
+            span.set_attribute("http.route", route_path)
+
+        span.set_attribute("http.status_code", response.status_code)
+        if response.status_code >= 500:
+            span.set_status(Status(StatusCode.ERROR))
+        return response
+
+
 @app.get("/healthz")
 async def healthz():
     return {"ok": True}
