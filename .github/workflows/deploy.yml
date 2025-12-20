@@ -318,8 +318,10 @@ jobs:
           diagnose () {
             az containerapp show -g "$RG" -n "$APP" -o table || true
             az containerapp revision list -g "$RG" -n "$APP" -o table || true
-            az containerapp logs show -g "$RG" -n "$APP" --type system --tail 200 || true
-            az containerapp logs show -g "$RG" -n "$APP" --type console --tail 200 || true
+            az containerapp logs show -g "$RG" -n "$APP" --type system --tail 200 2>&1 \
+              | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
+            az containerapp logs show -g "$RG" -n "$APP" --type console --tail 200 2>&1 \
+              | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
           }
 
           for i in {1..30}; do
@@ -405,17 +407,22 @@ jobs:
           set -e
           az containerapp show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" -o table || true
           az containerapp revision list -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" -o table || true
-          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" --type system --tail 200 || true
-          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" --type console --tail 200 || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" --type system --tail 200 2>&1 \
+            | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" --type console --tail 200 2>&1 \
+            | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
 
       - name: Dump ACA logs (on e2e failure)
         if: steps.e2e.outcome == 'failure'
         shell: bash
         run: |
           set -e
-          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" --type console --tail 200 || true
-          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-worker" --type console --tail 200 || true
-          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-worker" --type system --tail 200 || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-api" --type console --tail 200 2>&1 \
+            | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-worker" --type console --tail 200 2>&1 \
+            | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-worker" --type system --tail 200 2>&1 \
+            | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
 
       - name: Fail deploy if smoke test failed
         if: steps.smoke.outcome == 'failure'
