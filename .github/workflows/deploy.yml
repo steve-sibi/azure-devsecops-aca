@@ -236,6 +236,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build & push ClamAV
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app/clamav
+          file: app/clamav/Dockerfile
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   create-apps:
     needs: [build-and-push]
     runs-on: ubuntu-latest
@@ -274,6 +284,7 @@ jobs:
           ACA_ENV_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/managedEnvironments/${PREFIX}-acaenv"
           API_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/containerApps/${PREFIX}-api"
           WORKER_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/containerApps/${PREFIX}-worker"
+          CLAMAV_ID="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.App/containerApps/${PREFIX}-clamav"
 
           exists () { az resource show --ids "$1" >/dev/null 2>&1; }
           instate () { terraform state show "$1" >/dev/null 2>&1; }
@@ -286,6 +297,9 @@ jobs:
           fi
           if exists "$WORKER_ID" && ! instate azurerm_container_app.worker[0]; then
             terraform import azurerm_container_app.worker[0] "$WORKER_ID" || true
+          fi
+          if exists "$CLAMAV_ID" && ! instate azurerm_container_app.clamav[0]; then
+            terraform import azurerm_container_app.clamav[0] "$CLAMAV_ID" || true
           fi
 
       - name: Terraform Apply (create/update apps)

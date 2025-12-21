@@ -3,6 +3,11 @@ output "fastapi_url" {
   description = "FastAPI public URL (HTTPS)"
 }
 
+output "clamav_fqdn" {
+  value       = try(azurerm_container_app.clamav[0].ingress[0].fqdn, null)
+  description = "ClamAV internal FQDN (TCP 3310)"
+}
+
 output "key_vault_name" {
   value       = data.azurerm_key_vault.kv.name
   description = "Key Vault name (stores runtime secrets)"

@@ -47,6 +47,11 @@ jobs:
         with:
           dockerfile: app/worker/Dockerfile
 
+      - name: Hadolint (ClamAV)
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          dockerfile: app/clamav/Dockerfile
+
   build-and-scan:
     needs: iac-and-docker-lint
     runs-on: ubuntu-latest
@@ -56,7 +61,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api, worker]
+        service: [api, worker, clamav]
     steps:
       - uses: actions/checkout@v4
 

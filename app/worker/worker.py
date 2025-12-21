@@ -5,6 +5,7 @@ import signal
 import time
 import hashlib
 import ipaddress
+import struct
 import socket
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -37,6 +38,17 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
     "true",
     "yes",
 )
+
+# ---- Scan engine (ClamAV) ----
+CLAMAV_HOST = os.getenv("CLAMAV_HOST")  # e.g. "<prefix>-clamav.<env>.internal... "
+CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
+CLAMAV_TIMEOUT = float(os.getenv("CLAMAV_TIMEOUT", "2"))
+CLAMAV_MAX_RETRIES = int(os.getenv("CLAMAV_MAX_RETRIES", "30"))
+CLAMAV_RETRY_DEADLINE_SECONDS = float(os.getenv("CLAMAV_RETRY_DEADLINE_SECONDS", "90"))
+CLAMAV_CHUNK_SIZE = int(os.getenv("CLAMAV_CHUNK_SIZE", "16384"))
+SCAN_ENGINE = os.getenv(
+    "SCAN_ENGINE", "clamav" if CLAMAV_HOST else "heuristic"
+).strip().lower()
 
 # ---- Logging (console + optional App Insights) ----
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -191,21 +203,95 @@ def _validate_url_for_download(url: str):
 
 
 def _scan_bytes(content: bytes, url: str) -> tuple[str, dict]:
-    """Lightweight placeholder scan; replace with AV engine."""
     digest = hashlib.sha256(content).hexdigest()
+    details = {"sha256": digest, "length": len(content)}
+
+    if SCAN_ENGINE == "clamav":
+        if not CLAMAV_HOST:
+            raise ValueError("CLAMAV_HOST is required when SCAN_ENGINE=clamav")
+        verdict, clamav_details = _clamav_instream_scan(content)
+        details.update(
+            {
+                "engine": "clamav",
+                **clamav_details,
+            }
+        )
+        return verdict, details
+
+    # Fallback demo-only heuristics (kept for local development).
     lowered = content.lower()
-    # naive heuristics for demo purposes
     suspicious = any(
         marker in lowered for marker in [b"<script", b"onerror", b"alert(", b"eval("]
     )
-    if "test-malicious" in url.lower() or suspicious:
-        verdict = "malicious"
-    else:
-        verdict = "clean"
-    details = {"sha256": digest, "length": len(content)}
+    verdict = "malicious" if ("test-malicious" in url.lower() or suspicious) else "clean"
+    details["engine"] = "heuristic"
     if suspicious:
         details["reason"] = "suspicious-content"
     return verdict, details
+
+
+def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:
+    """Scan bytes via clamd INSTREAM protocol."""
+    last_err: Optional[Exception] = None
+
+    deadline = time.monotonic() + CLAMAV_RETRY_DEADLINE_SECONDS
+    for attempt in range(CLAMAV_MAX_RETRIES + 1):
+        try:
+            with socket.create_connection(
+                (CLAMAV_HOST, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT
+            ) as sock:
+                sock.settimeout(CLAMAV_TIMEOUT)
+
+                # INSTREAM expects: "zINSTREAM\\0" then repeated [len][chunk] and final 0-length.
+                sock.sendall(b"zINSTREAM\0")
+                view = memoryview(content)
+                for i in range(0, len(content), CLAMAV_CHUNK_SIZE):
+                    chunk = view[i : i + CLAMAV_CHUNK_SIZE]
+                    sock.sendall(struct.pack("!I", len(chunk)))
+                    sock.sendall(chunk)
+                sock.sendall(struct.pack("!I", 0))
+
+                buf = b""
+                while True:
+                    part = sock.recv(4096)
+                    if not part:
+                        break
+                    buf += part
+                    if b"\0" in buf or b"\n" in buf:
+                        break
+
+                line = (
+                    buf.split(b"\0", 1)[0]
+                    .split(b"\n", 1)[0]
+                    .decode("utf-8", "replace")
+                    .strip()
+                )
+                if not line:
+                    raise ValueError("empty clamd response")
+
+                # Typical responses:
+                #   "stream: OK"
+                #   "stream: Eicar-Test-Signature FOUND"
+                #   "stream: <reason> ERROR"
+                if line.endswith(" OK"):
+                    return "clean", {"clamav": {"result": "OK"}}
+                if line.endswith(" FOUND"):
+                    signature = line.split(": ", 1)[1].rsplit(" FOUND", 1)[0]
+                    return "malicious", {
+                        "clamav": {"result": "FOUND", "signature": signature}
+                    }
+                if line.endswith(" ERROR") or " ERROR" in line:
+                    raise ValueError(f"clamd error: {line}")
+
+                # Unexpected response; fail closed.
+                raise ValueError(f"unexpected clamd response: {line}")
+        except (OSError, ValueError) as e:
+            last_err = e
+            if attempt >= CLAMAV_MAX_RETRIES or time.monotonic() >= deadline:
+                break
+            time.sleep(min(0.5 * (2**attempt), 10.0))
+
+    raise ValueError(f"clamav scan failed: {last_err}")
 
 
 def _save_result(

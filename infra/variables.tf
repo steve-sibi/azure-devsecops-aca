@@ -19,7 +19,7 @@ variable "resource_group_name" {
 variable "create_apps" {
   type        = bool
   default     = false
-  description = "If true, creates API/Worker Container Apps."
+  description = "If true, creates API/Worker/ClamAV Container Apps."
 }
 
 variable "image_tag" {

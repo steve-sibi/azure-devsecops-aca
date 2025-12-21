@@ -27,6 +27,7 @@ locals {
   env_name      = "${var.prefix}-acaenv"
   api_name      = "${var.prefix}-api"
   worker_name   = "${var.prefix}-worker"
+  clamav_name   = "${var.prefix}-clamav"
   uami_name     = "${var.prefix}-uami"
   results_sa    = "${var.prefix}scan"
   results_table = var.results_table_name
@@ -221,6 +222,52 @@ resource "azurerm_container_app_environment" "env" {
   tags                       = var.tags
 }
 
+# --- ClamAV (internal TCP microservice) ---
+resource "azurerm_container_app" "clamav" {
+  count                        = var.create_apps ? 1 : 0
+  name                         = local.clamav_name
+  resource_group_name          = data.azurerm_resource_group.rg.name
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  revision_mode                = "Single"
+  tags                         = var.tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.uami.id]
+  }
+
+  ingress {
+    external_enabled = false
+    target_port      = 3310
+    transport        = "tcp"
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
+    }
+  }
+
+  registry {
+    server   = data.azurerm_container_registry.acr.login_server
+    identity = azurerm_user_assigned_identity.uami.id
+  }
+
+  template {
+    container {
+      name   = "clamav"
+      image  = "${data.azurerm_container_registry.acr.login_server}/${local.clamav_name}:${var.image_tag}"
+      cpu    = 0.5
+      memory = "1Gi"
+    }
+
+    min_replicas = 1
+    max_replicas = 1
+  }
+
+  depends_on = [
+    azurerm_role_assignment.acr_pull_uami,
+  ]
+}
+
 # --- API app ---
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
@@ -407,6 +454,14 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "MAX_REDIRECTS"
         value = "5"
+      }
+      env {
+        name  = "CLAMAV_HOST"
+        value = try(azurerm_container_app.clamav[0].ingress[0].fqdn, "")
+      }
+      env {
+        name  = "CLAMAV_PORT"
+        value = "3310"
       }
     }
 
