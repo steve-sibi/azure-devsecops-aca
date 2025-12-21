@@ -14,6 +14,7 @@ RUN apt-get update \
       clamav \
       clamav-daemon \
       clamav-freshclam \
+      socat \
       tini \
     && rm -rf /var/lib/apt/lists/*
 
@@ -26,7 +27,7 @@ RUN chmod +x /entrypoint.sh \
     && mkdir -p /var/lib/clamav /var/run/clamav /var/log/clamav \
     && chown -R clamav:clamav /var/lib/clamav /var/run/clamav /var/log/clamav
 
-# Seed signatures at build time so clamd can start immediately in ACA.
+# Optional: seed signatures at build time (best effort). Runtime bootstrap will handle failures.
 RUN set -eux; \
     attempts="${FRESHCLAM_BUILD_ATTEMPTS:-5}"; \
     delay="${FRESHCLAM_BUILD_DELAY_SECONDS:-10}"; \
@@ -40,7 +41,11 @@ RUN set -eux; \
       i=$((i + 1)); \
     done; \
     ls -lah /var/lib/clamav; \
-    ls /var/lib/clamav/*.cvd /var/lib/clamav/*.cld >/dev/null 2>&1; \
+    if ls /var/lib/clamav/*.cvd /var/lib/clamav/*.cld >/dev/null 2>&1; then \
+      echo "freshclam seed: signature database present"; \
+    else \
+      echo "freshclam seed: signature database missing (will bootstrap at runtime)"; \
+    fi; \
     chown -R clamav:clamav /var/lib/clamav
 
 USER clamav
