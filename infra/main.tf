@@ -239,6 +239,7 @@ resource "azurerm_container_app" "clamav" {
   ingress {
     external_enabled = false
     target_port      = 3310
+    exposed_port     = 3310
     transport        = "tcp"
     traffic_weight {
       percentage      = 100

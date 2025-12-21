@@ -224,60 +224,62 @@ def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:
 
     deadline = time.monotonic() + CLAMAV_RETRY_DEADLINE_SECONDS
     for attempt in range(CLAMAV_MAX_RETRIES + 1):
-        try:
-            with socket.create_connection(
-                (CLAMAV_HOST, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT
-            ) as sock:
-                sock.settimeout(CLAMAV_TIMEOUT)
+        # clamd can accept INSTREAM as either newline-delimited or null-terminated.
+        for cmd in (b"zINSTREAM\0", b"INSTREAM\n"):
+            try:
+                with socket.create_connection(
+                    (CLAMAV_HOST, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT
+                ) as sock:
+                    sock.settimeout(CLAMAV_TIMEOUT)
 
-                # INSTREAM expects: "zINSTREAM\\0" then repeated [len][chunk] and final 0-length.
-                sock.sendall(b"zINSTREAM\0")
-                view = memoryview(content)
-                for i in range(0, len(content), CLAMAV_CHUNK_SIZE):
-                    chunk = view[i : i + CLAMAV_CHUNK_SIZE]
-                    sock.sendall(struct.pack("!I", len(chunk)))
-                    sock.sendall(chunk)
-                sock.sendall(struct.pack("!I", 0))
+                    sock.sendall(cmd)
+                    view = memoryview(content)
+                    for i in range(0, len(content), CLAMAV_CHUNK_SIZE):
+                        chunk = view[i : i + CLAMAV_CHUNK_SIZE]
+                        sock.sendall(struct.pack("!I", len(chunk)))
+                        sock.sendall(chunk)
+                    sock.sendall(struct.pack("!I", 0))
 
-                buf = b""
-                while True:
-                    part = sock.recv(4096)
-                    if not part:
-                        break
-                    buf += part
-                    if b"\0" in buf or b"\n" in buf:
-                        break
+                    buf = b""
+                    while True:
+                        part = sock.recv(4096)
+                        if not part:
+                            break
+                        buf += part
+                        if b"\0" in buf or b"\n" in buf:
+                            break
 
-                line = (
-                    buf.split(b"\0", 1)[0]
-                    .split(b"\n", 1)[0]
-                    .decode("utf-8", "replace")
-                    .strip()
-                )
-                if not line:
-                    raise ValueError("empty clamd response")
+                    line = (
+                        buf.split(b"\0", 1)[0]
+                        .split(b"\n", 1)[0]
+                        .decode("utf-8", "replace")
+                        .strip()
+                    )
+                    if not line:
+                        raise ValueError("empty clamd response")
 
-                # Typical responses:
-                #   "stream: OK"
-                #   "stream: Eicar-Test-Signature FOUND"
-                #   "stream: <reason> ERROR"
-                if line.endswith(" OK"):
-                    return "clean", {"clamav": {"result": "OK"}}
-                if line.endswith(" FOUND"):
-                    signature = line.split(": ", 1)[1].rsplit(" FOUND", 1)[0]
-                    return "malicious", {
-                        "clamav": {"result": "FOUND", "signature": signature}
-                    }
-                if line.endswith(" ERROR") or " ERROR" in line:
-                    raise ValueError(f"clamd error: {line}")
+                    # Typical responses:
+                    #   "stream: OK"
+                    #   "stream: Eicar-Test-Signature FOUND"
+                    #   "stream: <reason> ERROR"
+                    if line.endswith(" OK"):
+                        return "clean", {"clamav": {"result": "OK"}}
+                    if line.endswith(" FOUND"):
+                        signature = line.split(": ", 1)[1].rsplit(" FOUND", 1)[0]
+                        return "malicious", {
+                            "clamav": {"result": "FOUND", "signature": signature}
+                        }
+                    if line.endswith(" ERROR") or " ERROR" in line:
+                        raise ValueError(f"clamd error: {line}")
 
-                # Unexpected response; fail closed.
-                raise ValueError(f"unexpected clamd response: {line}")
-        except (OSError, ValueError) as e:
-            last_err = e
-            if attempt >= CLAMAV_MAX_RETRIES or time.monotonic() >= deadline:
-                break
-            time.sleep(min(0.5 * (2**attempt), 10.0))
+                    # Unexpected response; fail closed.
+                    raise ValueError(f"unexpected clamd response: {line}")
+            except (OSError, ValueError) as e:
+                last_err = e
+
+        if attempt >= CLAMAV_MAX_RETRIES or time.monotonic() >= deadline:
+            break
+        time.sleep(min(0.5 * (2**attempt), 10.0))
 
     raise ValueError(f"clamav scan failed: {last_err}")
 
@@ -285,14 +287,21 @@ def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:
 def _clamav_ping() -> bool:
     if not CLAMAV_HOST:
         return False
-    try:
-        with socket.create_connection((CLAMAV_HOST, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT) as sock:
-            sock.settimeout(CLAMAV_TIMEOUT)
-            sock.sendall(b"zPING\0")
-            data = sock.recv(64)
-            return b"PONG" in data
-    except OSError:
-        return False
+    # clamd's TCP protocol commonly uses newline-delimited commands (PING\n) while
+    # INSTREAM uses the null-terminated variant (zINSTREAM\0). Support both.
+    for payload in (b"PING\n", b"zPING\0"):
+        try:
+            with socket.create_connection(
+                (CLAMAV_HOST, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT
+            ) as sock:
+                sock.settimeout(CLAMAV_TIMEOUT)
+                sock.sendall(payload)
+                data = sock.recv(64)
+                if b"PONG" in data:
+                    return True
+        except OSError:
+            continue
+    return False
 
 
 def _wait_for_clamav_ready():

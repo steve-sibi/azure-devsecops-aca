@@ -18,11 +18,17 @@ have_db() {
   return 1
 }
 
-listener_pid=""
 if command -v socat >/dev/null 2>&1; then
-  echo "[clamav] opening temporary TCP listener on :3310 (helps ACA startup probe during bootstrap)..."
-  socat -T 1 TCP-LISTEN:3310,reuseaddr,fork EXEC:'/bin/true' >/dev/null 2>&1 &
-  listener_pid="$!"
+  echo "[clamav] starting TCP proxy :3310 -> 127.0.0.1:3311 (keeps ACA startup probe happy)..."
+  socat -T 1 TCP-LISTEN:3310,reuseaddr,fork TCP:127.0.0.1:3311 >/dev/null 2>&1 &
+  proxy_pid="$!"
+  sleep 0.1
+  if ! kill -0 "${proxy_pid}" 2>/dev/null; then
+    echo "[clamav] ERROR: TCP proxy failed to start."
+    exit 1
+  fi
+else
+  echo "[clamav] WARNING: socat not found; TCP ingress/probes may fail."
 fi
 
 if ! have_db; then
@@ -47,13 +53,6 @@ if ! have_db; then
   echo "[clamav] freshclam log tail:"
   tail -n 200 "${LOG_DIR}/freshclam.log" 2>/dev/null || true
   exit 1
-fi
-
-if [ -n "${listener_pid}" ]; then
-  echo "[clamav] stopping temporary TCP listener..."
-  kill "${listener_pid}" 2>/dev/null || true
-  wait "${listener_pid}" 2>/dev/null || true
-  listener_pid=""
 fi
 
 echo "[clamav] starting signature updater loop..."

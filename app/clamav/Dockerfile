@@ -1,7 +1,7 @@
 # app/clamav/Dockerfile
 FROM debian:bookworm-slim
 
-ARG REQUIRE_SIGNATURE_DB=true
+ARG REQUIRE_SIGNATURE_DB=false
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
