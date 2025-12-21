@@ -42,9 +42,9 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
 # ---- Scan engine (ClamAV) ----
 CLAMAV_HOST = os.getenv("CLAMAV_HOST")  # e.g. "<prefix>-clamav.<env>.internal... "
 CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
-CLAMAV_TIMEOUT = float(os.getenv("CLAMAV_TIMEOUT", "2"))
+CLAMAV_TIMEOUT = float(os.getenv("CLAMAV_TIMEOUT", "10"))
 CLAMAV_MAX_RETRIES = int(os.getenv("CLAMAV_MAX_RETRIES", "2"))
-CLAMAV_RETRY_DEADLINE_SECONDS = float(os.getenv("CLAMAV_RETRY_DEADLINE_SECONDS", "10"))
+CLAMAV_RETRY_DEADLINE_SECONDS = float(os.getenv("CLAMAV_RETRY_DEADLINE_SECONDS", "30"))
 CLAMAV_CHUNK_SIZE = int(os.getenv("CLAMAV_CHUNK_SIZE", "16384"))
 CLAMAV_READY_TIMEOUT_SECONDS = float(os.getenv("CLAMAV_READY_TIMEOUT_SECONDS", "300"))
 CLAMAV_READY_INTERVAL_SECONDS = float(os.getenv("CLAMAV_READY_INTERVAL_SECONDS", "5"))
