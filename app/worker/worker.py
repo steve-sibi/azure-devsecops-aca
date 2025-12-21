@@ -43,9 +43,11 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
 CLAMAV_HOST = os.getenv("CLAMAV_HOST")  # e.g. "<prefix>-clamav.<env>.internal... "
 CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
 CLAMAV_TIMEOUT = float(os.getenv("CLAMAV_TIMEOUT", "2"))
-CLAMAV_MAX_RETRIES = int(os.getenv("CLAMAV_MAX_RETRIES", "30"))
-CLAMAV_RETRY_DEADLINE_SECONDS = float(os.getenv("CLAMAV_RETRY_DEADLINE_SECONDS", "90"))
+CLAMAV_MAX_RETRIES = int(os.getenv("CLAMAV_MAX_RETRIES", "2"))
+CLAMAV_RETRY_DEADLINE_SECONDS = float(os.getenv("CLAMAV_RETRY_DEADLINE_SECONDS", "10"))
 CLAMAV_CHUNK_SIZE = int(os.getenv("CLAMAV_CHUNK_SIZE", "16384"))
+CLAMAV_READY_TIMEOUT_SECONDS = float(os.getenv("CLAMAV_READY_TIMEOUT_SECONDS", "300"))
+CLAMAV_READY_INTERVAL_SECONDS = float(os.getenv("CLAMAV_READY_INTERVAL_SECONDS", "5"))
 SCAN_ENGINE = os.getenv(
     "SCAN_ENGINE", "clamav" if CLAMAV_HOST else "heuristic"
 ).strip().lower()
@@ -89,49 +91,35 @@ def process(task: dict):
     correlation_id = task.get("correlation_id")
 
     if not url or not job_id:
-        logging.error("[worker] Missing url/job_id in task")
-        return "error", {"reason": "invalid-payload"}
+        raise ValueError("missing url/job_id in task")
 
     parsed = urlparse(url)
     if parsed.scheme.lower() != "https":
-        return "error", {"reason": "invalid-scheme"}
+        raise ValueError("invalid scheme (https required)")
 
     start = time.time()
-    try:
-        content, size_bytes = _download(url)
-        verdict, details = _scan_bytes(content, url)
-        duration_ms = int((time.time() - start) * 1000)
-        _save_result(
-          job_id=job_id,
-          status="completed",
-          verdict=verdict,
-          details=details,
-          size_bytes=size_bytes,
-          correlation_id=correlation_id,
-          duration_ms=duration_ms,
-          submitted_at=task.get("submitted_at"),
-        )
-        logging.info(
-            "[worker] job_id=%s verdict=%s size=%sB duration_ms=%s",
-            job_id,
-            verdict,
-            size_bytes,
-            duration_ms,
-        )
-        return verdict, details
-    except Exception as e:
-        duration_ms = int((time.time() - start) * 1000)
-        logging.error("[worker] job_id=%s error=%s", job_id, e)
-        _save_result(
-            job_id=job_id,
-            status="error",
-            verdict="error",
-            details={"reason": str(e)},
-            correlation_id=correlation_id,
-            duration_ms=duration_ms,
-            submitted_at=task.get("submitted_at"),
-        )
-        raise
+    content, size_bytes = _download(url)
+    verdict, details = _scan_bytes(content, url)
+    duration_ms = int((time.time() - start) * 1000)
+    _save_result(
+        job_id=job_id,
+        status="completed",
+        verdict=verdict,
+        details=details,
+        size_bytes=size_bytes,
+        correlation_id=correlation_id,
+        duration_ms=duration_ms,
+        submitted_at=task.get("submitted_at"),
+        error=None,
+    )
+    logging.info(
+        "[worker] job_id=%s verdict=%s size=%sB duration_ms=%s",
+        job_id,
+        verdict,
+        size_bytes,
+        duration_ms,
+    )
+    return verdict, details
 
 
 def _download(url: str) -> tuple[bytes, int]:
@@ -294,6 +282,40 @@ def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:
     raise ValueError(f"clamav scan failed: {last_err}")
 
 
+def _clamav_ping() -> bool:
+    if not CLAMAV_HOST:
+        return False
+    try:
+        with socket.create_connection((CLAMAV_HOST, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT) as sock:
+            sock.settimeout(CLAMAV_TIMEOUT)
+            sock.sendall(b"zPING\0")
+            data = sock.recv(64)
+            return b"PONG" in data
+    except OSError:
+        return False
+
+
+def _wait_for_clamav_ready():
+    if SCAN_ENGINE != "clamav":
+        return
+    if not CLAMAV_HOST:
+        raise RuntimeError("CLAMAV_HOST is required when SCAN_ENGINE=clamav")
+
+    deadline = time.monotonic() + CLAMAV_READY_TIMEOUT_SECONDS
+    while not shutdown and time.monotonic() < deadline:
+        if _clamav_ping():
+            logging.info("[worker] ClamAV is ready at %s:%s", CLAMAV_HOST, CLAMAV_PORT)
+            return
+        logging.warning(
+            "[worker] Waiting for ClamAV at %s:%s ...", CLAMAV_HOST, CLAMAV_PORT
+        )
+        time.sleep(max(0.5, CLAMAV_READY_INTERVAL_SECONDS))
+
+    raise RuntimeError(
+        f"ClamAV not ready after {CLAMAV_READY_TIMEOUT_SECONDS:.0f}s at {CLAMAV_HOST}:{CLAMAV_PORT}"
+    )
+
+
 def _save_result(
     job_id: str,
     status: str,
@@ -303,6 +325,7 @@ def _save_result(
     correlation_id: Optional[str] = None,
     duration_ms: Optional[int] = None,
     submitted_at: Optional[str] = None,
+    error: Optional[str] = None,
 ):
     if not table_client:
         return
@@ -310,7 +333,8 @@ def _save_result(
         "PartitionKey": RESULT_PARTITION,
         "RowKey": job_id,
         "status": status,
-        "verdict": verdict,
+        "verdict": verdict or "",
+        "error": error or "",
         "details": json.dumps(details or {}),
         "size_bytes": size_bytes or 0,
         "correlation_id": correlation_id or "",
@@ -338,6 +362,7 @@ def main():
     table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
     table_client = table_service.get_table_client(table_name=RESULT_TABLE)
 
+    _wait_for_clamav_ready()
     logging.info("[worker] started; waiting for messages...")
 
     with client:
@@ -357,11 +382,40 @@ def main():
                         continue
 
                     for msg in messages:
+                        task: Optional[dict] = None
+                        started_at = time.time()
                         try:
                             task = _decode_body(msg)
                             process(task)
                             receiver.complete_message(msg)
                         except Exception as e:
+                            duration_ms = int((time.time() - started_at) * 1000)
+                            job_id = task.get("job_id") if isinstance(task, dict) else None
+                            correlation_id = (
+                                task.get("correlation_id") if isinstance(task, dict) else None
+                            )
+                            submitted_at = (
+                                task.get("submitted_at") if isinstance(task, dict) else None
+                            )
+
+                            if job_id:
+                                retrying = msg.delivery_count < MAX_RETRIES
+                                status = "retrying" if retrying else "error"
+                                _save_result(
+                                    job_id=job_id,
+                                    status=status,
+                                    verdict="" if retrying else "error",
+                                    error=str(e),
+                                    details={
+                                        "reason": str(e),
+                                        "delivery_count": msg.delivery_count,
+                                        "max_retries": MAX_RETRIES,
+                                    },
+                                    correlation_id=correlation_id,
+                                    duration_ms=duration_ms,
+                                    submitted_at=submitted_at,
+                                )
+
                             # DLQ if too many deliveries, else make it available again
                             if msg.delivery_count >= MAX_RETRIES:
                                 receiver.dead_letter_message(
@@ -369,11 +423,17 @@ def main():
                                     reason="max-retries-exceeded",
                                     error_description=str(e),
                                 )
-                                logging.error(f"[worker] DLQ'd message: {e}")
+                                logging.error(
+                                    "[worker] DLQ'd message (delivery_count=%s): %s",
+                                    msg.delivery_count,
+                                    e,
+                                )
                             else:
                                 receiver.abandon_message(msg)
                                 logging.warning(
-                                    f"[worker] Abandoned message (retry {msg.delivery_count}): {e}"
+                                    "[worker] Abandoned message (delivery_count=%s): %s",
+                                    msg.delivery_count,
+                                    e,
                                 )
                 except OperationTimeoutError:
                     # no messages within wait window

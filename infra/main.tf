@@ -463,6 +463,10 @@ resource "azurerm_container_app" "worker" {
         name  = "CLAMAV_PORT"
         value = "3310"
       }
+      env {
+        name  = "SCAN_ENGINE"
+        value = "clamav"
+      }
     }
 
     min_replicas = 0

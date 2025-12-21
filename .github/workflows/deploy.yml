@@ -437,6 +437,10 @@ jobs:
             | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
           az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-worker" --type system --tail 200 2>&1 \
             | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-clamav" --type console --tail 200 2>&1 \
+            | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
+          az containerapp logs show -g "${{ env.RG }}" -n "${{ env.PREFIX }}-clamav" --type system --tail 200 2>&1 \
+            | python3 "${GITHUB_WORKSPACE}/.github/scripts/format_aca_logs.py" || true
 
       - name: Fail deploy if smoke test failed
         if: steps.smoke.outcome == 'failure'
