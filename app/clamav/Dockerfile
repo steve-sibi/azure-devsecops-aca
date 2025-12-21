@@ -1,6 +1,8 @@
 # app/clamav/Dockerfile
 FROM debian:bookworm-slim
 
+ARG REQUIRE_SIGNATURE_DB=true
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
@@ -41,10 +43,18 @@ RUN set -eux; \
       i=$((i + 1)); \
     done; \
     ls -lah /var/lib/clamav; \
-    if ls /var/lib/clamav/*.cvd /var/lib/clamav/*.cld >/dev/null 2>&1; then \
+    found=""; \
+    for f in /var/lib/clamav/*.cvd /var/lib/clamav/*.cld /var/lib/clamav/*.cud; do \
+      if [ -e "${f}" ]; then found="yes"; break; fi; \
+    done; \
+    if [ -n "${found}" ]; then \
       echo "freshclam seed: signature database present"; \
     else \
-      echo "freshclam seed: signature database missing (will bootstrap at runtime)"; \
+      echo "freshclam seed: signature database missing"; \
+      if [ "${REQUIRE_SIGNATURE_DB}" = "true" ]; then \
+        echo "ERROR: signature database required but missing. Set REQUIRE_SIGNATURE_DB=false to allow build without signatures." >&2; \
+        exit 1; \
+      fi; \
     fi; \
     chown -R clamav:clamav /var/lib/clamav
 
