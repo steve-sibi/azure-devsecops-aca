@@ -16,7 +16,6 @@ RUN apt-get update \
       clamav \
       clamav-daemon \
       clamav-freshclam \
-      socat \
       tini \
     && rm -rf /var/lib/apt/lists/*
 
@@ -60,7 +59,7 @@ RUN set -eux; \
 
 USER clamav
 
-EXPOSE 3310
+EXPOSE 3311
 
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["/entrypoint.sh"]
