@@ -260,12 +260,10 @@ resource "azurerm_container_app" "clamav" {
       memory = "1Gi"
 
       startup_probe {
-        probe_protocol          = "TCP"
-        probe_port              = 3310
-        initial_delay           = 30
-        interval                = 5
+        transport               = "TCP"
+        port                    = 3310
         timeout                 = 3
-        failure_count_threshold = 18
+        failure_count_threshold = 60
       }
     }
 
