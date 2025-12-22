@@ -262,8 +262,9 @@ resource "azurerm_container_app" "clamav" {
       startup_probe {
         transport               = "TCP"
         port                    = 3310
+        interval_seconds        = 60
         timeout                 = 3
-        failure_count_threshold = 60
+        failure_count_threshold = 10
       }
     }
 
@@ -470,6 +471,10 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "CLAMAV_PORT"
         value = "3310"
+      }
+      env {
+        name  = "CLAMAV_READY_TIMEOUT_SECONDS"
+        value = "600"
       }
       env {
         name  = "SCAN_ENGINE"
