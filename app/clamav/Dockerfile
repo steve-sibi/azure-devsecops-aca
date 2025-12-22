@@ -59,7 +59,7 @@ RUN set -eux; \
 
 USER clamav
 
-EXPOSE 3311
+EXPOSE 3310
 
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["/entrypoint.sh"]
