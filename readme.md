@@ -37,12 +37,18 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
            │ Apps, min=0)       │
            └────────────────────┘
                  │         │
-        (writes results)   │ (logs/metrics)
+        (writes results)   │ (scan via clamd TCP)
                  ▼         ▼
       ┌────────────────┐  ┌─────────────────────┐
-      │ Azure Table    │  │    Log Analytics    │   (optional traces to App Insights)
-      │ scanresults    │  └─────────────────────┘
-      └────────────────┘
+      │ Azure Table    │  │  ClamAV (clamd)     │
+      │ scanresults    │  │  internal TCP :3310 │
+      └────────────────┘  └─────────────────────┘
+                  │
+            (logs/metrics)
+                  ▼
+      ┌─────────────────────┐   (optional traces to App Insights)
+      │    Log Analytics    │
+      └─────────────────────┘
 ```
 *Runtime Sequence*
 
@@ -54,6 +60,7 @@ sequenceDiagram
   participant SB as Service Bus Queue (tasks)
   participant KEDA as KEDA Scaler
   participant W as Worker (Container App)
+  participant AV as ClamAV (clamd)
   participant T as Azure Table Storage (scanresults)
   participant LA as Log Analytics
 
@@ -68,7 +75,9 @@ sequenceDiagram
   KEDA-->>W: Scale out replicas (min 0..max 5)
 
   W->>SB: Receive messages
-  W->>W: Download + scan (SSRF protected)
+  W->>W: Download (SSRF protected)
+  W->>AV: Stream bytes (INSTREAM)
+  AV-->>W: Verdict/signature
   W->>T: Upsert status=completed/error
   W->>SB: Complete message
   W-->>LA: Console logs (processing info)
@@ -131,6 +140,8 @@ sequenceDiagram
     - `<prefix>-api` (FastAPI; ingress on `:8000`)
         
     - `<prefix>-worker` (KEDA scale rule on the queue; min=0, max=5)
+
+    - `<prefix>-clamav` (ClamAV `clamd`; internal TCP on `:3310`)
         
 
 **Secrets (via Key Vault references, resolved by ACA):**
@@ -143,6 +154,8 @@ sequenceDiagram
 - KEDA scale rule auth uses KV secret **(manage)**, secretRef e.g. `sb-manage` (not injected into container)
     
 - API/worker env `RESULT_STORE_CONN` and `RESULT_TABLE` for scan status storage (from Storage Table)
+
+- Worker env `CLAMAV_HOST` + `CLAMAV_PORT` point to the internal ClamAV service (not secrets)
     
 
 > The apps use the connection string path by default. You can toggle **Managed Identity** in the API for Service Bus (`USE_MANAGED_IDENTITY=true` + `SERVICEBUS_FQDN`), but it’s optional.
@@ -190,6 +203,11 @@ azure-devsecops-aca/
 │  │  ├─ Dockerfile
 │  │  ├─ main.py
 │  │  └─ requirements.txt
+│  ├─ clamav/             # ClamAV (clamd) microservice
+│  │  ├─ Dockerfile
+│  │  ├─ clamd.conf
+│  │  ├─ freshclam.conf
+│  │  └─ entrypoint.sh
 │  └─ worker/             # queue consumer
 │     ├─ Dockerfile
 │     ├─ worker.py
@@ -207,7 +225,7 @@ azure-devsecops-aca/
 ## 5) CI/CD workflow
 ### CI (`.github/workflows/ci.yml`)
 
-- Build API & Worker (Docker Buildx, with cache)
+- Build API, Worker, and ClamAV (Docker Buildx, with cache)
     
 - Trivy image scan (HIGH/CRITICAL)
     
@@ -363,13 +381,13 @@ Poll for status/result:
 curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}" | python3 -m json.tool
 ```
 
-Test “malicious” behavior (demo heuristic): use a URL containing `test-malicious`:
+Test “malicious” behavior (ClamAV): scan a URL that serves the EICAR test string over HTTPS (safe test malware signature):
 
 ```bash
 curl -sS -X POST "${API_URL}/scan" \
   -H "content-type: application/json" \
   -H "X-API-Key: ${API_KEY}" \
-  -d '{"url":"https://example.com/test-malicious","type":"url"}'
+  -d '{"url":"https://<your-eicar-test-file-host>/eicar.txt","type":"url"}'
 ```
 
 ### Where are scan results stored?
@@ -576,15 +594,14 @@ To restart later, just re-run the **Deploy** workflow.
     
 
 **Worker (`app/worker/worker.py`)**
-
 - Uses `azure-servicebus` to receive messages.
     
-- For scan jobs: downloads HTTPS content with size/time caps, runs a lightweight heuristic scan placeholder, and writes status/verdicts to the table. DLQs after `MAX_RETRIES`.
+- For scan jobs: downloads HTTPS content with size/time caps, streams the response body to ClamAV (`clamd`) for signature scanning, and writes status/verdicts to the table (transient failures show `retrying`). DLQs after `MAX_RETRIES`.
 
 ## 14) Extending this project (future work)
 
 - **Per-user API keys**: store *hashed* keys in Table Storage, add admin endpoints to mint/revoke keys, and attach per-key quotas.
-- **Replace the scan placeholder**: add a real engine (YARA rules, ClamAV, headless browser analysis, etc.) inside the worker.
+- **Deepen scanning**: add YARA rules, file-type sniffing, and/or sandboxed detonation; keep ClamAV for baseline signature scanning.
 - **Front the API**: add API Management / Front Door + WAF, request validation, and centralized auth.
 - **DAST in CI**: run OWASP ZAP against the deployed `/scan` endpoint using a non-prod API key.
 - **Supply-chain hardening**: SBOM generation (Syft), vulnerability gating (Grype), image signing (Cosign), and provenance.

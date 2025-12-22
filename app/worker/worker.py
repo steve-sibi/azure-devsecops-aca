@@ -41,15 +41,16 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
 
 # ---- Scan engine (ClamAV) ----
 CLAMAV_HOST = os.getenv("CLAMAV_HOST")  # e.g. "<prefix>-clamav.<env>.internal... "
+CLAMAV_HOSTS = os.getenv(
+    "CLAMAV_HOSTS"
+)  # optional CSV of fallbacks, tried in order
 CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
 CLAMAV_TIMEOUT = float(os.getenv("CLAMAV_TIMEOUT", "10"))
 CLAMAV_MAX_RETRIES = int(os.getenv("CLAMAV_MAX_RETRIES", "2"))
 CLAMAV_RETRY_DEADLINE_SECONDS = float(os.getenv("CLAMAV_RETRY_DEADLINE_SECONDS", "30"))
 CLAMAV_CHUNK_SIZE = int(os.getenv("CLAMAV_CHUNK_SIZE", "16384"))
-CLAMAV_READY_TIMEOUT_SECONDS = float(os.getenv("CLAMAV_READY_TIMEOUT_SECONDS", "300"))
-CLAMAV_READY_INTERVAL_SECONDS = float(os.getenv("CLAMAV_READY_INTERVAL_SECONDS", "5"))
 SCAN_ENGINE = os.getenv(
-    "SCAN_ENGINE", "clamav" if CLAMAV_HOST else "heuristic"
+    "SCAN_ENGINE", "clamav" if (CLAMAV_HOSTS or CLAMAV_HOST) else "heuristic"
 ).strip().lower()
 
 # ---- Logging (console + optional App Insights) ----
@@ -195,8 +196,10 @@ def _scan_bytes(content: bytes, url: str) -> tuple[str, dict]:
     details = {"sha256": digest, "length": len(content)}
 
     if SCAN_ENGINE == "clamav":
-        if not CLAMAV_HOST:
-            raise ValueError("CLAMAV_HOST is required when SCAN_ENGINE=clamav")
+        if not _get_clamav_hosts():
+            raise ValueError(
+                "CLAMAV_HOST or CLAMAV_HOSTS is required when SCAN_ENGINE=clamav"
+            )
         verdict, clamav_details = _clamav_instream_scan(content)
         details.update(
             {
@@ -220,62 +223,67 @@ def _scan_bytes(content: bytes, url: str) -> tuple[str, dict]:
 
 def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:
     """Scan bytes via clamd INSTREAM protocol."""
+    hosts = _get_clamav_hosts()
+    if not hosts:
+        raise ValueError("clamav scan failed: no CLAMAV_HOST(S) configured")
+
     last_err: Optional[Exception] = None
 
     deadline = time.monotonic() + CLAMAV_RETRY_DEADLINE_SECONDS
     for attempt in range(CLAMAV_MAX_RETRIES + 1):
-        # clamd can accept INSTREAM as either newline-delimited or null-terminated.
-        for cmd in (b"zINSTREAM\0", b"INSTREAM\n"):
-            try:
-                with socket.create_connection(
-                    (CLAMAV_HOST, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT
-                ) as sock:
-                    sock.settimeout(CLAMAV_TIMEOUT)
+        for host in hosts:
+            # clamd can accept INSTREAM as either newline-delimited or null-terminated.
+            for cmd in (b"zINSTREAM\0", b"INSTREAM\n"):
+                try:
+                    with socket.create_connection(
+                        (host, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT
+                    ) as sock:
+                        sock.settimeout(CLAMAV_TIMEOUT)
 
-                    sock.sendall(cmd)
-                    view = memoryview(content)
-                    for i in range(0, len(content), CLAMAV_CHUNK_SIZE):
-                        chunk = view[i : i + CLAMAV_CHUNK_SIZE]
-                        sock.sendall(struct.pack("!I", len(chunk)))
-                        sock.sendall(chunk)
-                    sock.sendall(struct.pack("!I", 0))
+                        sock.sendall(cmd)
+                        view = memoryview(content)
+                        for i in range(0, len(content), CLAMAV_CHUNK_SIZE):
+                            chunk = view[i : i + CLAMAV_CHUNK_SIZE]
+                            sock.sendall(struct.pack("!I", len(chunk)))
+                            sock.sendall(chunk)
+                        sock.sendall(struct.pack("!I", 0))
 
-                    buf = b""
-                    while True:
-                        part = sock.recv(4096)
-                        if not part:
-                            break
-                        buf += part
-                        if b"\0" in buf or b"\n" in buf:
-                            break
+                        buf = b""
+                        while True:
+                            part = sock.recv(4096)
+                            if not part:
+                                break
+                            buf += part
+                            if b"\0" in buf or b"\n" in buf:
+                                break
 
-                    line = (
-                        buf.split(b"\0", 1)[0]
-                        .split(b"\n", 1)[0]
-                        .decode("utf-8", "replace")
-                        .strip()
-                    )
-                    if not line:
-                        raise ValueError("empty clamd response")
+                        line = (
+                            buf.split(b"\0", 1)[0]
+                            .split(b"\n", 1)[0]
+                            .decode("utf-8", "replace")
+                            .strip()
+                        )
+                        if not line:
+                            raise ValueError("empty clamd response")
 
-                    # Typical responses:
-                    #   "stream: OK"
-                    #   "stream: Eicar-Test-Signature FOUND"
-                    #   "stream: <reason> ERROR"
-                    if line.endswith(" OK"):
-                        return "clean", {"clamav": {"result": "OK"}}
-                    if line.endswith(" FOUND"):
-                        signature = line.split(": ", 1)[1].rsplit(" FOUND", 1)[0]
-                        return "malicious", {
-                            "clamav": {"result": "FOUND", "signature": signature}
-                        }
-                    if line.endswith(" ERROR") or " ERROR" in line:
-                        raise ValueError(f"clamd error: {line}")
+                        # Typical responses:
+                        #   "stream: OK"
+                        #   "stream: Eicar-Test-Signature FOUND"
+                        #   "stream: <reason> ERROR"
+                        if line.endswith(" OK"):
+                            return "clean", {"clamav": {"result": "OK"}}
+                        if line.endswith(" FOUND"):
+                            signature = line.split(": ", 1)[1].rsplit(" FOUND", 1)[0]
+                            return "malicious", {
+                                "clamav": {"result": "FOUND", "signature": signature}
+                            }
+                        if line.endswith(" ERROR") or " ERROR" in line:
+                            raise ValueError(f"clamd error: {line}")
 
-                    # Unexpected response; fail closed.
-                    raise ValueError(f"unexpected clamd response: {line}")
-            except (OSError, ValueError) as e:
-                last_err = e
+                        # Unexpected response; fail closed.
+                        raise ValueError(f"unexpected clamd response: {line}")
+                except (OSError, ValueError) as e:
+                    last_err = RuntimeError(f"{host}:{CLAMAV_PORT}: {e}")
 
         if attempt >= CLAMAV_MAX_RETRIES or time.monotonic() >= deadline:
             break
@@ -284,45 +292,21 @@ def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:
     raise ValueError(f"clamav scan failed: {last_err}")
 
 
-def _clamav_ping() -> bool:
-    if not CLAMAV_HOST:
-        return False
-    # clamd's TCP protocol commonly uses newline-delimited commands (PING\n) while
-    # INSTREAM uses the null-terminated variant (zINSTREAM\0). Support both.
-    for payload in (b"PING\n", b"zPING\0"):
-        try:
-            with socket.create_connection(
-                (CLAMAV_HOST, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT
-            ) as sock:
-                sock.settimeout(CLAMAV_TIMEOUT)
-                sock.sendall(payload)
-                data = sock.recv(64)
-                if b"PONG" in data:
-                    return True
-        except OSError:
+def _get_clamav_hosts() -> List[str]:
+    hosts: List[str] = []
+    if CLAMAV_HOSTS:
+        hosts.extend([h.strip() for h in CLAMAV_HOSTS.split(",") if h.strip()])
+    if CLAMAV_HOST:
+        hosts.append(CLAMAV_HOST.strip())
+
+    unique_hosts: List[str] = []
+    seen: set[str] = set()
+    for host in hosts:
+        if host in seen:
             continue
-    return False
-
-
-def _wait_for_clamav_ready():
-    if SCAN_ENGINE != "clamav":
-        return
-    if not CLAMAV_HOST:
-        raise RuntimeError("CLAMAV_HOST is required when SCAN_ENGINE=clamav")
-
-    deadline = time.monotonic() + CLAMAV_READY_TIMEOUT_SECONDS
-    while not shutdown and time.monotonic() < deadline:
-        if _clamav_ping():
-            logging.info("[worker] ClamAV is ready at %s:%s", CLAMAV_HOST, CLAMAV_PORT)
-            return
-        logging.warning(
-            "[worker] Waiting for ClamAV at %s:%s ...", CLAMAV_HOST, CLAMAV_PORT
-        )
-        time.sleep(max(0.5, CLAMAV_READY_INTERVAL_SECONDS))
-
-    raise RuntimeError(
-        f"ClamAV not ready after {CLAMAV_READY_TIMEOUT_SECONDS:.0f}s at {CLAMAV_HOST}:{CLAMAV_PORT}"
-    )
+        seen.add(host)
+        unique_hosts.append(host)
+    return unique_hosts
 
 
 def _save_result(
@@ -371,7 +355,14 @@ def main():
     table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
     table_client = table_service.get_table_client(table_name=RESULT_TABLE)
 
-    _wait_for_clamav_ready()
+    if SCAN_ENGINE == "clamav":
+        hosts = _get_clamav_hosts()
+        if not hosts:
+            raise RuntimeError(
+                "SCAN_ENGINE=clamav but CLAMAV_HOST/CLAMAV_HOSTS is not set"
+            )
+        logging.info("[worker] ClamAV configured: hosts=%s port=%s", hosts, CLAMAV_PORT)
+
     logging.info("[worker] started; waiting for messages...")
 
     with client:

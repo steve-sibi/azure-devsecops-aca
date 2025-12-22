@@ -258,14 +258,6 @@ resource "azurerm_container_app" "clamav" {
       image  = "${data.azurerm_container_registry.acr.login_server}/${local.clamav_name}:${var.image_tag}"
       cpu    = 0.5
       memory = "1Gi"
-
-      startup_probe {
-        transport               = "TCP"
-        port                    = 3310
-        interval_seconds        = 60
-        timeout                 = 3
-        failure_count_threshold = 10
-      }
     }
 
     min_replicas = 1
@@ -469,12 +461,12 @@ resource "azurerm_container_app" "worker" {
         value = try(azurerm_container_app.clamav[0].ingress[0].fqdn, "")
       }
       env {
-        name  = "CLAMAV_PORT"
-        value = "3310"
+        name  = "CLAMAV_HOSTS"
+        value = "${local.clamav_name},${try(azurerm_container_app.clamav[0].ingress[0].fqdn, "")}"
       }
       env {
-        name  = "CLAMAV_READY_TIMEOUT_SECONDS"
-        value = "600"
+        name  = "CLAMAV_PORT"
+        value = "3310"
       }
       env {
         name  = "SCAN_ENGINE"
