@@ -258,6 +258,15 @@ resource "azurerm_container_app" "clamav" {
       image  = "${data.azurerm_container_registry.acr.login_server}/${local.clamav_name}:${var.image_tag}"
       cpu    = 0.5
       memory = "1Gi"
+
+      startup_probe {
+        probe_protocol          = "TCP"
+        probe_port              = 3310
+        initial_delay           = 30
+        interval                = 5
+        timeout                 = 3
+        failure_count_threshold = 18
+      }
     }
 
     min_replicas = 1
