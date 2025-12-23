@@ -1,0 +1,71 @@
+name: KEDA Scale Test
+on:
+  workflow_dispatch:
+    inputs:
+      resource_group:
+        description: Resource group name (e.g. rg-devsecops-aca)
+        required: true
+        default: rg-devsecops-aca
+      prefix:
+        description: Resource prefix (e.g. devsecopsaca)
+        required: true
+        default: devsecopsaca
+      queue_name:
+        description: Service Bus queue name
+        required: true
+        default: tasks
+      scan_url:
+        description: Public HTTPS URL to scan (must be <= 1MB)
+        required: true
+        default: https://example.com
+      message_count:
+        description: Number of messages to enqueue
+        required: true
+        default: "100"
+      expected_min_replicas:
+        description: Minimum worker replicas to observe
+        required: true
+        default: "1"
+      timeout_seconds:
+        description: Timeout waiting for scale-out
+        required: true
+        default: "600"
+
+concurrency:
+  group: keda-scale-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  keda-scale-test:
+    runs-on: ubuntu-latest
+    permissions: { id-token: write, contents: read }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+
+      - name: Install deps (enqueue script)
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "azure-servicebus~=7.12"
+
+      - name: Run KEDA scale test
+        shell: bash
+        run: |
+          bash scripts/keda_scale_test.sh \
+            --resource-group "${{ inputs.resource_group }}" \
+            --prefix "${{ inputs.prefix }}" \
+            --queue-name "${{ inputs.queue_name }}" \
+            --message-count "${{ inputs.message_count }}" \
+            --expected-min-replicas "${{ inputs.expected_min_replicas }}" \
+            --scan-url "${{ inputs.scan_url }}" \
+            --timeout-seconds "${{ inputs.timeout_seconds }}"
+
