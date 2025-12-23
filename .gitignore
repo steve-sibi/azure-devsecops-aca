@@ -9,6 +9,7 @@ crash.log
 crash.*.log
 .terraformrc
 terraform.rc
+backend.hcl
 
 # Python
 __pycache__/
