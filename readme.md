@@ -250,8 +250,23 @@ azure-devsecops-aca/
     - `GET /healthz`
     - end-to-end scan: `POST /scan` then poll `GET /scan/{job_id}` until `completed`
 
-> Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI/Deploy on push.
+> Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI; Deploy is manual (`workflow_dispatch`).
     
+### KEDA Scale Test (`.github/workflows/keda-scale-test.yml`)
+
+Manual workflow (`workflow_dispatch`) to validate **KEDA scale-out**:
+
+- Enqueues a burst of scan messages directly to **Service Bus** (bypasses API rate limiting).
+- Polls worker replica count until it reaches `expected_min_replicas`.
+
+You can run the same check locally:
+
+```bash
+python3 -m pip install -r app/worker/requirements.txt
+az login
+bash scripts/keda_scale_test.sh --resource-group <rg> --prefix <prefix>
+```
+
 
 ### Destroy (`.github/workflows/destroy.yml`)
 
@@ -317,7 +332,7 @@ terraform apply \
 - **Defense in depth**: the worker re-validates targets and validates every redirect hop.
 
 ## 7) Running it
-- Push to `main` or trigger the **Deploy** workflow.
+- Trigger the **Deploy** workflow manually (Actions tab → Deploy → Run workflow).
     
 - After **create-apps**, get the public API URL:
 
@@ -331,7 +346,7 @@ echo "$API_URL"
 
 ### Quickstart (user workflow)
 
-1. Run **Deploy** (or push to `main`).
+1. Run **Deploy** from GitHub Actions (Actions tab → Deploy → Run workflow).
 2. Get the API URL (output or `az containerapp show ...`).
 3. Get the API key from Key Vault: `ApiKey`.
 4. Open the web UI at `https://<api-fqdn>/` and paste the API key.
