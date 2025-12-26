@@ -6,8 +6,8 @@ What this project demonstrates (resume-friendly):
 
 - **DevSecOps Approach**: Focused on implementing infrastructure in an automated, shift-left manner
 - **Secure API surface**: `X-API-Key` auth + per-key rate limiting + SSRF protections
-- **Async job processing**: API enqueues scan jobs to **Service Bus**, worker processes jobs (KEDA autoscaling)
-- **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`)
+- **Async job processing**: API enqueues scan jobs to **Service Bus** (or Redis locally), worker processes jobs (KEDA autoscaling on Azure)
+- **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`) (or Redis locally)
 - **DevSecOps CI/CD**: Checkov + Trivy in CI; Deploy workflow includes health + end-to-end smoke tests
 - **Cloud-native secrets**: **Key Vault** stores secrets, resolved by **UAMI** at deploy/runtime
 - **Built-in UI**: minimal dashboard at `/` plus Swagger at `/docs`
@@ -332,6 +332,26 @@ terraform apply \
 - **Defense in depth**: the worker re-validates targets and validates every redirect hop.
 
 ## 7) Running it
+
+### Local (Docker Compose)
+
+Prereqs: Docker Desktop (or any Docker engine with Compose).
+
+```bash
+cp .env.example .env  # optional: tweak defaults (API key, rate limits, etc.)
+docker compose up --build
+```
+
+- API: `http://localhost:8000`
+- Web UI: `http://localhost:8000/`
+- Swagger: `http://localhost:8000/docs`
+
+Default API key: `local-dev-key` (change via `.env`).
+
+> Note: the first run may take a few minutes while the ClamAV container downloads signatures.
+> If you want a faster local loop, set `SCAN_ENGINE=heuristic` in `.env`.
+
+### Azure (Container Apps)
 - Trigger the **Deploy** workflow manually (Actions tab → Deploy → Run workflow).
     
 - After **create-apps**, get the public API URL:
@@ -344,7 +364,7 @@ echo "$API_URL"
 
 `infra/outputs.tf` also exposes a `fastapi_url` output if you run Terraform locally.
 
-### Quickstart (user workflow)
+### Azure quickstart (user workflow)
 
 1. Run **Deploy** from GitHub Actions (Actions tab → Deploy → Run workflow).
 2. Get the API URL (output or `az containerapp show ...`).
@@ -364,9 +384,11 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 
 ### GUI + Swagger
 
-- Web UI: `https://<api-fqdn>/`
-- Swagger: `https://<api-fqdn>/docs`
-- ReDoc: `https://<api-fqdn>/redoc`
+- Local Web UI: `http://localhost:8000/`
+- Local Swagger: `http://localhost:8000/docs`
+- Azure Web UI: `https://<api-fqdn>/`
+- Azure Swagger: `https://<api-fqdn>/docs`
+- Azure ReDoc: `https://<api-fqdn>/redoc`
 
 ### Endpoints
 
@@ -407,7 +429,8 @@ curl -sS -X POST "${API_URL}/scan" \
 
 ### Where are scan results stored?
 
-- **Primary**: `GET /scan/{job_id}` (reads from Table Storage)
+- **Primary**: `GET /scan/{job_id}` (reads from the configured result backend: Azure Table Storage by default; Redis in `docker-compose.yml`)
+- **Local (optional)**: `docker compose exec redis redis-cli HGETALL "scan:<job_id>"`
 - **GitHub Actions**: open the Deploy run and find the `job_id=...` line under “End-to-end scan test” (you can query it via the API afterwards)
 - **Azure Portal (optional)**: Storage account `<prefix>scan` → Table service → `scanresults` (PartitionKey `scan`)
 
@@ -599,19 +622,19 @@ To restart later, just re-run the **Deploy** workflow.
 ## 13) How the app code works (quick tour)
 **API (`app/api/main.py`)**
 
-- `POST /tasks` -> validates JSON, sends to queue using the connection string from the ACA secret `sb-send` (sourced from Key Vault).
+- `POST /tasks` -> validates JSON, sends to the configured queue backend (`QUEUE_BACKEND=servicebus` on Azure; `QUEUE_BACKEND=redis` in `docker-compose.yml`).
     
-- `POST /scan` -> requires `X-API-Key`, enforces SSRF protections, enqueues a scan job, and records a queued status in the results table.
+- `POST /scan` -> requires `X-API-Key`, enforces SSRF protections, enqueues a scan job, and records a queued status in the configured result backend (`RESULT_BACKEND=table` on Azure; `RESULT_BACKEND=redis` locally).
     
-- `GET /scan/{job_id}` -> reads the results table and returns the current status/verdict.
+- `GET /scan/{job_id}` -> reads the configured result backend and returns the current status/verdict.
     
 - `GET /healthz` -> basic health.
     
 
 **Worker (`app/worker/worker.py`)**
-- Uses `azure-servicebus` to receive messages.
+- Receives messages from the configured queue backend (Azure Service Bus by default; Redis locally).
     
-- For scan jobs: downloads HTTPS content with size/time caps, streams the response body to ClamAV (`clamd`) for signature scanning, and writes status/verdicts to the table (transient failures show `retrying`). DLQs after `MAX_RETRIES`.
+- For scan jobs: downloads HTTPS content with size/time caps, streams bytes to ClamAV (`clamd`) (or uses the `heuristic` fallback), and writes status/verdicts to the configured result backend. Retries up to `MAX_RETRIES`.
 
 ## 14) Extending this project (future work)
 
