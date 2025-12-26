@@ -44,6 +44,11 @@ fi
 
 echo "[clamav] starting signature updater loop..."
 (
+  # Avoid competing with clamd's initial DB load; this helps ACA pass its TCP startup probe.
+  initial_delay="${FRESHCLAM_INITIAL_DELAY_SECONDS:-60}"
+  if [ "${initial_delay}" -gt 0 ] 2>/dev/null; then
+    sleep "${initial_delay}"
+  fi
   interval="${FRESHCLAM_INTERVAL_SECONDS:-7200}"
   while true; do
     freshclam --config-file=/etc/clamav/freshclam.conf 2>&1 | tee -a "${LOG_DIR}/freshclam.log" || true

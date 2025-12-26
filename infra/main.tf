@@ -256,8 +256,8 @@ resource "azurerm_container_app" "clamav" {
     container {
       name   = "clamav"
       image  = "${data.azurerm_container_registry.acr.login_server}/${local.clamav_name}:${var.image_tag}"
-      cpu    = 0.5
-      memory = "1Gi"
+      cpu    = 1.0
+      memory = "2Gi"
     }
 
     min_replicas = 1
