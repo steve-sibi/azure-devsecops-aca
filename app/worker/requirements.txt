@@ -3,3 +3,4 @@ azure-servicebus~=7.12
 opencensus-ext-azure==1.1.13
 azure-data-tables>=12.6.0
 requests>=2.32.3
+redis>=5.0.0

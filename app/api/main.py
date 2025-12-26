@@ -26,15 +26,23 @@ from pydantic import BaseModel, Field
 
 # ---------- Settings ----------
 QUEUE_NAME = os.getenv("QUEUE_NAME", "tasks")
+QUEUE_BACKEND = os.getenv("QUEUE_BACKEND", "servicebus").strip().lower()
 SERVICEBUS_CONN = os.getenv("SERVICEBUS_CONN")  # connection string (current)
 SERVICEBUS_FQDN = os.getenv(
     "SERVICEBUS_FQDN"
 )  # e.g. "mynamespace.servicebus.windows.net"
 USE_MI = os.getenv("USE_MANAGED_IDENTITY", "false").lower() in ("1", "true", "yes")
 APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN")  # optional
+RESULT_BACKEND = os.getenv("RESULT_BACKEND", "table").strip().lower()
 RESULT_STORE_CONN = os.getenv("RESULT_STORE_CONN")
 RESULT_TABLE = os.getenv("RESULT_TABLE", "scanresults")
 RESULT_PARTITION = os.getenv("RESULT_PARTITION", "scan")
+
+# Local dev backends (Redis)
+REDIS_URL = os.getenv("REDIS_URL")
+REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", f"queue:{QUEUE_NAME}")
+REDIS_RESULT_PREFIX = os.getenv("REDIS_RESULT_PREFIX", "scan:")
+REDIS_RESULT_TTL_SECONDS = int(os.getenv("REDIS_RESULT_TTL_SECONDS", "0"))
 
 # API hardening
 API_KEY = os.getenv("API_KEY")
@@ -54,6 +62,7 @@ sb_client: Optional[ServiceBusClient] = None
 sb_sender: Optional[ServiceBusSender] = None
 table_service: Optional[TableServiceClient] = None
 table_client = None
+redis_client = None
 
 api_key_scheme = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
 
@@ -165,61 +174,165 @@ async def _upsert_result(
     extra: Optional[dict] = None,
 ):
     """Persist status/verdict to the table for status checks."""
-    if not table_client:
+    if RESULT_BACKEND == "table":
+        if not table_client:
+            return
+        entity: dict[str, Any] = {
+            "PartitionKey": RESULT_PARTITION,
+            "RowKey": job_id,
+            "status": status,
+            "verdict": verdict or "",
+            "error": error or "",
+        }
+        if details:
+            entity["details"] = json.dumps(details)
+        if extra:
+            for k, v in extra.items():
+                entity[k] = v
+        await table_client.upsert_entity(entity=entity)
         return
-    entity: dict[str, Any] = {
-        "PartitionKey": RESULT_PARTITION,
-        "RowKey": job_id,
-        "status": status,
-        "verdict": verdict or "",
-        "error": error or "",
-    }
-    if details:
-        entity["details"] = json.dumps(details)
-    if extra:
-        for k, v in extra.items():
-            entity[k] = v
-    await table_client.upsert_entity(entity=entity)
+
+    if RESULT_BACKEND == "redis":
+        if not redis_client:
+            return
+        key = f"{REDIS_RESULT_PREFIX}{job_id}"
+        entity = {
+            "status": status,
+            "verdict": verdict or "",
+            "error": error or "",
+        }
+        if details is not None:
+            entity["details"] = json.dumps(details)
+        if extra:
+            entity.update({str(k): v for k, v in extra.items()})
+        await redis_client.hset(key, mapping=entity)
+        if REDIS_RESULT_TTL_SECONDS > 0:
+            await redis_client.expire(key, REDIS_RESULT_TTL_SECONDS)
+        return
+
+    raise RuntimeError(f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
+
+
+async def _get_result_entity(job_id: str) -> Optional[dict]:
+    if RESULT_BACKEND == "table":
+        if not table_client:
+            return None
+        try:
+            return await table_client.get_entity(
+                partition_key=RESULT_PARTITION, row_key=job_id
+            )
+        except ResourceNotFoundError:
+            return None
+
+    if RESULT_BACKEND == "redis":
+        if not redis_client:
+            return None
+        key = f"{REDIS_RESULT_PREFIX}{job_id}"
+        data = await redis_client.hgetall(key)
+        return data or None
+
+    raise RuntimeError(f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
+
+
+async def _enqueue_json(
+    payload: dict,
+    *,
+    schema: str,
+    message_id: str,
+    application_properties: Optional[dict] = None,
+):
+    if QUEUE_BACKEND == "servicebus":
+        if not sb_sender:
+            raise HTTPException(status_code=503, detail="Queue not initialized")
+        props = {"schema": schema}
+        if application_properties:
+            props.update(application_properties)
+        msg = ServiceBusMessage(
+            json.dumps(payload),
+            content_type="application/json",
+            message_id=message_id,
+            application_properties=props,
+        )
+        await sb_sender.send_messages(msg)
+        return
+
+    if QUEUE_BACKEND == "redis":
+        if not redis_client:
+            raise HTTPException(status_code=503, detail="Queue not initialized")
+        envelope = {
+            "schema": schema,
+            "message_id": message_id,
+            "delivery_count": 1,
+            "payload": payload,
+        }
+        if application_properties:
+            envelope["application_properties"] = application_properties
+        await redis_client.rpush(REDIS_QUEUE_KEY, json.dumps(envelope))
+        return
+
+    raise RuntimeError(f"Unsupported QUEUE_BACKEND: {QUEUE_BACKEND}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global sb_client, sb_sender, table_service, table_client
+    global sb_client, sb_sender, table_service, table_client, redis_client
 
     cred = None  # will hold DefaultAzureCredential if MI is used
+    if QUEUE_BACKEND not in ("servicebus", "redis"):
+        raise RuntimeError("QUEUE_BACKEND must be 'servicebus' or 'redis'")
+    if RESULT_BACKEND not in ("table", "redis"):
+        raise RuntimeError("RESULT_BACKEND must be 'table' or 'redis'")
 
-    # --- Build Service Bus client ---
-    if USE_MI:
+    # --- Optional Redis client (local dev backends) ---
+    if (QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis") and not REDIS_URL:
+        raise RuntimeError("REDIS_URL is required when using Redis backends")
+
+    if QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis":
         try:
-            from azure.identity.aio import DefaultAzureCredential
+            import redis.asyncio as redis_async
         except Exception as e:
             raise RuntimeError(
-                "USE_MANAGED_IDENTITY=true but azure-identity is not installed"
+                "Redis backends require the 'redis' package (pip install redis)"
             ) from e
-        if not SERVICEBUS_FQDN:
-            raise RuntimeError(
-                "SERVICEBUS_FQDN is required when using Managed Identity"
+        redis_client = redis_async.from_url(REDIS_URL, decode_responses=True)
+        await redis_client.ping()
+
+    # --- Queue backend ---
+    if QUEUE_BACKEND == "servicebus":
+        if USE_MI:
+            try:
+                from azure.identity.aio import DefaultAzureCredential
+            except Exception as e:
+                raise RuntimeError(
+                    "USE_MANAGED_IDENTITY=true but azure-identity is not installed"
+                ) from e
+            if not SERVICEBUS_FQDN:
+                raise RuntimeError(
+                    "SERVICEBUS_FQDN is required when using Managed Identity"
+                )
+            cred = DefaultAzureCredential()
+            sb_client = ServiceBusClient(
+                fully_qualified_namespace=SERVICEBUS_FQDN, credential=cred
             )
-        cred = DefaultAzureCredential()
-        sb_client = ServiceBusClient(
-            fully_qualified_namespace=SERVICEBUS_FQDN, credential=cred
+        else:
+            if not SERVICEBUS_CONN:
+                raise RuntimeError("SERVICEBUS_CONN environment variable is required")
+            sb_client = ServiceBusClient.from_connection_string(SERVICEBUS_CONN)
+
+        await sb_client.__aenter__()
+        sb_sender = sb_client.get_queue_sender(queue_name=QUEUE_NAME)
+        await sb_sender.__aenter__()
+
+    # --- Result store backend ---
+    if RESULT_BACKEND == "table":
+        if not RESULT_STORE_CONN:
+            raise RuntimeError("RESULT_STORE_CONN environment variable is required")
+        table_service = TableServiceClient.from_connection_string(
+            conn_str=RESULT_STORE_CONN
         )
-    else:
-        if not SERVICEBUS_CONN:
-            raise RuntimeError("SERVICEBUS_CONN environment variable is required")
-        sb_client = ServiceBusClient.from_connection_string(SERVICEBUS_CONN)
-
-    if not RESULT_STORE_CONN:
-        raise RuntimeError("RESULT_STORE_CONN environment variable is required")
-    table_service = TableServiceClient.from_connection_string(conn_str=RESULT_STORE_CONN)
-    table_client = table_service.get_table_client(table_name=RESULT_TABLE)
-
-    # Enter client and sender once for app lifetime
-    await sb_client.__aenter__()
-    sb_sender = sb_client.get_queue_sender(queue_name=QUEUE_NAME)
-    await sb_sender.__aenter__()
-    await table_service.__aenter__()
-    await table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
+        table_client = table_service.get_table_client(table_name=RESULT_TABLE)
+        await table_service.__aenter__()
+        await table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
 
     # --- Optional OpenTelemetry tracing (only if packages + conn are present) ---
     if APPINSIGHTS_CONN:
@@ -250,6 +363,18 @@ async def lifespan(app: FastAPI):
         await sb_client.__aexit__(None, None, None)
     if table_service:
         await table_service.__aexit__(None, None, None)
+    if redis_client:
+        try:
+            maybe = redis_client.close()
+            if asyncio.iscoroutine(maybe):
+                await maybe
+        finally:
+            pool = getattr(redis_client, "connection_pool", None)
+            disconnect = getattr(pool, "disconnect", None) if pool else None
+            if callable(disconnect):
+                maybe = disconnect()
+                if asyncio.iscoroutine(maybe):
+                    await maybe
     if cred:
         # Properly close the async credential if used
         await cred.close()
@@ -866,18 +991,16 @@ async def dashboard():
 
 @app.post("/tasks")
 async def enqueue_task(task: TaskIn, _: None = Security(require_api_key)):
-    if not sb_sender:
-        raise HTTPException(status_code=503, detail="Service Bus not initialized")
     try:
-        msg = ServiceBusMessage(
-            json.dumps(task.payload),
-            content_type="application/json",
-            message_id=str(uuid4()),
-            application_properties={"schema": "task-v1"},
-        )
-        await sb_sender.send_messages(msg)
+        await _enqueue_json(task.payload, schema="task-v1", message_id=str(uuid4()))
         return {"status": "queued", "item": task.payload}
+    except HTTPException:
+        raise
     except ServiceBusError as e:
+        raise HTTPException(
+            status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
+        )
+    except Exception as e:
         raise HTTPException(
             status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
         )
@@ -885,8 +1008,10 @@ async def enqueue_task(task: TaskIn, _: None = Security(require_api_key)):
 
 @app.post("/scan")
 async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
-    if not sb_sender or not table_client:
-        raise HTTPException(status_code=503, detail="Service dependencies not ready")
+    if RESULT_BACKEND == "table" and not table_client:
+        raise HTTPException(status_code=503, detail="Result store not initialized")
+    if RESULT_BACKEND == "redis" and not redis_client:
+        raise HTTPException(status_code=503, detail="Result store not initialized")
 
     _require_https(req.url)
     await _validate_public_destination(req.url)
@@ -904,13 +1029,12 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
         "submitted_at": submitted_at,
     }
     try:
-        msg = ServiceBusMessage(
-            json.dumps(payload),
-            content_type="application/json",
+        await _enqueue_json(
+            payload,
+            schema="scan-v1",
             message_id=job_id,
-            application_properties={"schema": "scan-v1", "correlation_id": correlation_id},
+            application_properties={"correlation_id": correlation_id},
         )
-        await sb_sender.send_messages(msg)
         await _upsert_result(
             job_id,
             status="queued",
@@ -918,7 +1042,13 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
             extra={"submitted_at": submitted_at},
         )
         return {"job_id": job_id, "status": "queued"}
+    except HTTPException:
+        raise
     except ServiceBusError as e:
+        raise HTTPException(
+            status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
+        )
+    except Exception as e:
         raise HTTPException(
             status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
         )
@@ -926,13 +1056,8 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
 
 @app.get("/scan/{job_id}")
 async def get_scan_status(job_id: str, _: None = Security(require_api_key)):
-    if not table_client:
-        raise HTTPException(status_code=503, detail="Result store not initialized")
-    try:
-        entity = await table_client.get_entity(
-            partition_key=RESULT_PARTITION, row_key=job_id
-        )
-    except ResourceNotFoundError:
+    entity = await _get_result_entity(job_id)
+    if not entity:
         return {"job_id": job_id, "status": "pending"}
 
     response = {

@@ -18,6 +18,7 @@ from azure.data.tables import TableClient, TableServiceClient
 from azure.core.exceptions import HttpResponseError
 
 # ---- Config via env ----
+QUEUE_BACKEND = os.getenv("QUEUE_BACKEND", "servicebus").strip().lower()
 SERVICEBUS_CONN = os.getenv("SERVICEBUS_CONN")
 QUEUE_NAME = os.getenv("QUEUE_NAME", "tasks")
 BATCH_SIZE = int(os.getenv("BATCH_SIZE", "10"))
@@ -27,6 +28,7 @@ MAX_RETRIES = int(
     os.getenv("MAX_RETRIES", "5")
 )  # move to DLQ after this many deliveries
 APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN")  # optional (opencensus)
+RESULT_BACKEND = os.getenv("RESULT_BACKEND", "table").strip().lower()
 RESULT_STORE_CONN = os.getenv("RESULT_STORE_CONN")
 RESULT_TABLE = os.getenv("RESULT_TABLE", "scanresults")
 RESULT_PARTITION = os.getenv("RESULT_PARTITION", "scan")
@@ -38,6 +40,13 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
     "true",
     "yes",
 )
+
+# Local dev backends (Redis)
+REDIS_URL = os.getenv("REDIS_URL")
+REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", f"queue:{QUEUE_NAME}")
+REDIS_DLQ_KEY = os.getenv("REDIS_DLQ_KEY", f"dlq:{QUEUE_NAME}")
+REDIS_RESULT_PREFIX = os.getenv("REDIS_RESULT_PREFIX", "scan:")
+REDIS_RESULT_TTL_SECONDS = int(os.getenv("REDIS_RESULT_TTL_SECONDS", "0"))
 
 # ---- Scan engine (ClamAV) ----
 CLAMAV_HOST = os.getenv("CLAMAV_HOST")  # e.g. "<prefix>-clamav.<env>.internal... "
@@ -67,6 +76,7 @@ if APPINSIGHTS_CONN:
 
 shutdown = False
 table_client: Optional[TableClient] = None
+redis_client = None
 
 
 def _signal_handler(*_):
@@ -320,40 +330,84 @@ def _save_result(
     submitted_at: Optional[str] = None,
     error: Optional[str] = None,
 ):
-    if not table_client:
+    scanned_at = datetime.now(timezone.utc).isoformat()
+
+    if RESULT_BACKEND == "table":
+        if not table_client:
+            return
+        entity = {
+            "PartitionKey": RESULT_PARTITION,
+            "RowKey": job_id,
+            "status": status,
+            "verdict": verdict or "",
+            "error": error or "",
+            "details": json.dumps(details or {}),
+            "size_bytes": size_bytes or 0,
+            "correlation_id": correlation_id or "",
+            "duration_ms": duration_ms or 0,
+            "scanned_at": scanned_at,
+            "submitted_at": submitted_at or "",
+        }
+        try:
+            table_client.upsert_entity(entity=entity)
+        except HttpResponseError as e:
+            logging.error("[worker] Failed to persist result: %s", e)
         return
-    entity = {
-        "PartitionKey": RESULT_PARTITION,
-        "RowKey": job_id,
-        "status": status,
-        "verdict": verdict or "",
-        "error": error or "",
-        "details": json.dumps(details or {}),
-        "size_bytes": size_bytes or 0,
-        "correlation_id": correlation_id or "",
-        "duration_ms": duration_ms or 0,
-        "scanned_at": datetime.now(timezone.utc).isoformat(),
-        "submitted_at": submitted_at or "",
-    }
-    try:
-        table_client.upsert_entity(entity=entity)
-    except HttpResponseError as e:
-        logging.error("[worker] Failed to persist result: %s", e)
+
+    if RESULT_BACKEND == "redis":
+        if not redis_client:
+            return
+        key = f"{REDIS_RESULT_PREFIX}{job_id}"
+        entity = {
+            "status": status,
+            "verdict": verdict or "",
+            "error": error or "",
+            "details": json.dumps(details or {}),
+            "size_bytes": size_bytes or 0,
+            "correlation_id": correlation_id or "",
+            "duration_ms": duration_ms or 0,
+            "scanned_at": scanned_at,
+            "submitted_at": submitted_at or "",
+        }
+        redis_client.hset(key, mapping=entity)
+        if REDIS_RESULT_TTL_SECONDS > 0:
+            redis_client.expire(key, REDIS_RESULT_TTL_SECONDS)
+        return
+
+    raise RuntimeError(f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
 
 
 def main():
-    if not SERVICEBUS_CONN:
-        raise RuntimeError("SERVICEBUS_CONN env var is required")
-    if not RESULT_STORE_CONN:
-        raise RuntimeError("RESULT_STORE_CONN env var is required")
+    if QUEUE_BACKEND not in ("servicebus", "redis"):
+        raise RuntimeError("QUEUE_BACKEND must be 'servicebus' or 'redis'")
+    if RESULT_BACKEND not in ("table", "redis"):
+        raise RuntimeError("RESULT_BACKEND must be 'table' or 'redis'")
 
-    client = ServiceBusClient.from_connection_string(
-        SERVICEBUS_CONN, logging_enable=True
-    )
-    global table_client
-    table_service = TableServiceClient.from_connection_string(conn_str=RESULT_STORE_CONN)
-    table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
-    table_client = table_service.get_table_client(table_name=RESULT_TABLE)
+    global table_client, redis_client
+
+    if QUEUE_BACKEND == "servicebus" and not SERVICEBUS_CONN:
+        raise RuntimeError("SERVICEBUS_CONN env var is required when QUEUE_BACKEND=servicebus")
+    if RESULT_BACKEND == "table" and not RESULT_STORE_CONN:
+        raise RuntimeError("RESULT_STORE_CONN env var is required when RESULT_BACKEND=table")
+    if (QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis") and not REDIS_URL:
+        raise RuntimeError("REDIS_URL env var is required when using Redis backends")
+
+    if QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis":
+        try:
+            import redis
+        except Exception as e:
+            raise RuntimeError(
+                "Redis backends require the 'redis' package (pip install redis)"
+            ) from e
+        redis_client = redis.Redis.from_url(REDIS_URL, decode_responses=True)
+        redis_client.ping()
+
+    if RESULT_BACKEND == "table":
+        table_service = TableServiceClient.from_connection_string(
+            conn_str=RESULT_STORE_CONN
+        )
+        table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
+        table_client = table_service.get_table_client(table_name=RESULT_TABLE)
 
     if SCAN_ENGINE == "clamav":
         hosts = _get_clamav_hosts()
@@ -365,82 +419,166 @@ def main():
 
     logging.info("[worker] started; waiting for messages...")
 
-    with client:
-        receiver = client.get_queue_receiver(
-            queue_name=QUEUE_NAME,
-            max_wait_time=MAX_WAIT,
-            prefetch_count=PREFETCH,
-        )
-        with receiver:
-            while not shutdown:
-                try:
-                    messages = receiver.receive_messages(
-                        max_message_count=BATCH_SIZE,
-                        max_wait_time=MAX_WAIT,
+    if QUEUE_BACKEND == "redis":
+        if not redis_client:
+            raise RuntimeError("Redis client not initialized")
+        logging.info("[worker] redis queue=%s dlq=%s", REDIS_QUEUE_KEY, REDIS_DLQ_KEY)
+        while not shutdown:
+            item = redis_client.blpop(REDIS_QUEUE_KEY, timeout=MAX_WAIT)
+            if not item:
+                continue
+
+            _queue, raw = item
+            started_at = time.time()
+            task: Optional[dict] = None
+            envelope: Optional[dict] = None
+            delivery_count = 1
+            try:
+                decoded = json.loads(raw)
+                if isinstance(decoded, dict) and isinstance(decoded.get("payload"), dict):
+                    envelope = decoded
+                    task = decoded["payload"]
+                    delivery_count = int(decoded.get("delivery_count") or 1)
+                elif isinstance(decoded, dict):
+                    task = decoded
+                    envelope = {"schema": "unknown", "delivery_count": 1, "payload": decoded}
+                    delivery_count = 1
+                else:
+                    raise ValueError("invalid message payload (expected JSON object)")
+
+                process(task)
+            except Exception as e:
+                duration_ms = int((time.time() - started_at) * 1000)
+                job_id = task.get("job_id") if isinstance(task, dict) else None
+                correlation_id = (
+                    task.get("correlation_id") if isinstance(task, dict) else None
+                )
+                submitted_at = task.get("submitted_at") if isinstance(task, dict) else None
+
+                retrying = delivery_count < MAX_RETRIES
+                status = "retrying" if retrying else "error"
+
+                if job_id:
+                    _save_result(
+                        job_id=job_id,
+                        status=status,
+                        verdict="" if retrying else "error",
+                        error=str(e),
+                        details={
+                            "reason": str(e),
+                            "delivery_count": delivery_count,
+                            "max_retries": MAX_RETRIES,
+                        },
+                        correlation_id=correlation_id,
+                        duration_ms=duration_ms,
+                        submitted_at=submitted_at,
                     )
-                    if not messages:
+
+                if retrying:
+                    next_envelope = envelope or {"delivery_count": delivery_count, "payload": task or {}}
+                    next_envelope["delivery_count"] = delivery_count + 1
+                    redis_client.rpush(REDIS_QUEUE_KEY, json.dumps(next_envelope))
+                    logging.warning(
+                        "[worker] Requeued message (delivery_count=%s): %s",
+                        delivery_count,
+                        e,
+                    )
+                else:
+                    dlq_envelope = envelope or {"delivery_count": delivery_count, "payload": task or {}}
+                    dlq_envelope["last_error"] = str(e)
+                    redis_client.rpush(REDIS_DLQ_KEY, json.dumps(dlq_envelope))
+                    logging.error(
+                        "[worker] DLQ'd message (delivery_count=%s): %s",
+                        delivery_count,
+                        e,
+                    )
+
+    else:
+        client = ServiceBusClient.from_connection_string(
+            SERVICEBUS_CONN, logging_enable=True
+        )
+        with client:
+            receiver = client.get_queue_receiver(
+                queue_name=QUEUE_NAME,
+                max_wait_time=MAX_WAIT,
+                prefetch_count=PREFETCH,
+            )
+            with receiver:
+                while not shutdown:
+                    try:
+                        messages = receiver.receive_messages(
+                            max_message_count=BATCH_SIZE,
+                            max_wait_time=MAX_WAIT,
+                        )
+                        if not messages:
+                            continue
+
+                        for msg in messages:
+                            task = None
+                            started_at = time.time()
+                            try:
+                                task = _decode_body(msg)
+                                process(task)
+                                receiver.complete_message(msg)
+                            except Exception as e:
+                                duration_ms = int((time.time() - started_at) * 1000)
+                                job_id = (
+                                    task.get("job_id") if isinstance(task, dict) else None
+                                )
+                                correlation_id = (
+                                    task.get("correlation_id")
+                                    if isinstance(task, dict)
+                                    else None
+                                )
+                                submitted_at = (
+                                    task.get("submitted_at")
+                                    if isinstance(task, dict)
+                                    else None
+                                )
+
+                                if job_id:
+                                    retrying = msg.delivery_count < MAX_RETRIES
+                                    status = "retrying" if retrying else "error"
+                                    _save_result(
+                                        job_id=job_id,
+                                        status=status,
+                                        verdict="" if retrying else "error",
+                                        error=str(e),
+                                        details={
+                                            "reason": str(e),
+                                            "delivery_count": msg.delivery_count,
+                                            "max_retries": MAX_RETRIES,
+                                        },
+                                        correlation_id=correlation_id,
+                                        duration_ms=duration_ms,
+                                        submitted_at=submitted_at,
+                                    )
+
+                                # DLQ if too many deliveries, else make it available again
+                                if msg.delivery_count >= MAX_RETRIES:
+                                    receiver.dead_letter_message(
+                                        msg,
+                                        reason="max-retries-exceeded",
+                                        error_description=str(e),
+                                    )
+                                    logging.error(
+                                        "[worker] DLQ'd message (delivery_count=%s): %s",
+                                        msg.delivery_count,
+                                        e,
+                                    )
+                                else:
+                                    receiver.abandon_message(msg)
+                                    logging.warning(
+                                        "[worker] Abandoned message (delivery_count=%s): %s",
+                                        msg.delivery_count,
+                                        e,
+                                    )
+                    except OperationTimeoutError:
+                        # no messages within wait window
                         continue
-
-                    for msg in messages:
-                        task: Optional[dict] = None
-                        started_at = time.time()
-                        try:
-                            task = _decode_body(msg)
-                            process(task)
-                            receiver.complete_message(msg)
-                        except Exception as e:
-                            duration_ms = int((time.time() - started_at) * 1000)
-                            job_id = task.get("job_id") if isinstance(task, dict) else None
-                            correlation_id = (
-                                task.get("correlation_id") if isinstance(task, dict) else None
-                            )
-                            submitted_at = (
-                                task.get("submitted_at") if isinstance(task, dict) else None
-                            )
-
-                            if job_id:
-                                retrying = msg.delivery_count < MAX_RETRIES
-                                status = "retrying" if retrying else "error"
-                                _save_result(
-                                    job_id=job_id,
-                                    status=status,
-                                    verdict="" if retrying else "error",
-                                    error=str(e),
-                                    details={
-                                        "reason": str(e),
-                                        "delivery_count": msg.delivery_count,
-                                        "max_retries": MAX_RETRIES,
-                                    },
-                                    correlation_id=correlation_id,
-                                    duration_ms=duration_ms,
-                                    submitted_at=submitted_at,
-                                )
-
-                            # DLQ if too many deliveries, else make it available again
-                            if msg.delivery_count >= MAX_RETRIES:
-                                receiver.dead_letter_message(
-                                    msg,
-                                    reason="max-retries-exceeded",
-                                    error_description=str(e),
-                                )
-                                logging.error(
-                                    "[worker] DLQ'd message (delivery_count=%s): %s",
-                                    msg.delivery_count,
-                                    e,
-                                )
-                            else:
-                                receiver.abandon_message(msg)
-                                logging.warning(
-                                    "[worker] Abandoned message (delivery_count=%s): %s",
-                                    msg.delivery_count,
-                                    e,
-                                )
-                except OperationTimeoutError:
-                    # no messages within wait window
-                    continue
-                except ServiceBusError as e:
-                    logging.error(f"[worker] ServiceBusError: {e}")
-                    time.sleep(2)  # brief backoff
+                    except ServiceBusError as e:
+                        logging.error(f"[worker] ServiceBusError: {e}")
+                        time.sleep(2)  # brief backoff
 
     logging.info("[worker] shutdown complete.")
 
