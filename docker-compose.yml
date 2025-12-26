@@ -1,0 +1,71 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  clamav:
+    build:
+      context: ./app/clamav
+    expose:
+      - "3310"
+
+  api:
+    build:
+      context: ./app/api
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      QUEUE_NAME: ${QUEUE_NAME:-tasks}
+      QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}
+      RESULT_BACKEND: ${RESULT_BACKEND:-redis}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-queue:tasks}
+      REDIS_RESULT_PREFIX: ${REDIS_RESULT_PREFIX:-scan:}
+      REDIS_RESULT_TTL_SECONDS: ${REDIS_RESULT_TTL_SECONDS:-0}
+      API_KEY: ${API_KEY:-local-dev-key}
+      REQUIRE_API_KEY: ${REQUIRE_API_KEY:-true}
+      API_KEY_HEADER: ${API_KEY_HEADER:-X-API-Key}
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-60}
+      RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
+      BLOCK_PRIVATE_NETWORKS: ${BLOCK_PRIVATE_NETWORKS:-true}
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz').read()
+      interval: 10s
+      timeout: 3s
+      retries: 20
+
+  worker:
+    build:
+      context: ./app/worker
+    environment:
+      QUEUE_NAME: ${QUEUE_NAME:-tasks}
+      QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}
+      RESULT_BACKEND: ${RESULT_BACKEND:-redis}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-queue:tasks}
+      REDIS_DLQ_KEY: ${REDIS_DLQ_KEY:-dlq:tasks}
+      REDIS_RESULT_PREFIX: ${REDIS_RESULT_PREFIX:-scan:}
+      REDIS_RESULT_TTL_SECONDS: ${REDIS_RESULT_TTL_SECONDS:-0}
+      SCAN_ENGINE: ${SCAN_ENGINE:-clamav}
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
+      MAX_RETRIES: ${MAX_RETRIES:-5}
+      MAX_WAIT: ${MAX_WAIT:-5}
+      BLOCK_PRIVATE_NETWORKS: ${BLOCK_PRIVATE_NETWORKS:-true}
+    depends_on:
+      redis:
+        condition: service_healthy
+      clamav:
+        condition: service_started
