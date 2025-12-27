@@ -8,18 +8,20 @@ import subprocess
 import tempfile
 import time
 import hashlib
-import ipaddress
 import struct
 import socket
 from datetime import datetime, timezone
 from typing import List, Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import requests
 from azure.servicebus import ServiceBusClient
 from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 from azure.data.tables import TableClient, TableServiceClient
 from azure.core.exceptions import HttpResponseError
+
+from common.result_store import upsert_result_sync
+from common.url_validation import validate_public_https_url
 
 # ---- Config via env ----
 QUEUE_BACKEND = os.getenv("QUEUE_BACKEND", "servicebus").strip().lower()
@@ -114,10 +116,6 @@ def process(task: dict):
     if not url or not job_id:
         raise ValueError("missing url/job_id in task")
 
-    parsed = urlparse(url)
-    if parsed.scheme.lower() != "https":
-        raise ValueError("invalid scheme (https required)")
-
     start = time.time()
     content, size_bytes = _download(url)
     verdict, details = _scan_bytes(content, url)
@@ -163,52 +161,20 @@ def _download(url: str) -> tuple[bytes, int]:
                 continue
 
             resp.raise_for_status()
-            data = b""
+            buf = bytearray()
             for chunk in resp.iter_content(chunk_size=8192):
                 if not chunk:
                     continue
-                data += chunk
-                if len(data) > MAX_DOWNLOAD_BYTES:
+                buf.extend(chunk)
+                if len(buf) > MAX_DOWNLOAD_BYTES:
                     raise ValueError("content too large")
-            return data, len(data)
+            return bytes(buf), len(buf)
 
     raise ValueError("too many redirects")
 
 
 def _validate_url_for_download(url: str):
-    parsed = urlparse(url)
-    if parsed.scheme.lower() != "https":
-        raise ValueError("only https is allowed")
-    if not parsed.netloc:
-        raise ValueError("url host is required")
-    if parsed.username or parsed.password:
-        raise ValueError("userinfo in url is not allowed")
-    if parsed.port and parsed.port != 443:
-        raise ValueError("only default https port 443 is allowed")
-
-    host = parsed.hostname
-    if not host:
-        raise ValueError("url host is required")
-    if host.lower() == "localhost":
-        raise ValueError("localhost is not allowed")
-    if not BLOCK_PRIVATE_NETWORKS:
-        return
-
-    try:
-        ip_literal = ipaddress.ip_address(host)
-    except ValueError:
-        try:
-            infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-        except socket.gaierror as e:
-            raise ValueError(f"dns resolution failed: {e}") from e
-        ips = {ipaddress.ip_address(info[4][0]) for info in infos}
-        if not ips:
-            raise ValueError("no a/aaaa records found")
-        if any(not ip.is_global for ip in ips):
-            raise ValueError("destination resolves to a non-public ip address (blocked)")
-    else:
-        if not ip_literal.is_global:
-            raise ValueError("direct ip destinations must be publicly routable")
+    validate_public_https_url(url, block_private_networks=BLOCK_PRIVATE_NETWORKS)
 
 
 _SUPPORTED_SCAN_ENGINES = {"clamav", "yara", "heuristic"}
@@ -445,49 +411,30 @@ def _save_result(
 ):
     scanned_at = datetime.now(timezone.utc).isoformat()
 
-    if RESULT_BACKEND == "table":
-        if not table_client:
-            return
-        entity = {
-            "PartitionKey": RESULT_PARTITION,
-            "RowKey": job_id,
-            "status": status,
-            "verdict": verdict or "",
-            "error": error or "",
-            "details": json.dumps(details or {}),
-            "size_bytes": size_bytes or 0,
-            "correlation_id": correlation_id or "",
-            "duration_ms": duration_ms or 0,
-            "scanned_at": scanned_at,
-            "submitted_at": submitted_at or "",
-        }
-        try:
-            table_client.upsert_entity(entity=entity)
-        except HttpResponseError as e:
-            logging.error("[worker] Failed to persist result: %s", e)
-        return
-
-    if RESULT_BACKEND == "redis":
-        if not redis_client:
-            return
-        key = f"{REDIS_RESULT_PREFIX}{job_id}"
-        entity = {
-            "status": status,
-            "verdict": verdict or "",
-            "error": error or "",
-            "details": json.dumps(details or {}),
-            "size_bytes": size_bytes or 0,
-            "correlation_id": correlation_id or "",
-            "duration_ms": duration_ms or 0,
-            "scanned_at": scanned_at,
-            "submitted_at": submitted_at or "",
-        }
-        redis_client.hset(key, mapping=entity)
-        if REDIS_RESULT_TTL_SECONDS > 0:
-            redis_client.expire(key, REDIS_RESULT_TTL_SECONDS)
-        return
-
-    raise RuntimeError(f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
+    extra = {
+        "size_bytes": size_bytes or 0,
+        "correlation_id": correlation_id or "",
+        "duration_ms": duration_ms or 0,
+        "scanned_at": scanned_at,
+        "submitted_at": submitted_at or "",
+    }
+    try:
+        upsert_result_sync(
+            backend=RESULT_BACKEND,
+            partition_key=RESULT_PARTITION,
+            job_id=job_id,
+            status=status,
+            verdict=verdict,
+            error=error,
+            details=details or {},
+            extra=extra,
+            table_client=table_client,
+            redis_client=redis_client,
+            redis_prefix=REDIS_RESULT_PREFIX,
+            redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
+        )
+    except HttpResponseError as e:
+        logging.error("[worker] Failed to persist result: %s", e)
 
 
 def main():
