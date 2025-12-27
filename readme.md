@@ -349,7 +349,8 @@ docker compose up --build
 Default API key: `local-dev-key` (change via `.env`).
 
 > Note: the first run may take a few minutes while the ClamAV container downloads signatures.
-> If you want a faster local loop, set `SCAN_ENGINE=heuristic` in `.env`.
+> If you want a faster local loop, set `SCAN_ENGINE=heuristic` (or `SCAN_ENGINE=yara`) in `.env`.
+> YARA rules live at `app/worker/yara-rules/default.yar` (override with `YARA_RULES_PATH`).
 
 ### Azure (Container Apps)
 - Trigger the **Deploy** workflow manually (Actions tab → Deploy → Run workflow).
@@ -634,12 +635,12 @@ To restart later, just re-run the **Deploy** workflow.
 **Worker (`app/worker/worker.py`)**
 - Receives messages from the configured queue backend (Azure Service Bus by default; Redis locally).
     
-- For scan jobs: downloads HTTPS content with size/time caps, streams bytes to ClamAV (`clamd`) (or uses the `heuristic` fallback), and writes status/verdicts to the configured result backend. Retries up to `MAX_RETRIES`.
+- For scan jobs: downloads HTTPS content with size/time caps, scans via the configured engine(s) (`clamav` via `clamd`, `yara` via bundled rules, or `heuristic`), and writes status/verdicts to the configured result backend. Retries up to `MAX_RETRIES`.
 
 ## 14) Extending this project (future work)
 
 - **Per-user API keys**: store *hashed* keys in Table Storage, add admin endpoints to mint/revoke keys, and attach per-key quotas.
-- **Deepen scanning**: add YARA rules, file-type sniffing, and/or sandboxed detonation; keep ClamAV for baseline signature scanning.
+- **Deepen scanning**: expand the bundled YARA rules, add file-type sniffing, and/or sandboxed detonation; keep ClamAV for baseline signature scanning.
 - **Front the API**: add API Management / Front Door + WAF, request validation, and centralized auth.
 - **DAST in CI**: run OWASP ZAP against the deployed `/scan` endpoint using a non-prod API key.
 - **Supply-chain hardening**: SBOM generation (Syft), vulnerability gating (Grype), image signing (Cosign), and provenance.
