@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Azure DevSecOps URL Scanner</title>
+    <meta name="description" content="Submit URL scan jobs and poll for results." />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7fb;
+        --card: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --shadow: 0 10px 30px rgba(0,0,0,0.08);
+        --primary: #2563eb;
+        --primary-ink: #ffffff;
+        --success: #16a34a;
+        --danger: #dc2626;
+        --code-bg: #0b1020;
+        --code-fg: #d6e0ff;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1020;
+          --card: #0f172a;
+          --text: #e5e7eb;
+          --muted: #94a3b8;
+          --border: #22304a;
+          --shadow: 0 14px 40px rgba(0,0,0,0.35);
+          --primary: #60a5fa;
+          --primary-ink: #0b1020;
+          --success: #4ade80;
+          --danger: #fb7185;
+          --code-bg: #070b18;
+          --code-fg: #d6e0ff;
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background: var(--bg);
+        color: var(--text);
+      }
+      a { color: var(--primary); }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      .app { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+      .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+      .header h1 { margin: 0; font-size: 1.65rem; letter-spacing: -0.02em; }
+      .sub { margin: 0.35rem 0 0; color: var(--muted); line-height: 1.4; }
+      .grid { margin-top: 1.25rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
+      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+      .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 1rem; }
+      .card.full { grid-column: 1 / -1; }
+      .card h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+      .card-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+      .field { margin-bottom: 0.9rem; }
+      label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+      input {
+        width: 100%;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+      }
+      .help { margin-top: 0.35rem; font-size: 0.85rem; color: var(--muted); }
+      .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+      button {
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        padding: 0.6rem 0.85rem;
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      button.primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--primary-ink);
+        font-weight: 600;
+      }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+      .status { margin-top: 0.85rem; min-height: 1.25rem; display: flex; align-items: center; gap: 0.5rem; color: var(--muted); }
+      .badge { font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); }
+      .badge.ok { border-color: rgba(22,163,74,0.5); background: rgba(22,163,74,0.12); }
+      .badge.bad { border-color: rgba(220,38,38,0.5); background: rgba(220,38,38,0.12); }
+      .badge.info { border-color: rgba(37,99,235,0.45); background: rgba(37,99,235,0.12); }
+      .muted { color: var(--muted); }
+      .small { font-size: 0.85rem; }
+      pre {
+        margin: 0;
+        background: var(--code-bg);
+        color: var(--code-fg);
+        padding: 1rem;
+        border-radius: 12px;
+        overflow: auto;
+        border: 1px solid var(--border);
+      }
+      .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+      table { width: 100%; border-collapse: collapse; min-width: 720px; }
+      th, td { text-align: left; padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th {
+        font-size: 0.78rem;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--muted);
+        background: rgba(148,163,184,0.10);
+        position: sticky;
+        top: 0;
+      }
+      tr:last-child td { border-bottom: none; }
+      .nowrap { white-space: nowrap; }
+      .url-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .filter { flex: 1; min-width: 220px; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div>
+          <h1>Azure DevSecOps URL Scanner</h1>
+          <p class="sub">Submit scan jobs and poll results. Swagger: <a href="/docs">/docs</a>. API key required for scan endpoints.</p>
+        </div>
+        <div class="actions">
+          <button id="clearHistory" type="button">Clear history</button>
+        </div>
+      </header>
+
+      <div class="grid">
+        <section class="card">
+          <h2>New scan</h2>
+          <div class="field">
+            <label for="apiKey">API key <span class="muted">(header: __API_KEY_HEADER__)</span></label>
+            <input id="apiKey" autocomplete="off" placeholder="Paste API key" />
+            <div class="help">Saved in this browser only (local storage).</div>
+          </div>
+          <div class="field">
+            <label for="url">HTTPS URL to scan</label>
+            <input id="url" inputmode="url" value="https://example.com" placeholder="https://example.com" />
+            <div class="help">Only public HTTPS destinations on port 443 are allowed.</div>
+          </div>
+          <div class="actions">
+            <button id="start" class="primary" type="button">Start scan</button>
+            <button id="checkCurrent" type="button" disabled>Check job</button>
+            <button id="copyJson" type="button" disabled>Copy JSON</button>
+          </div>
+          <div id="status" class="status" aria-live="polite"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>History</h2>
+            <input id="historyFilter" class="filter" placeholder="Filter by URL or job id" />
+          </div>
+          <div class="table-wrap" role="region" aria-label="Scan history">
+            <table>
+              <thead>
+                <tr>
+                  <th class="nowrap">When</th>
+                  <th>URL</th>
+                  <th class="nowrap">Job</th>
+                  <th class="nowrap">Status</th>
+                  <th class="nowrap">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="historyBody"></tbody>
+            </table>
+          </div>
+          <p class="muted small">History is stored locally in your browser.</p>
+        </section>
+
+        <section class="card full">
+          <div class="card-head">
+            <h2>Response</h2>
+            <div class="actions">
+              <button id="copyJson2" type="button" disabled>Copy JSON</button>
+            </div>
+          </div>
+          <pre id="out">{}</pre>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const API_KEY_HEADER = __API_KEY_HEADER_JSON__;
+        const MAX_POLL_SECONDS = __MAX_DASHBOARD_POLL_SECONDS__;
+
+        const LS = {
+          apiKey: 'acaScanner.apiKey',
+          history: 'acaScanner.scanHistory.v1',
+          legacyApiKey: 'apiKey',
+        };
+
+        const apiKeyEl = document.getElementById('apiKey');
+        const urlEl = document.getElementById('url');
+        const outEl = document.getElementById('out');
+        const statusEl = document.getElementById('status');
+        const startEl = document.getElementById('start');
+        const historyBodyEl = document.getElementById('historyBody');
+        const historyFilterEl = document.getElementById('historyFilter');
+        const clearHistoryEl = document.getElementById('clearHistory');
+        const checkCurrentEl = document.getElementById('checkCurrent');
+        const copyJsonEl = document.getElementById('copyJson');
+        const copyJson2El = document.getElementById('copyJson2');
+
+        let history = [];
+        let currentJobId = null;
+        let isPolling = false;
+
+        const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+        function readJson(key, fallback) {
+          try {
+            const raw = localStorage.getItem(key);
+            if (!raw) return fallback;
+            return JSON.parse(raw);
+          } catch (_) {
+            return fallback;
+          }
+        }
+
+        function writeJson(key, value) {
+          localStorage.setItem(key, JSON.stringify(value));
+        }
+
+        function loadHistory() {
+          const items = readJson(LS.history, []);
+          if (!Array.isArray(items)) return [];
+          return items.filter(Boolean).slice(0, 50);
+        }
+
+        function saveHistory() {
+          writeJson(LS.history, history.slice(0, 50));
+        }
+
+        function upsertHistory(entry) {
+          const idx = history.findIndex(x => x && x.job_id === entry.job_id);
+          if (idx >= 0) history[idx] = Object.assign({}, history[idx], entry);
+          else history.unshift(entry);
+          history = history.slice(0, 50);
+          saveHistory();
+          renderHistory();
+        }
+
+        function patchHistory(jobId, patch) {
+          const idx = history.findIndex(x => x && x.job_id === jobId);
+          if (idx < 0) return;
+          history[idx] = Object.assign({}, history[idx], patch);
+          saveHistory();
+          renderHistory();
+        }
+
+        function clearHistory() {
+          history = [];
+          saveHistory();
+          renderHistory();
+        }
+
+        function el(tag, attrs) {
+          const node = document.createElement(tag);
+          if (attrs) {
+            for (const [k, v] of Object.entries(attrs)) {
+              if (k === 'class') node.className = v;
+              else if (k === 'text') node.textContent = v;
+              else if (k === 'title') node.title = v;
+              else if (k === 'href') node.href = v;
+              else if (k === 'target') node.target = v;
+              else if (k === 'rel') node.rel = v;
+              else node.setAttribute(k, v);
+            }
+          }
+          for (let i = 2; i < arguments.length; i++) {
+            const child = arguments[i];
+            if (child == null) continue;
+            if (typeof child === 'string') node.appendChild(document.createTextNode(child));
+            else node.appendChild(child);
+          }
+          return node;
+        }
+
+        function makeBadge(kind, label) {
+          const cls = kind ? ('badge ' + kind) : 'badge';
+          return el('span', { class: cls, text: label });
+        }
+
+        function setStatus(kind, text) {
+          statusEl.textContent = '';
+          if (!text) return;
+          const label = kind === 'ok' ? 'OK' : (kind === 'bad' ? 'ERROR' : 'INFO');
+          statusEl.appendChild(makeBadge(kind || 'info', label));
+          statusEl.appendChild(document.createTextNode(' ' + text));
+        }
+
+        function setButtonsEnabled(hasJson) {
+          copyJsonEl.disabled = !hasJson;
+          copyJson2El.disabled = !hasJson;
+          checkCurrentEl.disabled = !currentJobId;
+        }
+
+        function show(obj) {
+          outEl.textContent = JSON.stringify(obj, null, 2);
+          setButtonsEnabled(true);
+        }
+
+        async function copyText(text) {
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus('ok', 'Copied to clipboard');
+          } catch (_) {
+            const ta = el('textarea', { style: 'position:fixed;left:-1000px;top:-1000px;' });
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+            setStatus('ok', 'Copied to clipboard');
+          }
+        }
+
+        async function api(path, method, body) {
+          const headers = { 'content-type': 'application/json' };
+          const key = apiKeyEl.value.trim();
+          if (key) headers[API_KEY_HEADER] = key;
+          const res = await fetch(path, {
+            method: method,
+            headers: headers,
+            body: body ? JSON.stringify(body) : undefined
+          });
+          const text = await res.text();
+          let data;
+          try { data = JSON.parse(text); } catch (_) { data = { raw: text }; }
+          if (!res.ok) {
+            const err = new Error('HTTP ' + res.status);
+            err.status = res.status;
+            err.data = data;
+            throw err;
+          }
+          return data;
+        }
+
+        function formatWhen(iso) {
+          if (!iso) return '';
+          try { return dtf.format(new Date(iso)); } catch (_) { return iso; }
+        }
+
+        function statusKind(status) {
+          if (status === 'completed') return 'ok';
+          if (status === 'error') return 'bad';
+          return 'info';
+        }
+
+        function verdictKind(verdict) {
+          if (!verdict) return 'info';
+          const v = String(verdict).toLowerCase();
+          if (v === 'clean') return 'ok';
+          if (v === 'malicious') return 'bad';
+          return 'info';
+        }
+
+        function renderHistory() {
+          const filter = (historyFilterEl.value || '').trim().toLowerCase();
+          historyBodyEl.textContent = '';
+
+          const items = history.filter(item => {
+            if (!item) return false;
+            if (!filter) return true;
+            const hay = (String(item.url || '') + ' ' + String(item.job_id || '')).toLowerCase();
+            return hay.indexOf(filter) >= 0;
+          });
+
+          if (items.length === 0) {
+            const msg = filter ? 'No matching scans.' : 'No scans yet. Start one to see it here.';
+            const td = el('td', { class: 'muted', text: msg });
+            td.colSpan = 5;
+            historyBodyEl.appendChild(el('tr', null, td));
+            return;
+          }
+
+          for (const item of items) {
+            const when = formatWhen(item.submitted_at || item.last_checked_at);
+            const job = item.job_id || '';
+            const shortJob = job ? (job.slice(0, 8) + '…') : '';
+            const s = String(item.status || 'unknown');
+
+            const whenTd = el('td', { class: 'nowrap', text: when });
+
+            const urlLink = el('a', { href: item.url || '#', target: '_blank', rel: 'noreferrer', text: item.url || '' });
+            const urlTd = el('td', { class: 'url-cell' }, urlLink);
+
+            const jobCode = el('code', { text: shortJob, title: job });
+            const jobTd = el('td', { class: 'nowrap' }, jobCode);
+
+            const statusTd = el('td', { class: 'nowrap' });
+            statusTd.appendChild(makeBadge(statusKind(s), s));
+            if (item.verdict) {
+              statusTd.appendChild(document.createTextNode(' '));
+              statusTd.appendChild(makeBadge(verdictKind(item.verdict), String(item.verdict)));
+            }
+
+            const actionsTd = el('td', { class: 'nowrap' });
+            const useBtn = el('button', { type: 'button', text: 'Use URL' });
+            useBtn.addEventListener('click', () => {
+              if (!item.url) return;
+              urlEl.value = item.url;
+              urlEl.focus();
+              setStatus('info', 'Loaded URL from history');
+            });
+
+            const checkBtn = el('button', { type: 'button', text: 'Check' });
+            checkBtn.addEventListener('click', () => refreshJob(job, true));
+
+            const setCurrentBtn = el('button', { type: 'button', text: 'Set current' });
+            setCurrentBtn.addEventListener('click', () => {
+              currentJobId = job;
+              setButtonsEnabled(true);
+              setStatus('info', 'Current job set to ' + job);
+            });
+
+            actionsTd.appendChild(useBtn);
+            actionsTd.appendChild(checkBtn);
+            actionsTd.appendChild(setCurrentBtn);
+
+            historyBodyEl.appendChild(el('tr', null, whenTd, urlTd, jobTd, statusTd, actionsTd));
+          }
+        }
+
+        async function refreshJob(jobId, showOutput) {
+          if (!jobId) return null;
+          setStatus('info', 'Fetching status for ' + jobId + '...');
+          try {
+            const s = await api('/scan/' + jobId, 'GET');
+            const now = new Date().toISOString();
+            patchHistory(jobId, {
+              status: s.status,
+              verdict: s.verdict || null,
+              error: s.error || null,
+              submitted_at: s.submitted_at || undefined,
+              scanned_at: s.scanned_at || null,
+              last_checked_at: now
+            });
+            if (showOutput) show(s);
+            setStatus(statusKind(s.status), 'Job ' + jobId + ' is ' + s.status);
+            return s;
+          } catch (e) {
+            const msg = e && e.data ? JSON.stringify(e.data) : (e ? e.message : 'Unknown error');
+            setStatus('bad', msg);
+            if (showOutput) show({ error: msg });
+            return null;
+          }
+        }
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        async function pollJob(jobId) {
+          const deadline = Date.now() + (MAX_POLL_SECONDS * 1000);
+          while (Date.now() < deadline) {
+            const s = await refreshJob(jobId, true);
+            if (s && (s.status === 'completed' || s.status === 'error')) return s;
+            await sleep(4000);
+          }
+          throw new Error('Timed out waiting for result');
+        }
+
+        async function startScan() {
+          if (isPolling) return;
+          const target = urlEl.value.trim();
+          if (!target) {
+            setStatus('bad', 'Enter a URL');
+            return;
+          }
+
+          setStatus('info', 'Submitting scan...');
+          show({});
+          setButtonsEnabled(false);
+          startEl.disabled = true;
+          checkCurrentEl.disabled = true;
+
+          try {
+            const submit = await api('/scan', 'POST', { url: target, type: 'url' });
+            show(submit);
+
+            currentJobId = submit.job_id || null;
+            setButtonsEnabled(true);
+
+            if (currentJobId) {
+              const now = new Date().toISOString();
+              upsertHistory({
+                job_id: currentJobId,
+                url: target,
+                status: submit.status || 'queued',
+                verdict: null,
+                error: null,
+                submitted_at: now,
+                scanned_at: null,
+                last_checked_at: null
+              });
+            }
+
+            if (!currentJobId) {
+              setStatus('bad', 'No job_id returned');
+              return;
+            }
+
+            isPolling = true;
+            setStatus('info', 'Job queued; polling for results...');
+            const result = await pollJob(currentJobId);
+            if (result && result.status === 'completed') setStatus('ok', 'Completed');
+            else setStatus('bad', 'Error');
+          } catch (e) {
+            const msg = e && e.data ? JSON.stringify(e.data) : (e ? e.message : 'Unknown error');
+            setStatus('bad', msg);
+            show({ error: msg });
+          } finally {
+            isPolling = false;
+            startEl.disabled = false;
+            setButtonsEnabled(true);
+          }
+        }
+
+        function init() {
+          const stored = localStorage.getItem(LS.apiKey) || localStorage.getItem(LS.legacyApiKey) || '';
+          apiKeyEl.value = stored;
+          if (stored && !localStorage.getItem(LS.apiKey)) localStorage.setItem(LS.apiKey, stored);
+
+          apiKeyEl.addEventListener('input', () => localStorage.setItem(LS.apiKey, apiKeyEl.value));
+          history = loadHistory();
+          renderHistory();
+          show({});
+          setButtonsEnabled(false);
+        }
+
+        startEl.addEventListener('click', startScan);
+        checkCurrentEl.addEventListener('click', () => refreshJob(currentJobId, true));
+        clearHistoryEl.addEventListener('click', () => {
+          clearHistory();
+          setStatus('ok', 'History cleared');
+        });
+        historyFilterEl.addEventListener('input', renderHistory);
+        copyJsonEl.addEventListener('click', () => copyText(outEl.textContent || ''));
+        copyJson2El.addEventListener('click', () => copyText(outEl.textContent || ''));
+
+        init();
+      })();
+    </script>
+  </body>
+</html>
