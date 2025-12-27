@@ -570,7 +570,6 @@ terraform init \
 
 terraform plan \
   -var="prefix=devsecopsaca" \
-  -var="location=eastus" \
   -var="resource_group_name=rg-devsecops-aca" \
   -var="queue_name=tasks" \
   -var="create_apps=true" \
@@ -600,7 +599,6 @@ terraform plan \
         cd infra
         terraform destroy \
           -var="prefix=devsecopsaca" \
-          -var="location=eastus" \
           -var="resource_group_name=rg-devsecops-aca" \
           -var="queue_name=tasks" \
           -var="create_apps=true"
