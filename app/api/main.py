@@ -4,26 +4,25 @@ from datetime import datetime, timezone
 import asyncio
 import hashlib
 import html
-import ipaddress
 import json
 import os
 from pathlib import Path
 import secrets
-import socket
 import time
-from typing import Any, Optional
+from typing import Optional
 from uuid import uuid4
-from urllib.parse import urlsplit
 
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus.exceptions import ServiceBusError
 from azure.data.tables.aio import TableServiceClient
-from azure.core.exceptions import ResourceNotFoundError
 from fastapi import FastAPI, HTTPException, Request, Security
 from fastapi.responses import HTMLResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
+
+from common.result_store import get_result_async, upsert_result_async
+from common.url_validation import UrlValidationError, validate_public_https_url_async
 
 # ---------- Settings ----------
 QUEUE_NAME = os.getenv("QUEUE_NAME", "tasks")
@@ -89,53 +88,41 @@ class ScanRequest(BaseModel):
     metadata: Optional[dict] = Field(None, description="Optional metadata")
 
 
-def _require_https(url: str):
-    parsed = urlsplit(url)
-    if parsed.scheme.lower() != "https" or not parsed.netloc:
-        raise HTTPException(status_code=400, detail="Only HTTPS URLs are allowed")
-
-
-async def _validate_public_destination(url: str):
-    if not BLOCK_PRIVATE_NETWORKS:
-        return
-
-    parsed = urlsplit(url)
-    host = parsed.hostname
-    if not host:
-        raise HTTPException(status_code=400, detail="URL host is required")
-    if parsed.username or parsed.password:
-        raise HTTPException(status_code=400, detail="Userinfo in URL is not allowed")
-    if parsed.port and parsed.port != 443:
-        raise HTTPException(
-            status_code=400, detail="Only default HTTPS port 443 is allowed"
-        )
-    if host.lower() in ("localhost",):
-        raise HTTPException(status_code=400, detail="Localhost is not allowed")
-
+async def _validate_scan_url(url: str):
     try:
-        ip_literal = ipaddress.ip_address(host)
-    except ValueError:
-        loop = asyncio.get_running_loop()
-        try:
-            infos = await loop.getaddrinfo(
-                host, 443, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM
+        await validate_public_https_url_async(
+            url, block_private_networks=BLOCK_PRIVATE_NETWORKS
+        )
+    except UrlValidationError as e:
+        if e.code == "https_only":
+            raise HTTPException(status_code=400, detail="Only HTTPS URLs are allowed")
+        if e.code == "host_required":
+            raise HTTPException(status_code=400, detail="URL host is required")
+        if e.code == "userinfo_not_allowed":
+            raise HTTPException(
+                status_code=400, detail="Userinfo in URL is not allowed"
             )
-        except socket.gaierror:
+        if e.code == "port_not_allowed":
+            raise HTTPException(
+                status_code=400, detail="Only default HTTPS port 443 is allowed"
+            )
+        if e.code == "localhost_not_allowed":
+            raise HTTPException(status_code=400, detail="Localhost is not allowed")
+        if e.code == "dns_failed":
             raise HTTPException(status_code=400, detail="DNS resolution failed")
-        ips = {ipaddress.ip_address(info[4][0]) for info in infos}
-        if not ips:
+        if e.code == "no_records":
             raise HTTPException(status_code=400, detail="No A/AAAA records found")
-        if any(not ip.is_global for ip in ips):
+        if e.code == "non_public_ip":
             raise HTTPException(
                 status_code=400,
                 detail="URL resolves to a non-public IP address (blocked)",
             )
-    else:
-        if not ip_literal.is_global:
+        if e.code == "direct_ip_not_public":
             raise HTTPException(
                 status_code=400,
                 detail="Direct IP destinations must be publicly routable",
             )
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 async def _enforce_rate_limit(api_key: str):
@@ -180,64 +167,31 @@ async def _upsert_result(
     extra: Optional[dict] = None,
 ):
     """Persist status/verdict to the table for status checks."""
-    if RESULT_BACKEND == "table":
-        if not table_client:
-            return
-        entity: dict[str, Any] = {
-            "PartitionKey": RESULT_PARTITION,
-            "RowKey": job_id,
-            "status": status,
-            "verdict": verdict or "",
-            "error": error or "",
-        }
-        if details:
-            entity["details"] = json.dumps(details)
-        if extra:
-            for k, v in extra.items():
-                entity[k] = v
-        await table_client.upsert_entity(entity=entity)
-        return
-
-    if RESULT_BACKEND == "redis":
-        if not redis_client:
-            return
-        key = f"{REDIS_RESULT_PREFIX}{job_id}"
-        entity = {
-            "status": status,
-            "verdict": verdict or "",
-            "error": error or "",
-        }
-        if details is not None:
-            entity["details"] = json.dumps(details)
-        if extra:
-            entity.update({str(k): v for k, v in extra.items()})
-        await redis_client.hset(key, mapping=entity)
-        if REDIS_RESULT_TTL_SECONDS > 0:
-            await redis_client.expire(key, REDIS_RESULT_TTL_SECONDS)
-        return
-
-    raise RuntimeError(f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
+    await upsert_result_async(
+        backend=RESULT_BACKEND,
+        partition_key=RESULT_PARTITION,
+        job_id=job_id,
+        status=status,
+        verdict=verdict,
+        error=error,
+        details=details,
+        extra=extra,
+        table_client=table_client,
+        redis_client=redis_client,
+        redis_prefix=REDIS_RESULT_PREFIX,
+        redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
+    )
 
 
 async def _get_result_entity(job_id: str) -> Optional[dict]:
-    if RESULT_BACKEND == "table":
-        if not table_client:
-            return None
-        try:
-            return await table_client.get_entity(
-                partition_key=RESULT_PARTITION, row_key=job_id
-            )
-        except ResourceNotFoundError:
-            return None
-
-    if RESULT_BACKEND == "redis":
-        if not redis_client:
-            return None
-        key = f"{REDIS_RESULT_PREFIX}{job_id}"
-        data = await redis_client.hgetall(key)
-        return data or None
-
-    raise RuntimeError(f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
+    return await get_result_async(
+        backend=RESULT_BACKEND,
+        partition_key=RESULT_PARTITION,
+        job_id=job_id,
+        table_client=table_client,
+        redis_client=redis_client,
+        redis_prefix=REDIS_RESULT_PREFIX,
+    )
 
 
 async def _enqueue_json(
@@ -467,8 +421,7 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
     if RESULT_BACKEND == "redis" and not redis_client:
         raise HTTPException(status_code=503, detail="Result store not initialized")
 
-    _require_https(req.url)
-    await _validate_public_destination(req.url)
+    await _validate_scan_url(req.url)
     job_id = str(uuid4())
     correlation_id = str(uuid4())
     submitted_at = datetime.now(timezone.utc).isoformat()
