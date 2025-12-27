@@ -19,9 +19,9 @@ RUN apt-get update \
       tini \
     && rm -rf /var/lib/apt/lists/*
 
-COPY clamd.conf /etc/clamav/clamd.conf
-COPY freshclam.conf /etc/clamav/freshclam.conf
-COPY entrypoint.sh /entrypoint.sh
+COPY clamav/clamd.conf /etc/clamav/clamd.conf
+COPY clamav/freshclam.conf /etc/clamav/freshclam.conf
+COPY clamav/entrypoint.sh /entrypoint.sh
 
 RUN chmod +x /entrypoint.sh \
     && if ! id -u clamav >/dev/null 2>&1; then useradd -r -s /usr/sbin/nologin clamav; fi \

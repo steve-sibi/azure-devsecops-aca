@@ -15,12 +15,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends tini yara \
 # If you need to compile wheels, add: build-essential (optional)
 # RUN apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
+COPY worker/requirements.txt ./requirements.txt
 # hadolint ignore=DL3013,DL3042
 RUN python -m pip install --upgrade pip setuptools wheel \
     && pip install --no-cache-dir --prefer-binary -r requirements.txt
 
-COPY . .
+COPY common/ ./common/
+COPY worker/ .
 
 # Least-privilege
 RUN useradd -m appuser && chown -R appuser:appuser /app
