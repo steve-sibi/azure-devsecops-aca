@@ -1,7 +1,11 @@
 import json
 import logging
 import os
+import re
+import shutil
 import signal
+import subprocess
+import tempfile
 import time
 import hashlib
 import ipaddress
@@ -61,6 +65,12 @@ CLAMAV_CHUNK_SIZE = int(os.getenv("CLAMAV_CHUNK_SIZE", "16384"))
 SCAN_ENGINE = os.getenv(
     "SCAN_ENGINE", "clamav" if (CLAMAV_HOSTS or CLAMAV_HOST) else "heuristic"
 ).strip().lower()
+
+# ---- Scan engine (YARA, bundled in the worker container) ----
+YARA_RULES_PATH = os.getenv("YARA_RULES_PATH", "yara-rules/default.yar")
+YARA_TIMEOUT = float(os.getenv("YARA_TIMEOUT", "5"))
+YARA_MAX_MATCHES = int(os.getenv("YARA_MAX_MATCHES", "50"))
+YARA_BINARY = os.getenv("YARA_BINARY", "yara")
 
 # ---- Logging (console + optional App Insights) ----
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -201,34 +211,137 @@ def _validate_url_for_download(url: str):
             raise ValueError("direct ip destinations must be publicly routable")
 
 
-def _scan_bytes(content: bytes, url: str) -> tuple[str, dict]:
-    digest = hashlib.sha256(content).hexdigest()
-    details = {"sha256": digest, "length": len(content)}
+_SUPPORTED_SCAN_ENGINES = {"clamav", "yara", "heuristic"}
 
-    if SCAN_ENGINE == "clamav":
-        if not _get_clamav_hosts():
+
+def _parse_scan_engines(spec: str) -> List[str]:
+    raw = (spec or "").strip().lower()
+    if not raw:
+        return []
+
+    parts = [p.strip() for p in re.split(r"[,+]", raw) if p.strip()]
+    engines: List[str] = []
+    seen: set[str] = set()
+    for part in parts:
+        if part not in _SUPPORTED_SCAN_ENGINES:
             raise ValueError(
-                "CLAMAV_HOST or CLAMAV_HOSTS is required when SCAN_ENGINE=clamav"
+                f"unsupported scan engine '{part}' (supported: {sorted(_SUPPORTED_SCAN_ENGINES)})"
             )
-        verdict, clamav_details = _clamav_instream_scan(content)
-        details.update(
-            {
-                "engine": "clamav",
-                **clamav_details,
-            }
-        )
-        return verdict, details
+        if part in seen:
+            continue
+        seen.add(part)
+        engines.append(part)
+    return engines
 
-    # Fallback demo-only heuristics (kept for local development).
+
+def _get_scan_engines() -> List[str]:
+    engines = _parse_scan_engines(SCAN_ENGINE)
+    return engines if engines else ["heuristic"]
+
+
+def _heuristic_scan(content: bytes, url: str) -> tuple[str, dict]:
     lowered = content.lower()
     suspicious = any(
         marker in lowered for marker in [b"<script", b"onerror", b"alert(", b"eval("]
     )
-    verdict = "malicious" if ("test-malicious" in url.lower() or suspicious) else "clean"
-    details["engine"] = "heuristic"
-    if suspicious:
-        details["reason"] = "suspicious-content"
-    return verdict, details
+
+    url_marker = "test-malicious" in url.lower()
+    verdict = "malicious" if (url_marker or suspicious) else "clean"
+    detail: dict = {"suspicious": bool(suspicious or url_marker)}
+    if url_marker:
+        detail["reason"] = "test-malicious-url"
+    elif suspicious:
+        detail["reason"] = "suspicious-content"
+    return verdict, {"heuristic": detail}
+
+
+def _yara_scan(content: bytes) -> tuple[str, dict]:
+    rules_path = (YARA_RULES_PATH or "").strip()
+    if not rules_path:
+        raise ValueError("YARA_RULES_PATH is required when SCAN_ENGINE includes 'yara'")
+    if not os.path.exists(rules_path):
+        raise ValueError(f"YARA_RULES_PATH not found: {rules_path}")
+
+    yara_bin = (YARA_BINARY or "yara").strip()
+    if not shutil.which(yara_bin):
+        raise ValueError(f"YARA binary not found on PATH: {yara_bin}")
+
+    tmp_path: Optional[str] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="scan-", suffix=".bin", delete=False
+        ) as f:
+            tmp_path = f.name
+            f.write(content)
+
+        proc = subprocess.run(
+            [yara_bin, rules_path, tmp_path],
+            capture_output=True,
+            text=True,
+            timeout=YARA_TIMEOUT,
+        )
+        if proc.returncode not in (0, 1):
+            stderr = (proc.stderr or proc.stdout or "").strip()
+            raise ValueError(
+                f"yara scan failed (exit={proc.returncode}): {stderr or 'unknown error'}"
+            )
+
+        matches: List[str] = []
+        if proc.returncode == 0:
+            for line in (proc.stdout or "").splitlines():
+                rule = line.strip().split(maxsplit=1)[0]
+                if not rule:
+                    continue
+                matches.append(rule)
+                if len(matches) >= max(1, YARA_MAX_MATCHES):
+                    break
+
+        verdict = "malicious" if matches else "clean"
+        return verdict, {"yara": {"matches": matches, "rules_path": rules_path}}
+    except subprocess.TimeoutExpired as e:
+        raise ValueError(f"yara scan timed out after {YARA_TIMEOUT}s") from e
+    finally:
+        if tmp_path:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
+def _scan_bytes(content: bytes, url: str) -> tuple[str, dict]:
+    digest = hashlib.sha256(content).hexdigest()
+    engines = _get_scan_engines()
+    results: dict[str, dict] = {}
+
+    final_verdict = "clean"
+    for engine in engines:
+        if engine == "clamav":
+            if not _get_clamav_hosts():
+                raise ValueError(
+                    "CLAMAV_HOST or CLAMAV_HOSTS is required when SCAN_ENGINE includes 'clamav'"
+                )
+            verdict, clamav_details = _clamav_instream_scan(content)
+            results["clamav"] = clamav_details.get("clamav", clamav_details)
+        elif engine == "yara":
+            verdict, yara_details = _yara_scan(content)
+            results["yara"] = yara_details.get("yara", yara_details)
+        elif engine == "heuristic":
+            verdict, heuristic_details = _heuristic_scan(content, url)
+            results["heuristic"] = heuristic_details.get("heuristic", heuristic_details)
+        else:
+            raise ValueError(f"unsupported scan engine: {engine}")
+
+        if verdict == "malicious":
+            final_verdict = "malicious"
+
+    details = {
+        "sha256": digest,
+        "length": len(content),
+        "engine": engines[0] if len(engines) == 1 else "multi",
+        "engines": engines,
+        "results": results,
+    }
+    return final_verdict, details
 
 
 def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:
@@ -409,13 +522,29 @@ def main():
         table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
         table_client = table_service.get_table_client(table_name=RESULT_TABLE)
 
-    if SCAN_ENGINE == "clamav":
+    engines = _get_scan_engines()
+    logging.info("[worker] Scan engines: %s", engines)
+
+    if "clamav" in engines:
         hosts = _get_clamav_hosts()
         if not hosts:
             raise RuntimeError(
-                "SCAN_ENGINE=clamav but CLAMAV_HOST/CLAMAV_HOSTS is not set"
+                "SCAN_ENGINE includes 'clamav' but CLAMAV_HOST/CLAMAV_HOSTS is not set"
             )
         logging.info("[worker] ClamAV configured: hosts=%s port=%s", hosts, CLAMAV_PORT)
+
+    if "yara" in engines:
+        rules_path = (YARA_RULES_PATH or "").strip()
+        if not rules_path:
+            raise RuntimeError(
+                "SCAN_ENGINE includes 'yara' but YARA_RULES_PATH is not set"
+            )
+        if not os.path.exists(rules_path):
+            raise RuntimeError(f"YARA_RULES_PATH not found: {rules_path}")
+        yara_bin = (YARA_BINARY or "yara").strip()
+        if not shutil.which(yara_bin):
+            raise RuntimeError(f"YARA binary not found on PATH: {yara_bin}")
+        logging.info("[worker] YARA configured: rules=%s", rules_path)
 
     logging.info("[worker] started; waiting for messages...")
 

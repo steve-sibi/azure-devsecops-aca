@@ -7,9 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Tini for proper signal handling (graceful shutdowns)
+# Tini for proper signal handling (graceful shutdowns) + YARA CLI for rules-based scanning
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends tini \
+RUN apt-get update && apt-get install -y --no-install-recommends tini yara \
     && rm -rf /var/lib/apt/lists/*
 
 # If you need to compile wheels, add: build-essential (optional)
