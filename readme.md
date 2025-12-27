@@ -197,10 +197,16 @@ azure-devsecops-aca/
 ├─ .github/workflows/
 │  ├─ ci.yml              # security CI (Checkov + Trivy)
 │  ├─ deploy.yml          # infra bootstrap + build/push + deploy
-│  └─ destroy.yml         # terraform destroy (+ optional RG delete)
+│  └─ destroy.yml         # terraform destroy (+ RG delete)
+├─ scripts/gha/           # workflow bash logic (for readability)
+│  ├─ deploy_infra_bootstrap.sh
+│  ├─ deploy_create_apps_and_test.sh
+│  └─ destroy.sh
 ├─ app/
+│  ├─ common/             # shared helpers (validation + result storage)
 │  ├─ api/                # FastAPI producer
 │  │  ├─ Dockerfile
+│  │  ├─ dashboard.html
 │  │  ├─ main.py
 │  │  └─ requirements.txt
 │  ├─ clamav/             # ClamAV (clamd) microservice
@@ -211,10 +217,15 @@ azure-devsecops-aca/
 │  └─ worker/             # queue consumer
 │     ├─ Dockerfile
 │     ├─ worker.py
-│     └─ requirements.txt
+│     ├─ requirements.txt
+│     └─ yara-rules/
+│        └─ default.yar
 ├─ infra/
 │  ├─ backend.tf
-│  ├─ main.tf
+│  ├─ main.tf             # providers + locals
+│  ├─ core.tf             # core infra (SB, ACA env, etc.)
+│  ├─ keyvault.tf         # KV perms + secrets
+│  ├─ apps.tf             # Container Apps (create_apps)
 │  ├─ outputs.tf
 │  └─ variables.tf
 ├─ docs/
