@@ -71,8 +71,8 @@ jobs:
       - name: Build ${{ matrix.service }} (cache)
         uses: docker/build-push-action@v6
         with:
-          context: ./app/${{ matrix.service }}
-          file: app/${{ matrix.service }}/Dockerfile
+          context: ./app
+          file: ./app/${{ matrix.service }}/Dockerfile
           platforms: linux/amd64
           push: false
           load: true # load into local Docker so Trivy can scan

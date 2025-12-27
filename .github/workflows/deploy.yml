@@ -213,7 +213,7 @@ jobs:
       - name: Build & push API
         uses: docker/build-push-action@v6
         with:
-          context: ./app/api
+          context: ./app
           file: app/api/Dockerfile
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
@@ -223,7 +223,7 @@ jobs:
       - name: Build & push Worker
         uses: docker/build-push-action@v6
         with:
-          context: ./app/worker
+          context: ./app
           file: app/worker/Dockerfile
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
@@ -233,7 +233,7 @@ jobs:
       - name: Build & push ClamAV
         uses: docker/build-push-action@v6
         with:
-          context: ./app/clamav
+          context: ./app
           file: app/clamav/Dockerfile
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
