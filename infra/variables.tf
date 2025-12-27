@@ -4,12 +4,6 @@ variable "prefix" {
   description = "Lowercase base name for resources."
 }
 
-variable "location" {
-  type        = string
-  default     = "eastus"
-  description = "Azure region."
-}
-
 variable "resource_group_name" {
   type        = string
   default     = "rg-devsecops-aca"

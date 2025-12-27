@@ -84,7 +84,6 @@ jobs:
         run: |
           terraform plan -destroy -input=false -no-color \
             -var="prefix=${{ env.PREFIX }}" \
-            -var="location=${{ env.REGION }}" \
             -var="resource_group_name=${{ env.RG }}" \
             -var="queue_name=${{ env.QUEUE_NAME }}" \
             -var="create_apps=true"
@@ -94,7 +93,6 @@ jobs:
         run: |
           terraform destroy -auto-approve -lock-timeout=2m \
             -var="prefix=${{ env.PREFIX }}" \
-            -var="location=${{ env.REGION }}" \
             -var="resource_group_name=${{ env.RG }}" \
             -var="queue_name=${{ env.QUEUE_NAME }}" \
             -var="create_apps=true"
