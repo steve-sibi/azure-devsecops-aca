@@ -13,6 +13,12 @@ services:
       dockerfile: clamav/Dockerfile
     expose:
       - "3310"
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamav-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 90s
 
   api:
     build:
@@ -75,4 +81,4 @@ services:
       redis:
         condition: service_healthy
       clamav:
-        condition: service_started
+        condition: service_healthy

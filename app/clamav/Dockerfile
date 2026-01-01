@@ -16,14 +16,17 @@ RUN apt-get update \
       clamav \
       clamav-daemon \
       clamav-freshclam \
+      netcat-openbsd \
       tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY clamav/clamd.conf /etc/clamav/clamd.conf
 COPY clamav/freshclam.conf /etc/clamav/freshclam.conf
 COPY clamav/entrypoint.sh /entrypoint.sh
+COPY clamav/healthcheck.sh /usr/local/bin/clamav-healthcheck
 
 RUN chmod +x /entrypoint.sh \
+    /usr/local/bin/clamav-healthcheck \
     && if ! id -u clamav >/dev/null 2>&1; then useradd -r -s /usr/sbin/nologin clamav; fi \
     && mkdir -p /var/lib/clamav /var/run/clamav /var/log/clamav \
     && chown -R clamav:clamav /var/lib/clamav /var/run/clamav /var/log/clamav
@@ -60,6 +63,8 @@ RUN set -eux; \
 USER clamav
 
 EXPOSE 3310
+
+HEALTHCHECK --interval=10s --timeout=3s --start-period=90s --retries=10 CMD ["/usr/local/bin/clamav-healthcheck"]
 
 ENTRYPOINT ["/usr/bin/tini","--"]
 CMD ["/entrypoint.sh"]
