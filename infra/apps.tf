@@ -34,6 +34,23 @@ resource "azurerm_container_app" "clamav" {
       image  = "${data.azurerm_container_registry.acr.login_server}/${local.clamav_name}:${var.image_tag}"
       cpu    = 1.0
       memory = "2Gi"
+
+      startup_probe {
+        transport               = "TCP"
+        port                    = 3310
+        interval_seconds        = 5
+        timeout                 = 3
+        failure_count_threshold = 120
+      }
+
+      readiness_probe {
+        transport               = "TCP"
+        port                    = 3310
+        interval_seconds        = 10
+        timeout                 = 5
+        failure_count_threshold = 48
+        success_count_threshold = 1
+      }
     }
 
     min_replicas = 1
@@ -273,4 +290,3 @@ resource "azurerm_container_app" "worker" {
     azurerm_role_assignment.acr_pull_uami,
   ]
 }
-
