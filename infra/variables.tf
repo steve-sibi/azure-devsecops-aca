@@ -66,3 +66,9 @@ variable "results_table_name" {
   default     = "scanresults"
   description = "Table name for storing scan results."
 }
+
+variable "clamav_db_share_quota_gb" {
+  type        = number
+  default     = 2
+  description = "Azure Files share quota (GB) for persisting the ClamAV signature database."
+}

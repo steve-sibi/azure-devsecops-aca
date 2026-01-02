@@ -1,7 +1,7 @@
-# --- ClamAV (internal TCP microservice) ---
-resource "azurerm_container_app" "clamav" {
+# --- ClamAV signature updater (writes to Azure Files share) ---
+resource "azurerm_container_app" "clamav_updater" {
   count                        = var.create_apps ? 1 : 0
-  name                         = local.clamav_name
+  name                         = local.clamav_updater_name
   resource_group_name          = data.azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
@@ -12,17 +12,6 @@ resource "azurerm_container_app" "clamav" {
     identity_ids = [azurerm_user_assigned_identity.uami.id]
   }
 
-  ingress {
-    external_enabled = false
-    target_port      = 3310
-    exposed_port     = 3310
-    transport        = "tcp"
-    traffic_weight {
-      percentage      = 100
-      latest_revision = true
-    }
-  }
-
   registry {
     server   = data.azurerm_container_registry.acr.login_server
     identity = azurerm_user_assigned_identity.uami.id
@@ -30,27 +19,23 @@ resource "azurerm_container_app" "clamav" {
 
   template {
     container {
-      name   = "clamav"
+      name   = "clamav-updater"
       image  = "${data.azurerm_container_registry.acr.login_server}/${local.clamav_name}:${var.image_tag}"
-      cpu    = 1.0
-      memory = "2Gi"
+      cpu    = 0.5
+      memory = "1Gi"
 
-      startup_probe {
-        transport               = "TCP"
-        port                    = 3310
-        interval_seconds        = 5
-        timeout                 = 3
-        failure_count_threshold = 120
-      }
+      args = ["/usr/local/bin/clamav-freshclam-updater"]
 
-      readiness_probe {
-        transport               = "TCP"
-        port                    = 3310
-        interval_seconds        = 10
-        timeout                 = 5
-        failure_count_threshold = 48
-        success_count_threshold = 1
+      volume_mounts {
+        name = "clamav-db"
+        path = "/var/lib/clamav"
       }
+    }
+
+    volume {
+      name         = "clamav-db"
+      storage_name = azurerm_container_app_environment_storage.clamav_db[0].name
+      storage_type = "AzureFile"
     }
 
     min_replicas = 1
@@ -218,8 +203,8 @@ resource "azurerm_container_app" "worker" {
     container {
       name   = "worker"
       image  = "${data.azurerm_container_registry.acr.login_server}/${local.worker_name}:${var.image_tag}"
-      cpu    = 0.25
-      memory = "0.5Gi"
+      cpu    = 1.0
+      memory = "2Gi"
 
       env {
         name        = "SERVICEBUS_CONN"
@@ -251,11 +236,7 @@ resource "azurerm_container_app" "worker" {
       }
       env {
         name  = "CLAMAV_HOST"
-        value = try(azurerm_container_app.clamav[0].ingress[0].fqdn, "")
-      }
-      env {
-        name  = "CLAMAV_HOSTS"
-        value = "${local.clamav_name},${try(azurerm_container_app.clamav[0].ingress[0].fqdn, "")}"
+        value = "127.0.0.1"
       }
       env {
         name  = "CLAMAV_PORT"
@@ -265,6 +246,17 @@ resource "azurerm_container_app" "worker" {
         name  = "SCAN_ENGINE"
         value = "clamav,yara"
       }
+
+      volume_mounts {
+        name = "clamav-db"
+        path = "/var/lib/clamav"
+      }
+    }
+
+    volume {
+      name         = "clamav-db"
+      storage_name = azurerm_container_app_environment_storage.clamav_db[0].name
+      storage_type = "AzureFile"
     }
 
     min_replicas = 0

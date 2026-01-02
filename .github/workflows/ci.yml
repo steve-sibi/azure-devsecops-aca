@@ -45,7 +45,7 @@ jobs:
       - name: Hadolint (Worker)
         uses: hadolint/hadolint-action@v3.1.0
         with:
-          dockerfile: app/worker/Dockerfile
+          dockerfile: app/worker/Dockerfile.sidecar
 
       - name: Hadolint (ClamAV)
         uses: hadolint/hadolint-action@v3.1.0
@@ -61,38 +61,44 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api, worker, clamav]
+        include:
+          - name: api
+            dockerfile: app/api/Dockerfile
+          - name: worker
+            dockerfile: app/worker/Dockerfile.sidecar
+          - name: clamav
+            dockerfile: app/clamav/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build ${{ matrix.service }} (cache)
+      - name: Build ${{ matrix.name }} (cache)
         uses: docker/build-push-action@v6
         with:
           context: ./app
-          file: ./app/${{ matrix.service }}/Dockerfile
+          file: ./${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: false
           load: true # load into local Docker so Trivy can scan
-          tags: ${{ matrix.service }}:ci
+          tags: ${{ matrix.name }}:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Trivy scan ${{ matrix.service }} image → SARIF
+      - name: Trivy scan ${{ matrix.name }} image → SARIF
         continue-on-error: true
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: ${{ matrix.service }}:ci
+          image-ref: ${{ matrix.name }}:ci
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           format: sarif
-          output: trivy-${{ matrix.service }}.sarif
+          output: trivy-${{ matrix.name }}.sarif
           exit-code: '0' # keep pipeline green; review SARIF for issues
-      - name: Upload Trivy SARIF (${{ matrix.service }})
+      - name: Upload Trivy SARIF (${{ matrix.name }})
         if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
-          sarif_file: trivy-${{ matrix.service }}.sarif
-          category: trivy-${{ matrix.service }}
+          sarif_file: trivy-${{ matrix.name }}.sarif
+          category: trivy-${{ matrix.name }}

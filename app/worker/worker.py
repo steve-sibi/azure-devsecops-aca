@@ -55,7 +55,7 @@ REDIS_RESULT_PREFIX = os.getenv("REDIS_RESULT_PREFIX", "scan:")
 REDIS_RESULT_TTL_SECONDS = int(os.getenv("REDIS_RESULT_TTL_SECONDS", "0"))
 
 # ---- Scan engine (ClamAV) ----
-CLAMAV_HOST = os.getenv("CLAMAV_HOST")  # e.g. "<prefix>-clamav.<env>.internal... "
+CLAMAV_HOST = os.getenv("CLAMAV_HOST")  # e.g. "127.0.0.1" (local clamd sidecar)
 CLAMAV_HOSTS = os.getenv(
     "CLAMAV_HOSTS"
 )  # optional CSV of fallbacks, tried in order

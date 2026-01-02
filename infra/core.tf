@@ -104,6 +104,25 @@ resource "azurerm_container_app_environment" "env" {
   tags                       = var.tags
 }
 
+# ClamAV signature DB persistence (Azure Files share mounted into ACA)
+resource "azurerm_storage_share" "clamav_db" {
+  count                = var.create_apps ? 1 : 0
+  name                 = local.clamav_db_share
+  storage_account_name = azurerm_storage_account.results.name
+  quota                = var.clamav_db_share_quota_gb
+}
+
+resource "azurerm_container_app_environment_storage" "clamav_db" {
+  count                        = var.create_apps ? 1 : 0
+  name                         = local.clamav_db_storage
+  container_app_environment_id = azurerm_container_app_environment.env.id
+
+  account_name = azurerm_storage_account.results.name
+  share_name   = azurerm_storage_share.clamav_db[0].name
+  access_key   = azurerm_storage_account.results.primary_access_key
+  access_mode  = "ReadWrite"
+}
+
 # ACR: grant pull to the UAMI (covers both apps)
 resource "azurerm_role_assignment" "acr_pull_uami" {
   scope                = data.azurerm_container_registry.acr.id
@@ -134,4 +153,3 @@ resource "azurerm_monitor_diagnostic_setting" "aca_env_diag" {
     enabled  = true
   }
 }
-

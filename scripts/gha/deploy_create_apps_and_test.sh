@@ -44,7 +44,7 @@ SUB="$(az account show --query id -o tsv)"
 ACA_ENV_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/managedEnvironments/${PREFIX}-acaenv"
 API_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-api"
 WORKER_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-worker"
-CLAMAV_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-clamav"
+CLAMAV_UPDATER_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-clamav-updater"
 
 exists() { az resource show --ids "$1" >/dev/null 2>&1; }
 instate() { terraform -chdir="${INFRA_DIR}" state show "$1" >/dev/null 2>&1; }
@@ -58,8 +58,8 @@ fi
 if exists "${WORKER_ID}" && ! instate azurerm_container_app.worker[0]; then
   terraform -chdir="${INFRA_DIR}" import azurerm_container_app.worker[0] "${WORKER_ID}" || true
 fi
-if exists "${CLAMAV_ID}" && ! instate azurerm_container_app.clamav[0]; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_container_app.clamav[0] "${CLAMAV_ID}" || true
+if exists "${CLAMAV_UPDATER_ID}" && ! instate azurerm_container_app.clamav_updater[0]; then
+  terraform -chdir="${INFRA_DIR}" import azurerm_container_app.clamav_updater[0] "${CLAMAV_UPDATER_ID}" || true
 fi
 
 echo "[deploy] Terraform apply (create/update apps)..."
@@ -91,9 +91,9 @@ diagnose_e2e() {
     | python3 "${FORMAT_LOGS_PY}" || true
   az containerapp logs show -g "${RG}" -n "${PREFIX}-worker" --type system --tail 200 2>&1 \
     | python3 "${FORMAT_LOGS_PY}" || true
-  az containerapp logs show -g "${RG}" -n "${PREFIX}-clamav" --type console --tail 200 2>&1 \
+  az containerapp logs show -g "${RG}" -n "${PREFIX}-clamav-updater" --type console --tail 200 2>&1 \
     | python3 "${FORMAT_LOGS_PY}" || true
-  az containerapp logs show -g "${RG}" -n "${PREFIX}-clamav" --type system --tail 200 2>&1 \
+  az containerapp logs show -g "${RG}" -n "${PREFIX}-clamav-updater" --type system --tail 200 2>&1 \
     | python3 "${FORMAT_LOGS_PY}" || true
 }
 
@@ -174,4 +174,3 @@ done
 echo "[deploy] Timed out waiting for scan to complete."
 diagnose_e2e
 exit 1
-
