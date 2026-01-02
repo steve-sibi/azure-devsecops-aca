@@ -37,12 +37,24 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
            │ Apps, min=0)       │
            └────────────────────┘
                  │         │
-        (writes results)   │ (scan via clamd TCP)
+        (writes results)   │ (scan via clamd localhost:3310)
                  ▼         ▼
       ┌────────────────┐  ┌─────────────────────┐
       │ Azure Table    │  │  ClamAV (clamd)     │
-      │ scanresults    │  │  internal TCP :3310 │
+      │ scanresults    │  │  inside worker      │
       └────────────────┘  └─────────────────────┘
+                 ▲
+                 │ (signatures via shared volume)
+      ┌─────────────────────┐
+      │ Azure Files share   │
+      │ (<prefix>-clamav-db)│
+      └─────────────────────┘
+                 ▲
+                 │ (freshclam update loop)
+      ┌─────────────────────┐
+      │ ClamAV updater app  │
+      │ (<prefix>-clamav-updater) │
+      └─────────────────────┘
                   │
             (logs/metrics)
                   ▼
@@ -60,11 +72,13 @@ sequenceDiagram
   participant SB as Service Bus Queue (tasks)
   participant KEDA as KEDA Scaler
   participant W as Worker (Container App)
-  participant AV as ClamAV (clamd)
+  participant AV as ClamAV (clamd localhost)
+  participant U as ClamAV updater (freshclam)
   participant T as Azure Table Storage (scanresults)
   participant LA as Log Analytics
 
   Note over API,W: Secrets (Service Bus + ApiKey + results conn) come from Key Vault via ACA<br/>secret references at deploy time using the UAMI (no runtime KV calls).
+  Note over U,W: Signatures persist in an Azure Files share mounted at /var/lib/clamav.
 
   C->>API: POST /scan {url}
   API->>T: Upsert status=queued
@@ -139,10 +153,11 @@ sequenceDiagram
     
     - `<prefix>-api` (FastAPI; ingress on `:8000`)
         
-    - `<prefix>-worker` (KEDA scale rule on the queue; min=0, max=5)
+    - `<prefix>-worker` (KEDA scale rule on the queue; min=0, max=5; runs `clamd` locally)
 
-    - `<prefix>-clamav` (ClamAV `clamd`; internal TCP on `:3310`)
+    - `<prefix>-clamav-updater` (ClamAV signatures updater; mounts Azure Files share and runs `freshclam` loop)
         
+    - Azure Files share: `<prefix>-clamav-db` (persisted ClamAV signature database)
 
 **Secrets (via Key Vault references, resolved by ACA):**
 
@@ -155,7 +170,7 @@ sequenceDiagram
     
 - API/worker env `RESULT_STORE_CONN` and `RESULT_TABLE` for scan status storage (from Storage Table)
 
-- Worker env `CLAMAV_HOST` + `CLAMAV_PORT` point to the internal ClamAV service (not secrets)
+- Worker env `CLAMAV_HOST=127.0.0.1` + `CLAMAV_PORT=3310` point to the local `clamd` process (not secrets)
     
 
 > The apps use the connection string path by default. You can toggle **Managed Identity** in the API for Service Bus (`USE_MANAGED_IDENTITY=true` + `SERVICEBUS_FQDN`), but it’s optional.
@@ -209,13 +224,14 @@ azure-devsecops-aca/
 │  │  ├─ dashboard.html
 │  │  ├─ main.py
 │  │  └─ requirements.txt
-│  ├─ clamav/             # ClamAV (clamd) microservice
+│  ├─ clamav/             # ClamAV updater image + configs (freshclam + healthcheck helper)
 │  │  ├─ Dockerfile
-│  │  ├─ clamd.conf
+│  │  ├─ clamd.sidecar.conf
 │  │  ├─ freshclam.conf
-│  │  └─ entrypoint.sh
+│  │  ├─ freshclam-updater.sh
+│  │  └─ healthcheck.sh
 │  └─ worker/             # queue consumer
-│     ├─ Dockerfile
+│     ├─ Dockerfile.sidecar
 │     ├─ worker.py
 │     ├─ requirements.txt
 │     └─ yara-rules/
@@ -359,7 +375,7 @@ docker compose up --build
 
 Default API key: `local-dev-key` (change via `.env`).
 
-> Note: the first run may take a few minutes while the ClamAV container downloads signatures.
+> Note: the first run may take a few minutes while `clamav-updater` downloads signatures into the shared volume (the worker waits for them).
 > If you want a faster local loop, set `SCAN_ENGINE=heuristic` (or `SCAN_ENGINE=yara`) in `.env`.
 > YARA rules live at `app/worker/yara-rules/default.yar` (override with `YARA_RULES_PATH`).
 
