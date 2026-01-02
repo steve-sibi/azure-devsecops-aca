@@ -24,9 +24,11 @@ COPY clamav/clamd.conf /etc/clamav/clamd.conf
 COPY clamav/freshclam.conf /etc/clamav/freshclam.conf
 COPY clamav/entrypoint.sh /entrypoint.sh
 COPY clamav/healthcheck.sh /usr/local/bin/clamav-healthcheck
+COPY clamav/freshclam-updater.sh /usr/local/bin/clamav-freshclam-updater
 
 RUN chmod +x /entrypoint.sh \
     /usr/local/bin/clamav-healthcheck \
+    /usr/local/bin/clamav-freshclam-updater \
     && if ! id -u clamav >/dev/null 2>&1; then useradd -r -s /usr/sbin/nologin clamav; fi \
     && mkdir -p /var/lib/clamav /var/run/clamav /var/log/clamav \
     && chown -R clamav:clamav /var/lib/clamav /var/run/clamav /var/log/clamav

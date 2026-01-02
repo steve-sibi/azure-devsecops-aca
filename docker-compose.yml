@@ -7,17 +7,23 @@ services:
       timeout: 3s
       retries: 20
 
-  clamav:
+  clamav-updater:
     build:
       context: ./app
       dockerfile: clamav/Dockerfile
-    expose:
-      - "3310"
+    user: "0"
+    command: ["/usr/local/bin/clamav-freshclam-updater"]
+    volumes:
+      - clamav-db:/var/lib/clamav
     healthcheck:
-      test: ["CMD", "/usr/local/bin/clamav-healthcheck"]
+      test:
+        [
+          "CMD-SHELL",
+          "for f in /var/lib/clamav/*.cvd /var/lib/clamav/*.cld /var/lib/clamav/*.cud; do [ -e \"$$f\" ] && exit 0; done; exit 1",
+        ]
       interval: 10s
       timeout: 3s
-      retries: 10
+      retries: 30
       start_period: 90s
 
   api:
@@ -50,14 +56,14 @@ services:
         - python
         - -c
         - import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz').read()
-      interval: 300s
+      interval: 10s
       timeout: 3s
       retries: 20
 
   worker:
     build:
       context: ./app
-      dockerfile: worker/Dockerfile
+      dockerfile: worker/Dockerfile.sidecar
     environment:
       QUEUE_NAME: ${QUEUE_NAME:-tasks}
       QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}
@@ -68,7 +74,7 @@ services:
       REDIS_RESULT_PREFIX: ${REDIS_RESULT_PREFIX:-scan:}
       REDIS_RESULT_TTL_SECONDS: ${REDIS_RESULT_TTL_SECONDS:-0}
       SCAN_ENGINE: ${SCAN_ENGINE:-clamav}
-      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      CLAMAV_HOST: 127.0.0.1
       CLAMAV_PORT: ${CLAMAV_PORT:-3310}
       YARA_RULES_PATH: ${YARA_RULES_PATH:-yara-rules/default.yar}
       YARA_TIMEOUT: ${YARA_TIMEOUT:-5}
@@ -77,8 +83,13 @@ services:
       MAX_RETRIES: ${MAX_RETRIES:-5}
       MAX_WAIT: ${MAX_WAIT:-5}
       BLOCK_PRIVATE_NETWORKS: ${BLOCK_PRIVATE_NETWORKS:-true}
+    volumes:
+      - clamav-db:/var/lib/clamav:ro
     depends_on:
       redis:
         condition: service_healthy
-      clamav:
+      clamav-updater:
         condition: service_healthy
+
+volumes:
+  clamav-db:
