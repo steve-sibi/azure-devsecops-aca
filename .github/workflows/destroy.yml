@@ -1,18 +1,48 @@
 name: Destroy
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Azure region (e.g. eastus)
+        required: true
+        default: eastus
+      prefix:
+        description: Resource prefix (must match the Deploy run)
+        required: true
+        default: devsecopsaca
+      resource_group:
+        description: Resource group name (must match the Deploy run)
+        required: true
+        default: rg-devsecops-aca
+      tfstate_sa:
+        description: Terraform state storage account name (must match the Deploy run)
+        required: true
+        default: stdevsecopsacatfstate
+      tfstate_container:
+        description: Terraform state container name
+        required: true
+        default: tfstate
+      tfstate_key:
+        description: Terraform state blob name
+        required: true
+        default: devsecopsaca.tfstate
+      queue_name:
+        description: Service Bus queue name
+        required: true
+        default: tasks
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  REGION: eastus
-  PREFIX: devsecopsaca
-  RG: rg-devsecops-aca
-  TFSTATE_SA: stdevsecopsacatfstate
-  TFSTATE_CONTAINER: tfstate
-  TFSTATE_KEY: devsecopsaca.tfstate
-  QUEUE_NAME: tasks
+  REGION: ${{ inputs.region }}
+  PREFIX: ${{ inputs.prefix }}
+  RG: ${{ inputs.resource_group }}
+  TFSTATE_SA: ${{ inputs.tfstate_sa }}
+  TFSTATE_CONTAINER: ${{ inputs.tfstate_container }}
+  TFSTATE_KEY: ${{ inputs.tfstate_key }}
+  QUEUE_NAME: ${{ inputs.queue_name }}
 
 jobs:
   destroy:
