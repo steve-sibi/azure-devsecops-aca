@@ -65,7 +65,7 @@ CLAMAV_MAX_RETRIES = int(os.getenv("CLAMAV_MAX_RETRIES", "2"))
 CLAMAV_RETRY_DEADLINE_SECONDS = float(os.getenv("CLAMAV_RETRY_DEADLINE_SECONDS", "30"))
 CLAMAV_CHUNK_SIZE = int(os.getenv("CLAMAV_CHUNK_SIZE", "16384"))
 SCAN_ENGINE = os.getenv(
-    "SCAN_ENGINE", "clamav" if (CLAMAV_HOSTS or CLAMAV_HOST) else "heuristic"
+    "SCAN_ENGINE", "clamav" if (CLAMAV_HOSTS or CLAMAV_HOST) else "reputation"
 ).strip().lower()
 
 # ---- Scan engine (YARA, bundled in the worker container) ----
@@ -231,7 +231,7 @@ def _validate_url_for_download(url: str):
     validate_public_https_url(url, block_private_networks=BLOCK_PRIVATE_NETWORKS)
 
 
-_SUPPORTED_SCAN_ENGINES = {"clamav", "yara", "heuristic", "reputation"}
+_SUPPORTED_SCAN_ENGINES = {"clamav", "yara", "reputation"}
 
 
 def _parse_csv(spec: str) -> List[str]:
@@ -401,23 +401,7 @@ def _parse_scan_engines(spec: str) -> List[str]:
 
 def _get_scan_engines() -> List[str]:
     engines = _parse_scan_engines(SCAN_ENGINE)
-    return engines if engines else ["heuristic"]
-
-
-def _heuristic_scan(content: bytes, url: str) -> tuple[str, dict]:
-    lowered = content.lower()
-    suspicious = any(
-        marker in lowered for marker in [b"<script", b"onerror", b"alert(", b"eval("]
-    )
-
-    url_marker = "test-malicious" in url.lower()
-    verdict = "malicious" if (url_marker or suspicious) else "clean"
-    detail: dict = {"suspicious": bool(suspicious or url_marker)}
-    if url_marker:
-        detail["reason"] = "test-malicious-url"
-    elif suspicious:
-        detail["reason"] = "suspicious-content"
-    return verdict, {"heuristic": detail}
+    return engines if engines else ["reputation"]
 
 
 def _yara_scan(content: bytes) -> tuple[str, dict]:
@@ -564,9 +548,6 @@ def _scan_bytes(
         elif engine == "yara":
             verdict, yara_details = _yara_scan(content)
             results["yara"] = yara_details.get("yara", yara_details)
-        elif engine == "heuristic":
-            verdict, heuristic_details = _heuristic_scan(content, url)
-            results["heuristic"] = heuristic_details.get("heuristic", heuristic_details)
         else:
             raise ValueError(f"unsupported scan engine: {engine}")
 

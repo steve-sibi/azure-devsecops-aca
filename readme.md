@@ -376,7 +376,7 @@ docker compose up --build
 Default API key: `local-dev-key` (change via `.env`).
 
 > Note: the first run may take a few minutes while `clamav-updater` downloads signatures into the shared volume (the worker waits for them).
-> If you want a faster local loop, set `SCAN_ENGINE=heuristic` (or `SCAN_ENGINE=yara`) in `.env`.
+> If you want a faster local loop, set `SCAN_ENGINE=reputation` (or `SCAN_ENGINE=yara`) in `.env`.
 > YARA rules live at `app/worker/yara-rules/default.yar` (override with `YARA_RULES_PATH`); the worker also records matching string snippets and you can control which rule severities affect the verdict via `YARA_VERDICT_MIN_SEVERITY`.
 > You can also add `reputation` to `SCAN_ENGINE` to score domains (configurable allow/block lists + heuristics). If you want to block downloads for known-bad domains, set `REPUTATION_BLOCK_ON_MALICIOUS=true`.
 
@@ -661,7 +661,7 @@ To restart later, just re-run the **Deploy** workflow.
 **Worker (`app/worker/worker.py`)**
 - Receives messages from the configured queue backend (Azure Service Bus by default; Redis locally).
     
-- For scan jobs: optionally runs URL/domain reputation checks (`reputation`), downloads HTTPS content with size/time caps, scans via the configured engine(s) (`clamav` via `clamd`, `yara` via bundled rules, or `heuristic`), and writes status/verdicts to the configured result backend. Retries up to `MAX_RETRIES`.
+- For scan jobs: optionally runs URL/domain reputation checks (`reputation`), downloads HTTPS content with size/time caps, scans via the configured engine(s) (`clamav` via `clamd`, `yara` via bundled rules), and writes status/verdicts to the configured result backend. Retries up to `MAX_RETRIES`.
 
 ## 14) Extending this project (future work)
 
