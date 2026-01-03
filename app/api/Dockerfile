@@ -1,7 +1,7 @@
 # app/api/Dockerfile
 FROM python:3.11-slim
 
-# Keey Python tidy and unbuffered
+# Keep Python tidy and unbuffered
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 

@@ -92,6 +92,11 @@ REPUTATION_BLOCK_ON_MALICIOUS = os.getenv("REPUTATION_BLOCK_ON_MALICIOUS", "fals
     "true",
     "yes",
 )
+ENABLE_DEMO_MARKERS = os.getenv("ENABLE_DEMO_MARKERS", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 # ---- Logging (console + optional App Insights) ----
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -299,8 +304,8 @@ def _reputation_scan(url: str) -> tuple[str, dict]:
             }
         }
 
-    # Demo backdoor for consistent presentations.
-    if "test-malicious" in url.lower():
+    # Demo-only marker for consistent presentations (off by default).
+    if ENABLE_DEMO_MARKERS and "test-malicious" in url.lower():
         return "malicious", {
             "reputation": {
                 "verdict": "malicious",
