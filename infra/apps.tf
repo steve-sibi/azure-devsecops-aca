@@ -244,7 +244,7 @@ resource "azurerm_container_app" "worker" {
       }
       env {
         name  = "SCAN_ENGINE"
-        value = "clamav,yara"
+        value = "reputation,clamav,yara"
       }
 
       volume_mounts {

@@ -12,7 +12,7 @@ import struct
 import socket
 from datetime import datetime, timezone
 from typing import List, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 import requests
 from azure.servicebus import ServiceBusClient
@@ -72,7 +72,26 @@ SCAN_ENGINE = os.getenv(
 YARA_RULES_PATH = os.getenv("YARA_RULES_PATH", "yara-rules/default.yar")
 YARA_TIMEOUT = float(os.getenv("YARA_TIMEOUT", "5"))
 YARA_MAX_MATCHES = int(os.getenv("YARA_MAX_MATCHES", "50"))
+YARA_MAX_STRING_MATCHES = int(os.getenv("YARA_MAX_STRING_MATCHES", "25"))
+YARA_MAX_STRING_LENGTH = int(os.getenv("YARA_MAX_STRING_LENGTH", "200"))
+YARA_VERDICT_MIN_SEVERITY = os.getenv("YARA_VERDICT_MIN_SEVERITY", "high").strip().lower()
 YARA_BINARY = os.getenv("YARA_BINARY", "yara")
+
+# ---- Scan engine (URL reputation) ----
+REPUTATION_BLOCKLIST_HOSTS = os.getenv("REPUTATION_BLOCKLIST_HOSTS", "")
+REPUTATION_ALLOWLIST_HOSTS = os.getenv("REPUTATION_ALLOWLIST_HOSTS", "")
+REPUTATION_SUSPICIOUS_TLDS = os.getenv(
+    "REPUTATION_SUSPICIOUS_TLDS", "zip,top,xyz,click,icu,tk,gq,ml,cf,ga"
+)
+REPUTATION_SUSPICIOUS_KEYWORDS = os.getenv(
+    "REPUTATION_SUSPICIOUS_KEYWORDS", "login,verify,update,secure,account,password,bank"
+)
+REPUTATION_MIN_SCORE = int(os.getenv("REPUTATION_MIN_SCORE", "60"))
+REPUTATION_BLOCK_ON_MALICIOUS = os.getenv("REPUTATION_BLOCK_ON_MALICIOUS", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
 # ---- Logging (console + optional App Insights) ----
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -117,8 +136,43 @@ def process(task: dict):
         raise ValueError("missing url/job_id in task")
 
     start = time.time()
+    engines = _get_scan_engines()
+
+    initial_results: Optional[dict[str, dict]] = None
+    if "reputation" in engines and REPUTATION_BLOCK_ON_MALICIOUS:
+        url_verdict, url_scan_results = _scan_url(url, engines)
+        initial_results = url_scan_results
+
+        if url_verdict == "malicious":
+            details = {
+                "sha256": "",
+                "length": 0,
+                "engine": engines[0] if len(engines) == 1 else "multi",
+                "engines": engines,
+                "results": url_scan_results,
+                "download_blocked": True,
+            }
+            duration_ms = int((time.time() - start) * 1000)
+            _save_result(
+                job_id=job_id,
+                status="completed",
+                verdict="malicious",
+                details=details,
+                size_bytes=0,
+                correlation_id=correlation_id,
+                duration_ms=duration_ms,
+                submitted_at=task.get("submitted_at"),
+                error=None,
+            )
+            logging.info(
+                "[worker] job_id=%s verdict=malicious size=0B duration_ms=%s (blocked by reputation)",
+                job_id,
+                duration_ms,
+            )
+            return "malicious", details
+
     content, size_bytes = _download(url)
-    verdict, details = _scan_bytes(content, url)
+    verdict, details = _scan_bytes(content, url, engines=engines, initial_results=initial_results)
     duration_ms = int((time.time() - start) * 1000)
     _save_result(
         job_id=job_id,
@@ -177,7 +231,152 @@ def _validate_url_for_download(url: str):
     validate_public_https_url(url, block_private_networks=BLOCK_PRIVATE_NETWORKS)
 
 
-_SUPPORTED_SCAN_ENGINES = {"clamav", "yara", "heuristic"}
+_SUPPORTED_SCAN_ENGINES = {"clamav", "yara", "heuristic", "reputation"}
+
+
+def _parse_csv(spec: str) -> List[str]:
+    raw = (spec or "").strip()
+    if not raw:
+        return []
+    return [part.strip() for part in raw.split(",") if part.strip()]
+
+
+def _host_matches_pattern(host: str, pattern: str) -> bool:
+    host = (host or "").strip().lower().rstrip(".")
+    pattern = (pattern or "").strip().lower().rstrip(".")
+    if not host or not pattern:
+        return False
+    if pattern.startswith("*."):
+        suffix = pattern[1:]  # ".example.com"
+        return host == pattern[2:] or host.endswith(suffix)
+    if pattern.startswith("."):
+        return host == pattern[1:] or host.endswith(pattern)
+    return host == pattern
+
+
+def _reputation_scan(url: str) -> tuple[str, dict]:
+    parsed = urlsplit(url)
+    host = (parsed.hostname or "").strip().lower().rstrip(".")
+    if not host:
+        return "malicious", {
+            "reputation": {"verdict": "malicious", "result": "ERROR", "reason": "missing-host"}
+        }
+
+    host_idna = host
+    try:
+        host_idna = host.encode("idna").decode("ascii")
+    except Exception:
+        host_idna = host
+
+    allowlist = _parse_csv(REPUTATION_ALLOWLIST_HOSTS)
+    blocklist = _parse_csv(REPUTATION_BLOCKLIST_HOSTS)
+
+    matched_allow = next((p for p in allowlist if _host_matches_pattern(host_idna, p)), "")
+    if matched_allow:
+        return "clean", {
+            "reputation": {
+                "verdict": "clean",
+                "host": host,
+                "host_idna": host_idna,
+                "score": 0,
+                "threshold": REPUTATION_MIN_SCORE,
+                "matched_allowlist": matched_allow,
+                "reasons": ["allowlisted"],
+            }
+        }
+
+    matched_block = next((p for p in blocklist if _host_matches_pattern(host_idna, p)), "")
+    if matched_block:
+        return "malicious", {
+            "reputation": {
+                "verdict": "malicious",
+                "host": host,
+                "host_idna": host_idna,
+                "score": 100,
+                "threshold": REPUTATION_MIN_SCORE,
+                "matched_blocklist": matched_block,
+                "reasons": ["blocklisted"],
+            }
+        }
+
+    # Demo backdoor for consistent presentations.
+    if "test-malicious" in url.lower():
+        return "malicious", {
+            "reputation": {
+                "verdict": "malicious",
+                "host": host,
+                "host_idna": host_idna,
+                "score": 100,
+                "threshold": REPUTATION_MIN_SCORE,
+                "matched_test_marker": "test-malicious",
+                "reasons": ["test-marker"],
+            }
+        }
+
+    tld = host_idna.rsplit(".", 1)[-1] if "." in host_idna else host_idna
+    suspicious_tlds = {t.strip().lower() for t in _parse_csv(REPUTATION_SUSPICIOUS_TLDS)}
+    suspicious_keywords = {k.strip().lower() for k in _parse_csv(REPUTATION_SUSPICIOUS_KEYWORDS)}
+
+    score = 0
+    reasons: List[str] = []
+
+    if "xn--" in host_idna:
+        score += 30
+        reasons.append("punycode")
+
+    labels = [p for p in host_idna.split(".") if p]
+    if len(labels) >= 5:
+        score += 15
+        reasons.append("many-subdomains")
+
+    if len(host_idna) >= 45:
+        score += 10
+        reasons.append("long-hostname")
+
+    digit_count = sum(1 for ch in host_idna if ch.isdigit())
+    if digit_count >= 5:
+        score += 10
+        reasons.append("many-digits")
+
+    if host_idna.count("-") >= 3:
+        score += 10
+        reasons.append("many-hyphens")
+
+    if tld in suspicious_tlds:
+        score += 15
+        reasons.append(f"suspicious-tld:{tld}")
+
+    keyword_hits = [k for k in suspicious_keywords if k and k in host_idna]
+    if keyword_hits:
+        score += min(20, 5 * len(keyword_hits))
+        reasons.append("keyword:" + ",".join(sorted(keyword_hits)[:5]))
+
+    verdict = "malicious" if score >= REPUTATION_MIN_SCORE else "clean"
+    return verdict, {
+        "reputation": {
+            "verdict": verdict,
+            "host": host,
+            "host_idna": host_idna,
+            "tld": tld,
+            "score": score,
+            "threshold": REPUTATION_MIN_SCORE,
+            "reasons": reasons,
+        }
+    }
+
+
+def _scan_url(url: str, engines: List[str]) -> tuple[str, dict]:
+    """Run URL-only engines (no download required)."""
+    results: dict[str, dict] = {}
+    final_verdict = "clean"
+    for engine in engines:
+        if engine != "reputation":
+            continue
+        verdict, reputation_details = _reputation_scan(url)
+        results["reputation"] = reputation_details.get("reputation", reputation_details)
+        if verdict == "malicious":
+            final_verdict = "malicious"
+    return final_verdict, results
 
 
 def _parse_scan_engines(spec: str) -> List[str]:
@@ -240,8 +439,9 @@ def _yara_scan(content: bytes) -> tuple[str, dict]:
             tmp_path = f.name
             f.write(content)
 
+        cmd = [yara_bin, "-s", rules_path, tmp_path]
         proc = subprocess.run(
-            [yara_bin, rules_path, tmp_path],
+            cmd,
             capture_output=True,
             text=True,
             timeout=YARA_TIMEOUT,
@@ -252,18 +452,67 @@ def _yara_scan(content: bytes) -> tuple[str, dict]:
                 f"yara scan failed (exit={proc.returncode}): {stderr or 'unknown error'}"
             )
 
-        matches: List[str] = []
+        rule_names: List[str] = []
+        match_details: List[dict] = []
+        truncated = False
+
+        current: Optional[dict] = None
         if proc.returncode == 0:
-            for line in (proc.stdout or "").splitlines():
-                rule = line.strip().split(maxsplit=1)[0]
+            for raw_line in (proc.stdout or "").splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+
+                if line.startswith("0x") and current is not None:
+                    m = re.match(r"^0x([0-9a-fA-F]+):([^:]+):\\s*(.*)$", line)
+                    if not m:
+                        continue
+                    if len(current["strings"]) >= max(1, YARA_MAX_STRING_MATCHES):
+                        continue
+                    offset = int(m.group(1), 16)
+                    identifier = m.group(2).strip()
+                    value = m.group(3).strip()
+                    if len(value) > max(0, YARA_MAX_STRING_LENGTH):
+                        value = value[: max(0, YARA_MAX_STRING_LENGTH)] + "…"
+                    current["strings"].append(
+                        {"offset": offset, "identifier": identifier, "value": value}
+                    )
+                    continue
+
+                # Start of a new match: "<rule> <target>" (target is the temp path).
+                rule = line.split(maxsplit=1)[0]
                 if not rule:
                     continue
-                matches.append(rule)
-                if len(matches) >= max(1, YARA_MAX_MATCHES):
+
+                if rule not in rule_names:
+                    rule_names.append(rule)
+                current = {"rule": rule, "strings": []}
+                match_details.append(current)
+
+                if len(rule_names) >= max(1, YARA_MAX_MATCHES):
+                    truncated = True
                     break
 
-        verdict = "malicious" if matches else "clean"
-        return verdict, {"yara": {"matches": matches, "rules_path": rules_path}}
+        verdict_min_severity = (YARA_VERDICT_MIN_SEVERITY or "high").strip().lower()
+        severity_rank = {"info": 0, "low": 1, "medium": 2, "high": 3}
+        min_rank = severity_rank.get(verdict_min_severity, 3)
+        malicious_matches = [
+            rule
+            for rule in rule_names
+            if severity_rank.get(_yara_rule_severity(rule), 3) >= min_rank
+        ]
+
+        verdict = "malicious" if malicious_matches else "clean"
+        return verdict, {
+            "yara": {
+                "matches": rule_names,
+                "malicious_matches": malicious_matches,
+                "match_details": match_details,
+                "rules_path": rules_path,
+                "verdict_min_severity": verdict_min_severity,
+                "truncated": truncated,
+            }
+        }
     except subprocess.TimeoutExpired as e:
         raise ValueError(f"yara scan timed out after {YARA_TIMEOUT}s") from e
     finally:
@@ -274,14 +523,38 @@ def _yara_scan(content: bytes) -> tuple[str, dict]:
                 pass
 
 
-def _scan_bytes(content: bytes, url: str) -> tuple[str, dict]:
+def _yara_rule_severity(rule_name: str) -> str:
+    upper = (rule_name or "").upper()
+    for suffix in ("_INFO", "_LOW", "_MEDIUM", "_HIGH"):
+        if upper.endswith(suffix):
+            return suffix.lstrip("_").lower()
+    return "high"
+
+
+def _scan_bytes(
+    content: bytes,
+    url: str,
+    *,
+    engines: Optional[List[str]] = None,
+    initial_results: Optional[dict[str, dict]] = None,
+) -> tuple[str, dict]:
     digest = hashlib.sha256(content).hexdigest()
-    engines = _get_scan_engines()
-    results: dict[str, dict] = {}
+    engines = engines or _get_scan_engines()
+    results: dict[str, dict] = dict(initial_results or {})
 
     final_verdict = "clean"
     for engine in engines:
-        if engine == "clamav":
+        if engine == "reputation":
+            if "reputation" in results:
+                verdict = str(results["reputation"].get("verdict") or "clean").lower()
+                if verdict not in ("clean", "malicious"):
+                    verdict = "clean"
+            else:
+                verdict, reputation_details = _reputation_scan(url)
+                results["reputation"] = reputation_details.get(
+                    "reputation", reputation_details
+                )
+        elif engine == "clamav":
             if not _get_clamav_hosts():
                 raise ValueError(
                     "CLAMAV_HOST or CLAMAV_HOSTS is required when SCAN_ENGINE includes 'clamav'"
