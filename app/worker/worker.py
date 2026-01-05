@@ -150,12 +150,14 @@ def process(task: dict):
 
         if url_verdict == "malicious":
             details = {
+                "url": url,
                 "sha256": "",
                 "length": 0,
                 "engine": engines[0] if len(engines) == 1 else "multi",
                 "engines": engines,
                 "results": url_scan_results,
                 "download_blocked": True,
+                "download": {"requested_url": url, "blocked": True},
             }
             duration_ms = int((time.time() - start) * 1000)
             _save_result(
@@ -168,6 +170,7 @@ def process(task: dict):
                 duration_ms=duration_ms,
                 submitted_at=task.get("submitted_at"),
                 error=None,
+                url=url,
             )
             logging.info(
                 "[worker] job_id=%s verdict=malicious size=0B duration_ms=%s (blocked by reputation)",
@@ -176,8 +179,10 @@ def process(task: dict):
             )
             return "malicious", details
 
-    content, size_bytes = _download(url)
-    verdict, details = _scan_bytes(content, url, engines=engines, initial_results=initial_results)
+    content, size_bytes, download = _download(url)
+    verdict, details = _scan_bytes(
+        content, url, engines=engines, initial_results=initial_results, download=download
+    )
     duration_ms = int((time.time() - start) * 1000)
     _save_result(
         job_id=job_id,
@@ -189,6 +194,7 @@ def process(task: dict):
         duration_ms=duration_ms,
         submitted_at=task.get("submitted_at"),
         error=None,
+        url=url,
     )
     logging.info(
         "[worker] job_id=%s verdict=%s size=%sB duration_ms=%s",
@@ -200,9 +206,10 @@ def process(task: dict):
     return verdict, details
 
 
-def _download(url: str) -> tuple[bytes, int]:
+def _download(url: str) -> tuple[bytes, int, dict]:
     session = requests.Session()
     current = url
+    redirects: list[dict] = []
 
     for _ in range(MAX_REDIRECTS + 1):
         _validate_url_for_download(current)
@@ -216,18 +223,33 @@ def _download(url: str) -> tuple[bytes, int]:
                 location = resp.headers.get("Location")
                 if not location:
                     raise ValueError("redirect without Location header")
-                current = urljoin(current, location)
+                next_url = urljoin(current, location)
+                redirects.append(
+                    {"from": current, "to": next_url, "status_code": resp.status_code}
+                )
+                current = next_url
                 continue
 
             resp.raise_for_status()
             buf = bytearray()
+            content_type = (resp.headers.get("Content-Type") or "").strip()
+            content_length = (resp.headers.get("Content-Length") or "").strip()
             for chunk in resp.iter_content(chunk_size=8192):
                 if not chunk:
                     continue
                 buf.extend(chunk)
                 if len(buf) > MAX_DOWNLOAD_BYTES:
                     raise ValueError("content too large")
-            return bytes(buf), len(buf)
+            download_info = {
+                "requested_url": url,
+                "final_url": current,
+                "redirects": redirects,
+            }
+            if content_type:
+                download_info["content_type"] = content_type
+            if content_length:
+                download_info["content_length"] = content_length
+            return bytes(buf), len(buf), download_info
 
     raise ValueError("too many redirects")
 
@@ -526,6 +548,7 @@ def _scan_bytes(
     *,
     engines: Optional[List[str]] = None,
     initial_results: Optional[dict[str, dict]] = None,
+    download: Optional[dict] = None,
 ) -> tuple[str, dict]:
     digest = hashlib.sha256(content).hexdigest()
     engines = engines or _get_scan_engines()
@@ -560,12 +583,15 @@ def _scan_bytes(
             final_verdict = "malicious"
 
     details = {
+        "url": url,
         "sha256": digest,
         "length": len(content),
         "engine": engines[0] if len(engines) == 1 else "multi",
         "engines": engines,
         "results": results,
     }
+    if isinstance(download, dict) and download:
+        details["download"] = download
     return final_verdict, details
 
 
@@ -667,6 +693,7 @@ def _save_result(
     duration_ms: Optional[int] = None,
     submitted_at: Optional[str] = None,
     error: Optional[str] = None,
+    url: Optional[str] = None,
 ):
     scanned_at = datetime.now(timezone.utc).isoformat()
 
@@ -677,6 +704,12 @@ def _save_result(
         "scanned_at": scanned_at,
         "submitted_at": submitted_at or "",
     }
+    if url:
+        extra["url"] = url
+
+    details_out: dict = dict(details or {})
+    if url and "url" not in details_out:
+        details_out["url"] = url
     try:
         upsert_result_sync(
             backend=RESULT_BACKEND,
@@ -685,7 +718,7 @@ def _save_result(
             status=status,
             verdict=verdict,
             error=error,
-            details=details or {},
+            details=details_out,
             extra=extra,
             table_client=table_client,
             redis_client=redis_client,
@@ -807,6 +840,7 @@ def main():
                         correlation_id=correlation_id,
                         duration_ms=duration_ms,
                         submitted_at=submitted_at,
+                        url=task.get("url") if isinstance(task, dict) else None,
                     )
 
                 if retrying:
@@ -887,6 +921,7 @@ def main():
                                         correlation_id=correlation_id,
                                         duration_ms=duration_ms,
                                         submitted_at=submitted_at,
+                                        url=task.get("url") if isinstance(task, dict) else None,
                                     )
 
                                 # DLQ if too many deliveries, else make it available again

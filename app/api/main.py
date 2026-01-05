@@ -19,6 +19,7 @@ from azure.data.tables.aio import TableServiceClient
 from fastapi import FastAPI, HTTPException, Request, Security
 from fastapi.responses import HTMLResponse
 from fastapi.security.api_key import APIKeyHeader
+from fastapi import Query
 from pydantic import BaseModel, Field
 
 from common.result_store import get_result_async, upsert_result_async
@@ -231,6 +232,146 @@ async def _enqueue_json(
         return
 
     raise RuntimeError(f"Unsupported QUEUE_BACKEND: {QUEUE_BACKEND}")
+
+
+def _safe_int(value) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return int(value)
+    except Exception:
+        try:
+            return int(str(value))
+        except Exception:
+            return None
+
+
+def _parse_details(raw) -> Optional[dict]:
+    if raw is None or raw == "":
+        return None
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, (bytes, bytearray)):
+        raw = raw.decode("utf-8", "replace")
+    if not isinstance(raw, str):
+        raw = str(raw)
+    try:
+        doc = json.loads(raw)
+    except Exception:
+        return {"raw": raw}
+    return doc if isinstance(doc, dict) else {"value": doc}
+
+
+def _build_summary(entity: dict, details: Optional[dict]) -> dict:
+    summary: dict = {}
+
+    url = None
+    engines = []
+    sha256 = None
+    download_blocked = None
+
+    if isinstance(details, dict):
+        url_val = details.get("url")
+        if isinstance(url_val, str) and url_val:
+            url = url_val
+
+        engines_val = details.get("engines")
+        if isinstance(engines_val, list):
+            engines = [str(e) for e in engines_val if e]
+        elif isinstance(details.get("engine"), str) and details.get("engine"):
+            engines = [str(details.get("engine"))]
+
+        sha_val = details.get("sha256")
+        if isinstance(sha_val, str) and sha_val:
+            sha256 = sha_val
+
+        if isinstance(details.get("download_blocked"), bool):
+            download_blocked = bool(details.get("download_blocked"))
+
+    size_bytes = _safe_int(entity.get("size_bytes"))
+    duration_ms = _safe_int(entity.get("duration_ms"))
+    correlation_id = entity.get("correlation_id") or None
+
+    if url:
+        summary["url"] = url
+    if sha256:
+        summary["sha256"] = sha256
+    if engines:
+        summary["engines"] = engines
+    if size_bytes is not None:
+        summary["size_bytes"] = size_bytes
+    if duration_ms is not None:
+        summary["duration_ms"] = duration_ms
+    if correlation_id:
+        summary["correlation_id"] = correlation_id
+
+    if download_blocked is not None:
+        summary["download_blocked"] = download_blocked
+
+    # Download metadata (if present)
+    if isinstance(details, dict) and isinstance(details.get("download"), dict):
+        d = details["download"]
+        download: dict = {}
+        for key in ("requested_url", "final_url", "content_type"):
+            val = d.get(key)
+            if isinstance(val, str) and val:
+                download[key] = val
+        redirects = d.get("redirects")
+        if isinstance(redirects, list):
+            download["redirect_count"] = len(redirects)
+        blocked = d.get("blocked")
+        if isinstance(blocked, bool):
+            download["blocked"] = blocked
+        if download:
+            summary["download"] = download
+
+    # Engine summaries
+    results = details.get("results") if isinstance(details, dict) else None
+    if isinstance(results, dict):
+        rep = results.get("reputation")
+        if isinstance(rep, dict):
+            rep_out: dict = {}
+            for key in ("verdict", "score", "threshold", "matched_allowlist", "matched_blocklist"):
+                val = rep.get(key)
+                if val is None or val == "":
+                    continue
+                rep_out[key] = val
+            reasons = rep.get("reasons")
+            if isinstance(reasons, list):
+                rep_out["reasons"] = [str(r) for r in reasons if r][:10]
+            if rep_out:
+                summary["reputation"] = rep_out
+
+        clam = results.get("clamav")
+        if isinstance(clam, dict):
+            clam_out: dict = {}
+            res = clam.get("result")
+            if isinstance(res, str) and res:
+                clam_out["result"] = res
+            sig = clam.get("signature")
+            if isinstance(sig, str) and sig:
+                clam_out["signature"] = sig
+            if clam_out:
+                summary["clamav"] = clam_out
+
+        yara = results.get("yara")
+        if isinstance(yara, dict):
+            yara_out: dict = {}
+            mm = yara.get("malicious_matches")
+            if isinstance(mm, list):
+                yara_out["malicious_matches"] = [str(x) for x in mm if x][:25]
+            matches = yara.get("matches")
+            if isinstance(matches, list):
+                yara_out["match_count"] = len(matches)
+            truncated = yara.get("truncated")
+            if isinstance(truncated, bool):
+                yara_out["truncated"] = truncated
+            if yara_out:
+                summary["yara"] = yara_out
+
+    return summary
 
 
 @asynccontextmanager
@@ -462,10 +603,21 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
 
 
 @app.get("/scan/{job_id}")
-async def get_scan_status(job_id: str, _: None = Security(require_api_key)):
+async def get_scan_status(
+    job_id: str,
+    view: str = Query("summary", description="Response view: summary or full"),
+    _: None = Security(require_api_key),
+):
+    view = (view or "summary").strip().lower()
+    if view not in ("summary", "full"):
+        raise HTTPException(status_code=400, detail="view must be 'summary' or 'full'")
+
     entity = await _get_result_entity(job_id)
     if not entity:
-        return {"job_id": job_id, "status": "pending"}
+        return {"job_id": job_id, "status": "pending", "summary": None}
+
+    details = _parse_details(entity.get("details"))
+    summary = _build_summary(entity, details)
 
     response = {
         "job_id": job_id,
@@ -474,12 +626,11 @@ async def get_scan_status(job_id: str, _: None = Security(require_api_key)):
         "error": entity.get("error") or None,
         "submitted_at": entity.get("submitted_at"),
         "scanned_at": entity.get("scanned_at"),
-        "details": None,
+        "size_bytes": _safe_int(entity.get("size_bytes")),
+        "duration_ms": _safe_int(entity.get("duration_ms")),
+        "correlation_id": entity.get("correlation_id") or None,
+        "summary": summary,
     }
-    # details are stored as JSON string to fit Table constraints
-    if entity.get("details"):
-        try:
-            response["details"] = json.loads(entity["details"])
-        except Exception:
-            response["details"] = {"raw": entity["details"]}
+    if view == "full":
+        response["details"] = details
     return response

@@ -115,6 +115,33 @@
       .nowrap { white-space: nowrap; }
       .url-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .filter { flex: 1; min-width: 220px; }
+      .tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      .tab {
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        padding: 0.45rem 0.7rem;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 0.85rem;
+      }
+      .tab[aria-selected="true"] {
+        background: rgba(37,99,235,0.14);
+        border-color: rgba(37,99,235,0.35);
+      }
+      .panel.hidden { display: none; }
+      .summary-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1rem;
+        align-items: start;
+      }
+      @media (max-width: 900px) { .summary-grid { grid-template-columns: 1fr; } }
+      .summary-block { border: 1px solid var(--border); border-radius: 12px; padding: 0.85rem; }
+      .summary-block h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
+      dl.kv { display: grid; grid-template-columns: 160px 1fr; gap: 0.35rem 0.8rem; margin: 0; }
+      dl.kv dt { color: var(--muted); font-size: 0.85rem; }
+      dl.kv dd { margin: 0; overflow-wrap: anywhere; }
     </style>
   </head>
   <body>
@@ -179,7 +206,16 @@
               <button id="copyJson2" type="button" disabled>Copy JSON</button>
             </div>
           </div>
-          <pre id="out">{}</pre>
+          <div class="tabs" role="tablist" aria-label="Response view">
+            <button id="tabSummary" class="tab" role="tab" aria-selected="true" type="button">Summary</button>
+            <button id="tabRaw" class="tab" role="tab" aria-selected="false" type="button">Raw JSON</button>
+          </div>
+          <div id="panelSummary" class="panel">
+            <div id="summaryOut" class="summary-grid"></div>
+          </div>
+          <div id="panelRaw" class="panel hidden">
+            <pre id="out">{}</pre>
+          </div>
         </section>
       </div>
     </div>
@@ -198,6 +234,7 @@
         const apiKeyEl = document.getElementById('apiKey');
         const urlEl = document.getElementById('url');
         const outEl = document.getElementById('out');
+        const summaryOutEl = document.getElementById('summaryOut');
         const statusEl = document.getElementById('status');
         const startEl = document.getElementById('start');
         const historyBodyEl = document.getElementById('historyBody');
@@ -206,10 +243,20 @@
         const checkCurrentEl = document.getElementById('checkCurrent');
         const copyJsonEl = document.getElementById('copyJson');
         const copyJson2El = document.getElementById('copyJson2');
+        const tabSummaryEl = document.getElementById('tabSummary');
+        const tabRawEl = document.getElementById('tabRaw');
+        const panelSummaryEl = document.getElementById('panelSummary');
+        const panelRawEl = document.getElementById('panelRaw');
 
         let history = [];
         let currentJobId = null;
         let isPolling = false;
+        let activeTab = 'summary'; // 'summary' | 'raw'
+
+        let lastSummary = null; // most recent response for summary view
+        let lastFull = null; // most recent response for full view (raw JSON)
+        let lastSummaryJobId = null;
+        let lastFullJobId = null;
 
         const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
 
@@ -301,9 +348,164 @@
           checkCurrentEl.disabled = !currentJobId;
         }
 
-        function show(obj) {
+        function formatBytes(n) {
+          const v = Number(n);
+          if (!Number.isFinite(v)) return '';
+          if (v < 1024) return v + ' B';
+          const kb = v / 1024;
+          if (kb < 1024) return kb.toFixed(1) + ' KB';
+          const mb = kb / 1024;
+          return mb.toFixed(2) + ' MB';
+        }
+
+        function formatMs(n) {
+          const v = Number(n);
+          if (!Number.isFinite(v)) return '';
+          if (v < 1000) return v + ' ms';
+          return (v / 1000).toFixed(2) + ' s';
+        }
+
+        function pick(obj, key) {
+          if (!obj || typeof obj !== 'object') return null;
+          return obj[key];
+        }
+
+        function renderSummary(resp) {
+          summaryOutEl.textContent = '';
+          const data = resp || {};
+          const s = (data && data.summary && typeof data.summary === 'object') ? data.summary : {};
+
+          const blocks = [];
+
+          function block(title, rows) {
+            const dl = el('dl', { class: 'kv' });
+            for (const [k, v] of rows) {
+              if (v == null || v === '') continue;
+              dl.appendChild(el('dt', { text: k }));
+              dl.appendChild(el('dd', { text: String(v) }));
+            }
+            blocks.push(el('div', { class: 'summary-block' }, el('h3', { text: title }), dl));
+          }
+
+          const status = data.status || 'unknown';
+          const verdict = data.verdict || '';
+          const url = s.url || '';
+          const sha = s.sha256 || '';
+          const engines = Array.isArray(s.engines) ? s.engines.join(', ') : '';
+          const size = (s.size_bytes != null ? formatBytes(s.size_bytes) : formatBytes(data.size_bytes));
+          const dur = (s.duration_ms != null ? formatMs(s.duration_ms) : formatMs(data.duration_ms));
+
+          block('Job', [
+            ['Status', status],
+            ['Verdict', verdict],
+            ['Job ID', data.job_id || ''],
+            ['Submitted', formatWhen(data.submitted_at)],
+            ['Scanned', formatWhen(data.scanned_at)],
+            ['Duration', dur],
+            ['Size', size],
+            ['Engines', engines],
+          ]);
+
+          block('Target', [
+            ['URL', url],
+            ['SHA-256', sha],
+            ['Download blocked', (s.download_blocked === true ? 'yes' : (s.download_blocked === false ? 'no' : ''))],
+          ]);
+
+          if (data.error) {
+            block('Error', [['Message', data.error]]);
+          }
+
+          const rep = pick(s, 'reputation');
+          if (rep) {
+            block('Reputation', [
+              ['Verdict', rep.verdict],
+              ['Score', rep.score],
+              ['Reasons', Array.isArray(rep.reasons) ? rep.reasons.join(', ') : ''],
+              ['Allowlist match', rep.matched_allowlist],
+              ['Blocklist match', rep.matched_blocklist],
+            ]);
+          }
+
+          const clam = pick(s, 'clamav');
+          if (clam) {
+            block('ClamAV', [
+              ['Result', clam.result],
+              ['Signature', clam.signature],
+            ]);
+          }
+
+          const yara = pick(s, 'yara');
+          if (yara) {
+            block('YARA', [
+              ['Malicious matches', Array.isArray(yara.malicious_matches) ? yara.malicious_matches.join(', ') : ''],
+              ['Match count', yara.match_count],
+              ['Truncated', (yara.truncated === true ? 'yes' : (yara.truncated === false ? 'no' : ''))],
+            ]);
+          }
+
+          const dl = pick(s, 'download');
+          if (dl) {
+            block('Download', [
+              ['Requested URL', dl.requested_url],
+              ['Final URL', dl.final_url],
+              ['Content-Type', dl.content_type],
+              ['Redirects', dl.redirect_count],
+              ['Blocked', (dl.blocked === true ? 'yes' : (dl.blocked === false ? 'no' : ''))],
+            ]);
+          }
+
+          if (blocks.length === 0) {
+            summaryOutEl.appendChild(el('div', { class: 'muted', text: 'No data yet.' }));
+            return;
+          }
+          for (const b of blocks) summaryOutEl.appendChild(b);
+        }
+
+        function renderRaw(resp) {
+          const obj = resp || {};
           outEl.textContent = JSON.stringify(obj, null, 2);
+        }
+
+        function showSummary(obj) {
+          lastSummary = obj;
+          lastSummaryJobId = (obj && obj.job_id) ? obj.job_id : null;
+          renderSummary(obj);
           setButtonsEnabled(true);
+        }
+
+        function showFull(obj) {
+          lastFull = obj;
+          lastSummary = obj;
+          lastFullJobId = (obj && obj.job_id) ? obj.job_id : null;
+          lastSummaryJobId = lastFullJobId;
+          renderSummary(obj);
+          if (activeTab === 'raw') renderRaw(obj);
+          setButtonsEnabled(true);
+        }
+
+        function showPlaceholder() {
+          renderSummary(lastSummary || lastFull || {});
+          if (activeTab === 'raw') {
+            outEl.textContent = JSON.stringify({ message: 'Raw JSON not loaded yet. Click "Check job" or switch tabs.' }, null, 2);
+          }
+          setButtonsEnabled(Boolean(lastSummary || lastFull));
+        }
+
+        function setActiveTab(next) {
+          activeTab = next;
+          const isSummary = next === 'summary';
+          tabSummaryEl.setAttribute('aria-selected', isSummary ? 'true' : 'false');
+          tabRawEl.setAttribute('aria-selected', isSummary ? 'false' : 'true');
+          panelSummaryEl.classList.toggle('hidden', !isSummary);
+          panelRawEl.classList.toggle('hidden', isSummary);
+
+          if (!isSummary) {
+            if (lastFull && (!currentJobId || lastFullJobId === currentJobId)) renderRaw(lastFull);
+            else showPlaceholder();
+          } else {
+            renderSummary(lastSummary || lastFull || {});
+          }
         }
 
         async function copyText(text) {
@@ -416,8 +618,17 @@
             const setCurrentBtn = el('button', { type: 'button', text: 'Set current' });
             setCurrentBtn.addEventListener('click', () => {
               currentJobId = job;
+              if (currentJobId && lastFullJobId && lastFullJobId !== currentJobId) {
+                lastFull = null;
+                lastFullJobId = null;
+              }
+              if (currentJobId && lastSummaryJobId && lastSummaryJobId !== currentJobId) {
+                lastSummary = null;
+                lastSummaryJobId = null;
+              }
               setButtonsEnabled(true);
               setStatus('info', 'Current job set to ' + job);
+              showPlaceholder();
             });
 
             actionsTd.appendChild(useBtn);
@@ -432,7 +643,8 @@
           if (!jobId) return null;
           setStatus('info', 'Fetching status for ' + jobId + '...');
           try {
-            const s = await api('/scan/' + jobId, 'GET');
+            const view = activeTab === 'raw' ? 'full' : 'summary';
+            const s = await api('/scan/' + jobId + '?view=' + encodeURIComponent(view), 'GET');
             const now = new Date().toISOString();
             patchHistory(jobId, {
               status: s.status,
@@ -442,13 +654,19 @@
               scanned_at: s.scanned_at || null,
               last_checked_at: now
             });
-            if (showOutput) show(s);
+            if (showOutput) {
+              if (view === 'full') showFull(s);
+              else showSummary(s);
+            } else {
+              // Still update summary so the UI stays current while polling.
+              showSummary(s);
+            }
             setStatus(statusKind(s.status), 'Job ' + jobId + ' is ' + s.status);
             return s;
           } catch (e) {
             const msg = e && e.data ? JSON.stringify(e.data) : (e ? e.message : 'Unknown error');
             setStatus('bad', msg);
-            if (showOutput) show({ error: msg });
+            if (showOutput) showSummary({ error: msg });
             return null;
           }
         }
@@ -474,14 +692,23 @@
           }
 
           setStatus('info', 'Submitting scan...');
-          show({});
+          showSummary({
+            status: 'submitting',
+            verdict: null,
+            error: null,
+            submitted_at: new Date().toISOString(),
+            scanned_at: null,
+            summary: { url: target }
+          });
           setButtonsEnabled(false);
           startEl.disabled = true;
           checkCurrentEl.disabled = true;
 
           try {
             const submit = await api('/scan', 'POST', { url: target, type: 'url' });
-            show(submit);
+            lastFull = null;
+            lastFullJobId = null;
+            showSummary(submit);
 
             currentJobId = submit.job_id || null;
             setButtonsEnabled(true);
@@ -513,7 +740,7 @@
           } catch (e) {
             const msg = e && e.data ? JSON.stringify(e.data) : (e ? e.message : 'Unknown error');
             setStatus('bad', msg);
-            show({ error: msg });
+            showSummary({ status: 'error', error: msg, summary: { url: target } });
           } finally {
             isPolling = false;
             startEl.disabled = false;
@@ -529,7 +756,9 @@
           apiKeyEl.addEventListener('input', () => localStorage.setItem(LS.apiKey, apiKeyEl.value));
           history = loadHistory();
           renderHistory();
-          show({});
+          lastSummary = {};
+          lastFull = null;
+          showPlaceholder();
           setButtonsEnabled(false);
         }
 
@@ -540,10 +769,29 @@
           setStatus('ok', 'History cleared');
         });
         historyFilterEl.addEventListener('input', renderHistory);
-        copyJsonEl.addEventListener('click', () => copyText(outEl.textContent || ''));
-        copyJson2El.addEventListener('click', () => copyText(outEl.textContent || ''));
+        tabSummaryEl.addEventListener('click', () => setActiveTab('summary'));
+        tabRawEl.addEventListener('click', async () => {
+          setActiveTab('raw');
+          if (currentJobId && (!lastFull || lastFullJobId !== currentJobId)) {
+            await refreshJob(currentJobId, true);
+          }
+        });
+
+        copyJsonEl.addEventListener('click', async () => {
+          const text = activeTab === 'raw'
+            ? (outEl.textContent || '')
+            : JSON.stringify((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {}), null, 2);
+          if (text) await copyText(text);
+        });
+        copyJson2El.addEventListener('click', async () => {
+          const text = activeTab === 'raw'
+            ? (outEl.textContent || '')
+            : JSON.stringify((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {}), null, 2);
+          if (text) await copyText(text);
+        });
 
         init();
+        setActiveTab('summary');
       })();
     </script>
   </body>

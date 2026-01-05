@@ -464,7 +464,7 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `GET /healthz` (no auth)
 - `POST /tasks` (requires API key)
 - `POST /scan` (requires API key)
-- `GET /scan/{job_id}` (requires API key)
+- `GET /scan/{job_id}?view=summary|full` (requires API key; `summary` is default)
 
 ### Try it (CLI)
 
@@ -483,7 +483,8 @@ echo "JOB_ID=$JOB_ID"
 Poll for status/result:
 
 ```bash
-curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}" | python3 -m json.tool
+curl -sS "${API_URL}/scan/${JOB_ID}?view=summary" -H "X-API-Key: ${API_KEY}" | python3 -m json.tool
+curl -sS "${API_URL}/scan/${JOB_ID}?view=full" -H "X-API-Key: ${API_KEY}" | python3 -m json.tool
 ```
 
 Test “malicious” behavior (ClamAV): scan a URL that serves the EICAR test string over HTTPS (safe test malware signature):
