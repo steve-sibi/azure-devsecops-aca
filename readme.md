@@ -14,6 +14,43 @@ What this project demonstrates (resume-friendly):
 
 > Shareable, reproducible, “nuke-and-recreate” demo or starter for lightweight production.
 
+## 0) Quick demo (local, ~2 minutes)
+
+Prereqs: Docker Desktop (or any Docker engine with Compose).
+
+```bash
+cp .env.example .env
+docker compose up --build
+```
+
+In another terminal:
+
+```bash
+API_KEY=local-dev-key
+
+curl -sS http://localhost:8000/healthz
+
+SUBMIT="$(curl -sS -X POST http://localhost:8000/scan \
+  -H "content-type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{"url":"https://example.com","type":"url"}')"
+echo "${SUBMIT}"
+
+JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("job_id") or "")' <<<"${SUBMIT}")"
+curl -sS "http://localhost:8000/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}"
+```
+
+SSRF protections (expected `400`):
+
+```bash
+curl -i -sS -X POST http://localhost:8000/scan \
+  -H "content-type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{"url":"https://127.0.0.1","type":"url"}'
+```
+
+> Note: first local run may take a few minutes while `clamav-updater` downloads signatures. For faster local iteration, set `SCAN_ENGINE=reputation` (or `SCAN_ENGINE=yara`) in `.env`.
+
 ## 1) Architecture
 
 *High-Level Overview*
@@ -246,7 +283,7 @@ azure-devsecops-aca/
 │  └─ variables.tf
 ├─ docs/
 ├─ checkov.yml
-└─ readme.md
+└─ README.md
 ```
 
 ## 5) CI/CD workflow
@@ -379,9 +416,11 @@ Default API key: `local-dev-key` (change via `.env`).
 > If you want a faster local loop, set `SCAN_ENGINE=reputation` (or `SCAN_ENGINE=yara`) in `.env`.
 > YARA rules live at `app/worker/yara-rules/default.yar` (override with `YARA_RULES_PATH`); the worker also records matching string snippets and you can control which rule severities affect the verdict via `YARA_VERDICT_MIN_SEVERITY`.
 > You can also add `reputation` to `SCAN_ENGINE` to score domains (configurable allow/block lists + heuristics). If you want to block downloads for known-bad domains, set `REPUTATION_BLOCK_ON_MALICIOUS=true`.
+> Demo marker: set `ENABLE_DEMO_MARKERS=true` to treat URLs containing the substring `test-malicious` as malicious (off by default).
 
 ### Azure (Container Apps)
 - Trigger the **Deploy** workflow manually (Actions tab → Deploy → Run workflow).
+  - For forks: set a unique `PREFIX` and `TFSTATE_SA` via workflow inputs (storage account names are global).
     
 - After **create-apps**, get the public API URL:
 
@@ -691,3 +730,11 @@ Because you pre-created it. Import it into state (the workflow does this automat
 
 **Why can’t the app read secrets from Key Vault?**  
 Make sure the `azurerm_container_app.secret` block uses the correct `identity` and that identity has Key Vault secret **Get/List**.
+
+## License
+
+MIT — see `LICENSE`.
+
+## Contributing & security
+
+See `CONTRIBUTING.md` and `SECURITY.md`.
