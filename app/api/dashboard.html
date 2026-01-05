@@ -20,6 +20,9 @@
         --danger: #dc2626;
         --code-bg: #0b1020;
         --code-fg: #d6e0ff;
+        --ring: rgba(37, 99, 235, 0.22);
+        --primary-soft: rgba(37, 99, 235, 0.12);
+        --primary-soft-border: rgba(37, 99, 235, 0.45);
       }
       @media (prefers-color-scheme: dark) {
         :root {
@@ -35,24 +38,40 @@
           --danger: #fb7185;
           --code-bg: #070b18;
           --code-fg: #d6e0ff;
+          --ring: rgba(96, 165, 250, 0.26);
+          --primary-soft: rgba(96, 165, 250, 0.14);
+          --primary-soft-border: rgba(96, 165, 250, 0.45);
         }
       }
       * { box-sizing: border-box; }
       body {
         margin: 0;
         font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        background: var(--bg);
+        background:
+          radial-gradient(1200px circle at 15% 5%, rgba(37,99,235,0.16), transparent 55%),
+          radial-gradient(900px circle at 85% 18%, rgba(22,163,74,0.10), transparent 55%),
+          var(--bg);
         color: var(--text);
+        line-height: 1.45;
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
       }
       a { color: var(--primary); }
       code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-      .app { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 3rem; }
+      .app { max-width: 1440px; margin: 0 auto; padding: clamp(1.25rem, 2vw, 2rem) clamp(1rem, 3vw, 2.25rem) 3rem; }
       .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
       .header h1 { margin: 0; font-size: 1.65rem; letter-spacing: -0.02em; }
       .sub { margin: 0.35rem 0 0; color: var(--muted); line-height: 1.4; }
-      .grid { margin-top: 1.25rem; display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; align-items: start; }
-      @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
-      .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; box-shadow: var(--shadow); padding: 1rem; }
+      .grid { margin-top: 1.25rem; display: grid; grid-template-columns: minmax(320px, 380px) 1fr; gap: 1.15rem; align-items: start; }
+      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+      .card {
+        background: linear-gradient(180deg, rgba(148,163,184,0.06), rgba(148,163,184,0.02)), var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+        padding: 1rem;
+      }
       .card.full { grid-column: 1 / -1; }
       .card h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
       .card-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
@@ -63,8 +82,16 @@
         padding: 0.65rem 0.75rem;
         border-radius: 10px;
         border: 1px solid var(--border);
-        background: transparent;
+        background: rgba(148,163,184,0.06);
         color: var(--text);
+        transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+      }
+      input::placeholder { color: var(--muted); opacity: 0.75; }
+      input:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 4px var(--ring);
+        background: rgba(148,163,184,0.04);
       }
       .help { margin-top: 0.35rem; font-size: 0.85rem; color: var(--muted); }
       .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
@@ -75,6 +102,11 @@
         padding: 0.6rem 0.85rem;
         border-radius: 10px;
         cursor: pointer;
+        transition: transform 80ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+      }
+      button:hover:not(:disabled) {
+        background: rgba(148,163,184,0.08);
+        transform: translateY(-1px);
       }
       button.primary {
         background: var(--primary);
@@ -82,12 +114,17 @@
         color: var(--primary-ink);
         font-weight: 600;
       }
+      button.primary:hover:not(:disabled) { filter: brightness(1.03); }
+      button:focus-visible, .tab:focus-visible, input:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 4px var(--ring);
+      }
       button:disabled { opacity: 0.55; cursor: not-allowed; }
       .status { margin-top: 0.85rem; min-height: 1.25rem; display: flex; align-items: center; gap: 0.5rem; color: var(--muted); }
-      .badge { font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); }
+      .badge { font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); font-weight: 600; }
       .badge.ok { border-color: rgba(22,163,74,0.5); background: rgba(22,163,74,0.12); }
       .badge.bad { border-color: rgba(220,38,38,0.5); background: rgba(220,38,38,0.12); }
-      .badge.info { border-color: rgba(37,99,235,0.45); background: rgba(37,99,235,0.12); }
+      .badge.info { border-color: var(--primary-soft-border); background: var(--primary-soft); }
       .muted { color: var(--muted); }
       .small { font-size: 0.85rem; }
       pre {
@@ -98,8 +135,10 @@
         border-radius: 12px;
         overflow: auto;
         border: 1px solid var(--border);
+        font-size: 0.9rem;
+        line-height: 1.45;
       }
-      .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+      .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: rgba(148,163,184,0.03); }
       table { width: 100%; border-collapse: collapse; min-width: 720px; }
       th, td { text-align: left; padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); vertical-align: top; }
       th {
@@ -115,7 +154,7 @@
       .nowrap { white-space: nowrap; }
       .url-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .filter { flex: 1; min-width: 220px; }
-      .tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+      .tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.25rem 0 0.85rem; }
       .tab {
         border: 1px solid var(--border);
         background: transparent;
@@ -126,22 +165,79 @@
         font-size: 0.85rem;
       }
       .tab[aria-selected="true"] {
-        background: rgba(37,99,235,0.14);
-        border-color: rgba(37,99,235,0.35);
+        background: var(--primary-soft);
+        border-color: var(--primary-soft-border);
       }
       .panel.hidden { display: none; }
       .summary-grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
         gap: 1rem;
         align-items: start;
+        align-content: start;
+        grid-auto-rows: max-content;
       }
       @media (max-width: 900px) { .summary-grid { grid-template-columns: 1fr; } }
-      .summary-block { border: 1px solid var(--border); border-radius: 12px; padding: 0.85rem; }
-      .summary-block h3 { margin: 0 0 0.6rem; font-size: 0.95rem; }
-      dl.kv { display: grid; grid-template-columns: 160px 1fr; gap: 0.35rem 0.8rem; margin: 0; }
-      dl.kv dt { color: var(--muted); font-size: 0.85rem; }
-      dl.kv dd { margin: 0; overflow-wrap: anywhere; }
+      .summary-block {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 0.95rem;
+        background: rgba(148,163,184,0.04);
+        backdrop-filter: blur(10px);
+        align-self: start;
+        height: fit-content;
+      }
+      .summary-block h3 {
+        margin: 0 0 0.75rem;
+        font-size: 0.95rem;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding-bottom: 0.55rem;
+        border-bottom: 1px solid rgba(148,163,184,0.14);
+      }
+      .summary-block h3::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--primary);
+        box-shadow: 0 0 0 4px var(--primary-soft);
+        opacity: 0.9;
+        flex: 0 0 auto;
+      }
+      dl.kv { display: grid; grid-template-columns: minmax(120px, 170px) 1fr; gap: 0.35rem 0.8rem; margin: 0; }
+      dl.kv dt {
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding-top: 0.12rem;
+      }
+      dl.kv dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+        font-weight: 600;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.35;
+      }
+      .value-inline { display: inline-flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
+      .value-code {
+        display: inline-block;
+        padding: 0.18rem 0.45rem;
+        border-radius: 10px;
+        border: 1px solid rgba(148,163,184,0.22);
+        background: rgba(148,163,184,0.08);
+        font-size: 0.86rem;
+        line-height: 1.2;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .value-link {
+        text-decoration: none;
+        border-bottom: 1px dashed rgba(148,163,184,0.45);
+      }
+      .value-link:hover { border-bottom-color: var(--primary); }
     </style>
   </head>
   <body>
@@ -370,6 +466,21 @@
           return obj[key];
         }
 
+        function codeValue(value) {
+          const text = value == null ? '' : String(value);
+          return el('code', { class: 'value-code', text: text });
+        }
+
+        function linkValue(url) {
+          const href = String(url || '');
+          return el('a', { class: 'value-link', href: href, target: '_blank', rel: 'noreferrer', text: href });
+        }
+
+        function badgeValue(kind, text) {
+          const label = String(text || '');
+          return makeBadge(kind || 'info', label);
+        }
+
         function renderSummary(resp) {
           summaryOutEl.textContent = '';
           const data = resp || {};
@@ -382,7 +493,10 @@
             for (const [k, v] of rows) {
               if (v == null || v === '') continue;
               dl.appendChild(el('dt', { text: k }));
-              dl.appendChild(el('dd', { text: String(v) }));
+              const dd = el('dd');
+              if (v && typeof v === 'object' && v.nodeType === 1) dd.appendChild(v);
+              else dd.textContent = String(v);
+              dl.appendChild(dd);
             }
             blocks.push(el('div', { class: 'summary-block' }, el('h3', { text: title }), dl));
           }
@@ -396,19 +510,19 @@
           const dur = (s.duration_ms != null ? formatMs(s.duration_ms) : formatMs(data.duration_ms));
 
           block('Job', [
-            ['Status', status],
-            ['Verdict', verdict],
-            ['Job ID', data.job_id || ''],
+            ['Status', badgeValue(statusKind(status), status)],
+            ['Verdict', verdict ? badgeValue(verdictKind(verdict), verdict) : ''],
+            ['Job ID', (data.job_id ? codeValue(data.job_id) : '')],
             ['Submitted', formatWhen(data.submitted_at)],
             ['Scanned', formatWhen(data.scanned_at)],
-            ['Duration', dur],
-            ['Size', size],
-            ['Engines', engines],
+            ['Duration', dur ? codeValue(dur) : ''],
+            ['Size', size ? codeValue(size) : ''],
+            ['Engines', engines ? codeValue(engines) : ''],
           ]);
 
           block('Target', [
-            ['URL', url],
-            ['SHA-256', sha],
+            ['URL', url ? linkValue(url) : ''],
+            ['SHA-256', sha ? codeValue(sha) : ''],
             ['Download blocked', (s.download_blocked === true ? 'yes' : (s.download_blocked === false ? 'no' : ''))],
           ]);
 
@@ -419,8 +533,8 @@
           const rep = pick(s, 'reputation');
           if (rep) {
             block('Reputation', [
-              ['Verdict', rep.verdict],
-              ['Score', rep.score],
+              ['Verdict', rep.verdict ? badgeValue(verdictKind(rep.verdict), rep.verdict) : ''],
+              ['Score', rep.score != null ? codeValue(rep.score) : ''],
               ['Reasons', Array.isArray(rep.reasons) ? rep.reasons.join(', ') : ''],
               ['Allowlist match', rep.matched_allowlist],
               ['Blocklist match', rep.matched_blocklist],
@@ -429,17 +543,20 @@
 
           const clam = pick(s, 'clamav');
           if (clam) {
+            const clamRes = String(clam.result || '');
+            const clamKind = (clamRes === 'OK') ? 'ok' : (clamRes === 'FOUND' ? 'bad' : 'info');
             block('ClamAV', [
-              ['Result', clam.result],
-              ['Signature', clam.signature],
+              ['Result', clamRes ? badgeValue(clamKind, clamRes) : ''],
+              ['Signature', clam.signature ? codeValue(clam.signature) : ''],
             ]);
           }
 
           const yara = pick(s, 'yara');
           if (yara) {
+            const malicious = Array.isArray(yara.malicious_matches) ? yara.malicious_matches : [];
             block('YARA', [
-              ['Malicious matches', Array.isArray(yara.malicious_matches) ? yara.malicious_matches.join(', ') : ''],
-              ['Match count', yara.match_count],
+              ['Malicious matches', malicious.length ? codeValue(malicious.join(', ')) : 'none'],
+              ['Match count', yara.match_count != null ? codeValue(yara.match_count) : ''],
               ['Truncated', (yara.truncated === true ? 'yes' : (yara.truncated === false ? 'no' : ''))],
             ]);
           }
@@ -447,10 +564,10 @@
           const dl = pick(s, 'download');
           if (dl) {
             block('Download', [
-              ['Requested URL', dl.requested_url],
-              ['Final URL', dl.final_url],
-              ['Content-Type', dl.content_type],
-              ['Redirects', dl.redirect_count],
+              ['Requested URL', dl.requested_url ? linkValue(dl.requested_url) : ''],
+              ['Final URL', dl.final_url ? linkValue(dl.final_url) : ''],
+              ['Content-Type', dl.content_type ? codeValue(dl.content_type) : ''],
+              ['Redirects', dl.redirect_count != null ? codeValue(dl.redirect_count) : ''],
               ['Blocked', (dl.blocked === true ? 'yes' : (dl.blocked === false ? 'no' : ''))],
             ]);
           }
@@ -671,13 +788,35 @@
           }
         }
 
+        async function loadFull(jobId) {
+          if (!jobId) return null;
+          try {
+            const full = await api('/scan/' + jobId + '?view=full', 'GET');
+            lastFull = full;
+            lastFullJobId = (full && full.job_id) ? full.job_id : jobId;
+            if (activeTab === 'raw' && (!currentJobId || currentJobId === jobId)) {
+              renderRaw(full);
+              setButtonsEnabled(true);
+            }
+            return full;
+          } catch (_) {
+            return null;
+          }
+        }
+
         function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
         async function pollJob(jobId) {
           const deadline = Date.now() + (MAX_POLL_SECONDS * 1000);
           while (Date.now() < deadline) {
             const s = await refreshJob(jobId, true);
-            if (s && (s.status === 'completed' || s.status === 'error')) return s;
+            if (s && (s.status === 'completed' || s.status === 'error')) {
+              // Preload full payload for the Raw JSON tab once the job is terminal.
+              if (!lastFull || lastFullJobId !== jobId) {
+                await loadFull(jobId);
+              }
+              return s;
+            }
             await sleep(4000);
           }
           throw new Error('Timed out waiting for result');

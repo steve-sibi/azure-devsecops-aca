@@ -418,6 +418,13 @@ Default API key: `local-dev-key` (change via `.env`).
 > You can also add `reputation` to `SCAN_ENGINE` to score domains (configurable allow/block lists + heuristics). If you want to block downloads for known-bad domains, set `REPUTATION_BLOCK_ON_MALICIOUS=true`.
 > Demo marker: set `ENABLE_DEMO_MARKERS=true` to treat URLs containing the substring `test-malicious` as malicious (off by default).
 
+#### Docker “\<none\>” images (dangling)
+
+If you rebuild often, Docker will keep old, untagged images (shown as `\<none\>`) when a new build replaces the tag. They’re safe to delete.
+
+- Remove dangling images: `bash scripts/docker_cleanup.sh`
+- Also remove build cache (more aggressive): `PRUNE_BUILD_CACHE=true bash scripts/docker_cleanup.sh`
+
 ### Azure (Container Apps)
 - Trigger the **Deploy** workflow manually (Actions tab → Deploy → Run workflow).
   - For forks: set a unique `PREFIX` and `TFSTATE_SA` via workflow inputs (storage account names are global).
