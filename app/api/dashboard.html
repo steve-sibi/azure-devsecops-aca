@@ -17,6 +17,7 @@
         --primary: #2563eb;
         --primary-ink: #ffffff;
         --success: #16a34a;
+        --success-ink: #ffffff;
         --danger: #dc2626;
         --code-bg: #0b1020;
         --code-fg: #d6e0ff;
@@ -35,6 +36,7 @@
           --primary: #60a5fa;
           --primary-ink: #0b1020;
           --success: #4ade80;
+          --success-ink: #0b1020;
           --danger: #fb7185;
           --code-bg: #070b18;
           --code-fg: #d6e0ff;
@@ -93,6 +95,45 @@
         box-shadow: 0 0 0 4px var(--ring);
         background: rgba(148,163,184,0.04);
       }
+      .url-group {
+        display: flex;
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(148,163,184,0.06);
+        overflow: hidden;
+        transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+      }
+      .url-scheme {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.65rem 0.75rem;
+        font-weight: 700;
+        color: var(--success-ink);
+        background: var(--success);
+        border-right: 1px solid rgba(0,0,0,0.18);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        white-space: nowrap;
+      }
+      .url-input {
+        flex: 1 1 auto;
+        border: none;
+        background: transparent;
+        padding: 0.65rem 0.75rem;
+        width: auto;
+      }
+      .url-input:focus,
+      .url-input:focus-visible {
+        outline: none;
+        box-shadow: none;
+        background: transparent;
+      }
+      .url-group:focus-within {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 4px var(--ring);
+        background: rgba(148,163,184,0.04);
+      }
+      .url-group:focus-within .url-scheme { border-right-color: var(--primary-soft-border); }
       .help { margin-top: 0.35rem; font-size: 0.85rem; color: var(--muted); }
       .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
       button {
@@ -262,7 +303,10 @@
           </div>
           <div class="field">
             <label for="url">HTTPS URL to scan</label>
-            <input id="url" inputmode="url" value="https://example.com" placeholder="https://example.com" />
+            <div class="url-group">
+              <span class="url-scheme" aria-hidden="true">https://</span>
+              <input id="url" class="url-input" inputmode="url" autocomplete="off" placeholder="example.com" />
+            </div>
             <div class="help">Only public HTTPS destinations on port 443 are allowed.</div>
           </div>
           <div class="actions">
@@ -355,6 +399,21 @@
         let lastFullJobId = null;
 
         const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+        const HTTPS_PREFIX = 'https://';
+
+        function normalizeUrlInput(raw) {
+          const v = String(raw || '').trim();
+          if (!v) return '';
+          return v.replace(/^https:\/\//i, '');
+        }
+
+        function toHttpsUrl(raw) {
+          const v = String(raw || '').trim();
+          if (!v) return '';
+          if (/^https:\/\//i.test(v)) return v;
+          if (/^http:\/\//i.test(v)) throw new Error('Only HTTPS URLs are allowed');
+          return HTTPS_PREFIX + v.replace(/^\/+/, '');
+        }
 
         function readJson(key, fallback) {
           try {
@@ -724,7 +783,7 @@
             const useBtn = el('button', { type: 'button', text: 'Use URL' });
             useBtn.addEventListener('click', () => {
               if (!item.url) return;
-              urlEl.value = item.url;
+              urlEl.value = normalizeUrlInput(item.url);
               urlEl.focus();
               setStatus('info', 'Loaded URL from history');
             });
@@ -824,7 +883,13 @@
 
         async function startScan() {
           if (isPolling) return;
-          const target = urlEl.value.trim();
+          let target = '';
+          try {
+            target = toHttpsUrl(urlEl.value);
+          } catch (e) {
+            setStatus('bad', e ? e.message : 'Only HTTPS URLs are allowed');
+            return;
+          }
           if (!target) {
             setStatus('bad', 'Enter a URL');
             return;
@@ -893,6 +958,12 @@
           if (stored && !localStorage.getItem(LS.apiKey)) localStorage.setItem(LS.apiKey, stored);
 
           apiKeyEl.addEventListener('input', () => localStorage.setItem(LS.apiKey, apiKeyEl.value));
+          const stripSchemeIfPresent = () => {
+            const next = normalizeUrlInput(urlEl.value);
+            if (next !== urlEl.value) urlEl.value = next;
+          };
+          urlEl.addEventListener('blur', stripSchemeIfPresent);
+          urlEl.addEventListener('paste', () => setTimeout(stripSchemeIfPresent, 0));
           history = loadHistory();
           renderHistory();
           lastSummary = {};
