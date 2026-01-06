@@ -18,7 +18,9 @@
         --primary-ink: #ffffff;
         --success: #16a34a;
         --success-ink: #ffffff;
+        --success-soft: rgba(22,163,74,0.14);
         --danger: #dc2626;
+        --danger-soft: rgba(220,38,38,0.14);
         --code-bg: #0b1020;
         --code-fg: #d6e0ff;
         --ring: rgba(37, 99, 235, 0.22);
@@ -37,7 +39,9 @@
           --primary-ink: #0b1020;
           --success: #4ade80;
           --success-ink: #0b1020;
+          --success-soft: rgba(74,222,128,0.16);
           --danger: #fb7185;
+          --danger-soft: rgba(251,113,133,0.16);
           --code-bg: #070b18;
           --code-fg: #d6e0ff;
           --ring: rgba(96, 165, 250, 0.26);
@@ -220,6 +224,8 @@
       }
       @media (max-width: 900px) { .summary-grid { grid-template-columns: 1fr; } }
       .summary-block {
+        --dot: var(--primary);
+        --dot-soft: var(--primary-soft);
         border: 1px solid var(--border);
         border-radius: 14px;
         padding: 0.95rem;
@@ -228,6 +234,8 @@
         align-self: start;
         height: fit-content;
       }
+      .summary-block.tone-ok { --dot: var(--success); --dot-soft: var(--success-soft); }
+      .summary-block.tone-bad { --dot: var(--danger); --dot-soft: var(--danger-soft); }
       .summary-block h3 {
         margin: 0 0 0.75rem;
         font-size: 0.95rem;
@@ -242,12 +250,21 @@
         width: 10px;
         height: 10px;
         border-radius: 999px;
-        background: var(--primary);
-        box-shadow: 0 0 0 4px var(--primary-soft);
+        background: var(--dot);
+        box-shadow: 0 0 0 4px var(--dot-soft);
         opacity: 0.9;
         flex: 0 0 auto;
       }
-      dl.kv { display: grid; grid-template-columns: minmax(120px, 170px) 1fr; gap: 0.35rem 0.8rem; margin: 0; }
+      .summary-title { font-weight: 700; letter-spacing: -0.01em; }
+      .summary-meta { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
+      dl.kv { display: block; margin: 0; }
+      dl.kv .kv-row {
+        display: grid;
+        grid-template-columns: minmax(120px, 170px) 1fr;
+        gap: 0.35rem 0.8rem;
+        padding: 0.4rem 0;
+      }
+      dl.kv .kv-row + .kv-row { border-top: 1px solid rgba(148,163,184,0.14); }
       dl.kv dt {
         color: var(--muted);
         font-size: 0.72rem;
@@ -258,11 +275,14 @@
       dl.kv dd {
         margin: 0;
         overflow-wrap: anywhere;
-        font-weight: 600;
+        font-weight: 500;
         font-variant-numeric: tabular-nums;
         line-height: 1.35;
       }
       .value-inline { display: inline-flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
+      .value-row { display: flex; align-items: flex-start; gap: 0.5rem; justify-content: space-between; width: 100%; }
+      .value-row > :first-child { flex: 1 1 auto; min-width: 0; }
+      .value-row .icon-btn { flex: 0 0 auto; }
       .value-code {
         display: inline-block;
         padding: 0.18rem 0.45rem;
@@ -279,6 +299,18 @@
         border-bottom: 1px dashed rgba(148,163,184,0.45);
       }
       .value-link:hover { border-bottom-color: var(--primary); }
+      .icon-btn {
+        padding: 0.3rem 0.55rem;
+        border-radius: 10px;
+        font-size: 0.78rem;
+        line-height: 1;
+        border: 1px solid rgba(148,163,184,0.28);
+        background: rgba(148,163,184,0.08);
+      }
+      .icon-btn:hover:not(:disabled) {
+        background: rgba(148,163,184,0.14);
+        transform: none;
+      }
     </style>
   </head>
   <body>
@@ -525,16 +557,6 @@
           return obj[key];
         }
 
-        function codeValue(value) {
-          const text = value == null ? '' : String(value);
-          return el('code', { class: 'value-code', text: text });
-        }
-
-        function linkValue(url) {
-          const href = String(url || '');
-          return el('a', { class: 'value-link', href: href, target: '_blank', rel: 'noreferrer', text: href });
-        }
-
         function badgeValue(kind, text) {
           const label = String(text || '');
           return makeBadge(kind || 'info', label);
@@ -547,17 +569,50 @@
 
           const blocks = [];
 
-          function block(title, rows) {
+          function makeCopyButton(text, label) {
+            const hint = label || 'Copy';
+            const btn = el('button', { type: 'button', class: 'icon-btn', title: hint, 'aria-label': hint }, 'Copy');
+            btn.addEventListener('click', () => copyText(text));
+            return btn;
+          }
+
+          function copyableValue(valueNode, text, label) {
+            const v = String(text || '');
+            if (!v) return valueNode;
+            return el('span', { class: 'value-row' }, valueNode, makeCopyButton(v, label));
+          }
+
+          function codeValue(value, opts) {
+            const text = value == null ? '' : String(value);
+            const node = el('code', { class: 'value-code', text: text });
+            if (opts && opts.copy) return copyableValue(node, text, opts.copyLabel);
+            return node;
+          }
+
+          function linkValue(url, opts) {
+            const href = String(url || '');
+            const node = el('a', { class: 'value-link', href: href, target: '_blank', rel: 'noreferrer', text: href });
+            if (opts && opts.copy) return copyableValue(node, href, opts.copyLabel);
+            return node;
+          }
+
+          function block(title, rows, opts) {
             const dl = el('dl', { class: 'kv' });
             for (const [k, v] of rows) {
               if (v == null || v === '') continue;
-              dl.appendChild(el('dt', { text: k }));
+              const row = el('div', { class: 'kv-row' });
+              row.appendChild(el('dt', { text: k }));
               const dd = el('dd');
               if (v && typeof v === 'object' && v.nodeType === 1) dd.appendChild(v);
               else dd.textContent = String(v);
-              dl.appendChild(dd);
+              row.appendChild(dd);
+              dl.appendChild(row);
             }
-            blocks.push(el('div', { class: 'summary-block' }, el('h3', { text: title }), dl));
+            const header = el('h3', null, el('span', { class: 'summary-title', text: title }));
+            const metaNodes = (opts && Array.isArray(opts.meta)) ? opts.meta.filter(Boolean) : [];
+            if (metaNodes.length) header.appendChild(el('span', { class: 'summary-meta' }, ...metaNodes));
+            const tone = opts && opts.tone ? String(opts.tone) : '';
+            blocks.push(el('div', { class: 'summary-block' + (tone ? (' tone-' + tone) : '') }, header, dl));
           }
 
           const status = data.status || 'unknown';
@@ -568,36 +623,42 @@
           const size = (s.size_bytes != null ? formatBytes(s.size_bytes) : formatBytes(data.size_bytes));
           const dur = (s.duration_ms != null ? formatMs(s.duration_ms) : formatMs(data.duration_ms));
 
+          const jobTone = statusKind(status);
           block('Job', [
-            ['Status', badgeValue(statusKind(status), status)],
-            ['Verdict', verdict ? badgeValue(verdictKind(verdict), verdict) : ''],
-            ['Job ID', (data.job_id ? codeValue(data.job_id) : '')],
+            ['Job ID', (data.job_id ? codeValue(data.job_id, { copy: true, copyLabel: 'Copy job id' }) : '')],
             ['Submitted', formatWhen(data.submitted_at)],
             ['Scanned', formatWhen(data.scanned_at)],
             ['Duration', dur ? codeValue(dur) : ''],
             ['Size', size ? codeValue(size) : ''],
             ['Engines', engines ? codeValue(engines) : ''],
-          ]);
+          ], {
+            tone: jobTone,
+            meta: [
+              badgeValue(jobTone, status),
+              verdict ? badgeValue(verdictKind(verdict), verdict) : null,
+            ],
+          });
 
           block('Target', [
-            ['URL', url ? linkValue(url) : ''],
-            ['SHA-256', sha ? codeValue(sha) : ''],
+            ['URL', url ? linkValue(url, { copy: true, copyLabel: 'Copy url' }) : ''],
+            ['SHA-256', sha ? codeValue(sha, { copy: true, copyLabel: 'Copy sha-256' }) : ''],
             ['Download blocked', (s.download_blocked === true ? 'yes' : (s.download_blocked === false ? 'no' : ''))],
-          ]);
+          ], { tone: 'info' });
 
           if (data.error) {
-            block('Error', [['Message', data.error]]);
+            block('Error', [['Message', data.error]], { tone: 'bad' });
           }
 
           const rep = pick(s, 'reputation');
           if (rep) {
+            const repTone = verdictKind(rep.verdict);
             block('Reputation', [
               ['Verdict', rep.verdict ? badgeValue(verdictKind(rep.verdict), rep.verdict) : ''],
               ['Score', rep.score != null ? codeValue(rep.score) : ''],
               ['Reasons', Array.isArray(rep.reasons) ? rep.reasons.join(', ') : ''],
               ['Allowlist match', rep.matched_allowlist],
               ['Blocklist match', rep.matched_blocklist],
-            ]);
+            ], { tone: repTone });
           }
 
           const clam = pick(s, 'clamav');
@@ -607,28 +668,29 @@
             block('ClamAV', [
               ['Result', clamRes ? badgeValue(clamKind, clamRes) : ''],
               ['Signature', clam.signature ? codeValue(clam.signature) : ''],
-            ]);
+            ], { tone: clamKind });
           }
 
           const yara = pick(s, 'yara');
           if (yara) {
             const malicious = Array.isArray(yara.malicious_matches) ? yara.malicious_matches : [];
+            const yaraTone = malicious.length ? 'bad' : 'info';
             block('YARA', [
               ['Malicious matches', malicious.length ? codeValue(malicious.join(', ')) : 'none'],
               ['Match count', yara.match_count != null ? codeValue(yara.match_count) : ''],
               ['Truncated', (yara.truncated === true ? 'yes' : (yara.truncated === false ? 'no' : ''))],
-            ]);
+            ], { tone: yaraTone });
           }
 
           const dl = pick(s, 'download');
           if (dl) {
             block('Download', [
-              ['Requested URL', dl.requested_url ? linkValue(dl.requested_url) : ''],
-              ['Final URL', dl.final_url ? linkValue(dl.final_url) : ''],
+              ['Requested URL', dl.requested_url ? linkValue(dl.requested_url, { copy: true, copyLabel: 'Copy requested url' }) : ''],
+              ['Final URL', dl.final_url ? linkValue(dl.final_url, { copy: true, copyLabel: 'Copy final url' }) : ''],
               ['Content-Type', dl.content_type ? codeValue(dl.content_type) : ''],
               ['Redirects', dl.redirect_count != null ? codeValue(dl.redirect_count) : ''],
               ['Blocked', (dl.blocked === true ? 'yes' : (dl.blocked === false ? 'no' : ''))],
-            ]);
+            ], { tone: (dl.blocked === true ? 'ok' : 'info') });
           }
 
           if (blocks.length === 0) {
