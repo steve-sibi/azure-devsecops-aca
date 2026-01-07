@@ -168,6 +168,7 @@
       .status { margin-top: 0.85rem; min-height: 1.25rem; display: flex; align-items: center; gap: 0.5rem; color: var(--muted); }
       .badge { font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); font-weight: 600; }
       .badge.ok { border-color: rgba(22,163,74,0.5); background: rgba(22,163,74,0.12); }
+      .badge.warn { border-color: rgba(234,179,8,0.6); background: rgba(234,179,8,0.14); }
       .badge.bad { border-color: rgba(220,38,38,0.5); background: rgba(220,38,38,0.12); }
       .badge.info { border-color: var(--primary-soft-border); background: var(--primary-soft); }
       .muted { color: var(--muted); }
@@ -216,12 +217,11 @@
       .panel.hidden { display: none; }
       .summary-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 1rem;
         align-items: start;
-        align-content: start;
-        grid-auto-rows: max-content;
       }
+      .summary-col { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
       @media (max-width: 900px) { .summary-grid { grid-template-columns: 1fr; } }
       .summary-block {
         --dot: var(--primary);
@@ -310,6 +310,34 @@
       .icon-btn:hover:not(:disabled) {
         background: rgba(148,163,184,0.14);
         transform: none;
+      }
+      details.disclosure {
+        border: 1px solid rgba(148,163,184,0.22);
+        border-radius: 12px;
+        padding: 0.35rem 0.55rem;
+        background: rgba(148,163,184,0.06);
+      }
+      details.disclosure summary {
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+      details.disclosure summary::-webkit-details-marker { display: none; }
+      details.disclosure summary::before {
+        content: "▸";
+        display: inline-block;
+        margin-right: 0.35rem;
+        color: var(--muted);
+      }
+      details.disclosure[open] summary { color: var(--text); }
+      details.disclosure[open] summary::before { content: "▾"; }
+      details.disclosure pre {
+        margin-top: 0.6rem;
+        padding: 0.75rem;
+        border-radius: 12px;
+        font-size: 0.82rem;
       }
     </style>
   </head>
@@ -524,7 +552,7 @@
         function setStatus(kind, text) {
           statusEl.textContent = '';
           if (!text) return;
-          const label = kind === 'ok' ? 'OK' : (kind === 'bad' ? 'ERROR' : 'INFO');
+          const label = kind === 'ok' ? 'OK' : (kind === 'bad' ? 'ERROR' : (kind === 'warn' ? 'WARN' : 'INFO'));
           statusEl.appendChild(makeBadge(kind || 'info', label));
           statusEl.appendChild(document.createTextNode(' ' + text));
         }
@@ -645,6 +673,18 @@
             ['Download blocked', (s.download_blocked === true ? 'yes' : (s.download_blocked === false ? 'no' : ''))],
           ], { tone: 'info' });
 
+          const decision = pick(s, 'decision');
+          if (decision) {
+            const decVerdict = String(decision.final_verdict || '');
+            const decTone = verdictKind(decVerdict);
+            block('Decision', [
+              ['Final verdict', decVerdict ? badgeValue(verdictKind(decVerdict), decVerdict) : ''],
+              ['Confidence', (decision.confidence != null ? codeValue(decision.confidence) : '')],
+              ['Action', decision.action ? codeValue(decision.action) : ''],
+              ['Reasons', Array.isArray(decision.reasons) ? decision.reasons.join(', ') : ''],
+            ], { tone: decTone });
+          }
+
           if (data.error) {
             block('Error', [['Message', data.error]], { tone: 'bad' });
           }
@@ -655,6 +695,9 @@
             block('Reputation', [
               ['Verdict', rep.verdict ? badgeValue(verdictKind(rep.verdict), rep.verdict) : ''],
               ['Score', rep.score != null ? codeValue(rep.score) : ''],
+              ['Suspicious threshold', rep.suspicious_threshold != null ? codeValue(rep.suspicious_threshold) : ''],
+              ['Malicious threshold', rep.malicious_threshold != null ? codeValue(rep.malicious_threshold) : ''],
+              ['Matched rules', Array.isArray(rep.matched_rules) ? rep.matched_rules.join(', ') : ''],
               ['Reasons', Array.isArray(rep.reasons) ? rep.reasons.join(', ') : ''],
               ['Allowlist match', rep.matched_allowlist],
               ['Blocklist match', rep.matched_blocklist],
@@ -674,10 +717,51 @@
           const yara = pick(s, 'yara');
           if (yara) {
             const malicious = Array.isArray(yara.malicious_matches) ? yara.malicious_matches : [];
+            const matches = Array.isArray(yara.matches) ? yara.matches : [];
+            const details = Array.isArray(yara.match_details) ? yara.match_details : [];
             const yaraTone = malicious.length ? 'bad' : 'info';
+            let detailsNode = '';
+            if (details.length) {
+              const lines = [];
+              for (const m of details) {
+                if (!m || typeof m !== 'object') continue;
+                const rule = String(m.rule || '');
+                if (!rule) continue;
+                const severity = m.severity ? String(m.severity) : '';
+                const counts = (m.counts_toward_verdict === true);
+                lines.push(rule + (severity ? (' [' + severity + ']') : '') + (counts ? ' (counts toward verdict)' : ''));
+                const meta = (m.meta && typeof m.meta === 'object') ? m.meta : null;
+                if (meta) {
+                  if (meta.description) lines.push('  desc: ' + String(meta.description));
+                  if (meta.reference) lines.push('  ref: ' + String(meta.reference));
+                  if (meta.author) lines.push('  author: ' + String(meta.author));
+                }
+                const strs = Array.isArray(m.strings) ? m.strings : [];
+                for (const s of strs) {
+                  if (!s || typeof s !== 'object') continue;
+                  const offNum = Number(s.offset);
+                  const off = Number.isFinite(offNum) ? ('0x' + offNum.toString(16)) : '';
+                  const id = s.identifier ? String(s.identifier) : '';
+                  const val = s.value ? String(s.value) : '';
+                  const prefix = '  ' + (off ? (off + ':') : '') + (id ? (id + ': ') : '');
+                  lines.push(prefix + val);
+                }
+                lines.push('');
+              }
+              const text = lines.join('\n').trim();
+              detailsNode = el('details', { class: 'disclosure' },
+                el('summary', { text: 'Show match details (' + details.length + ')' }),
+                el('pre', { text: text || 'No details.' })
+              );
+            }
             block('YARA', [
               ['Malicious matches', malicious.length ? codeValue(malicious.join(', ')) : 'none'],
+              ['Severity threshold', yara.verdict_min_severity ? codeValue(yara.verdict_min_severity) : ''],
+              ['Verdict rule', yara.verdict_min_severity ? ('malicious if any matched rule is at/above ' + String(yara.verdict_min_severity) + ' (derived from rule name suffix)') : ''],
+              ['Rules file', yara.rules_path ? codeValue(yara.rules_path, { copy: true, copyLabel: 'Copy rules file' }) : ''],
+              ['Matched rules', matches.length ? codeValue(matches.join(', ')) : (yara.match_count ? 'none' : '')],
               ['Match count', yara.match_count != null ? codeValue(yara.match_count) : ''],
+              ['Match details', detailsNode],
               ['Truncated', (yara.truncated === true ? 'yes' : (yara.truncated === false ? 'no' : ''))],
             ], { tone: yaraTone });
           }
@@ -697,7 +781,12 @@
             summaryOutEl.appendChild(el('div', { class: 'muted', text: 'No data yet.' }));
             return;
           }
-          for (const b of blocks) summaryOutEl.appendChild(b);
+          const isNarrow = window.matchMedia('(max-width: 900px)').matches;
+          const colCount = isNarrow ? 1 : 2;
+          const cols = [];
+          for (let i = 0; i < colCount; i++) cols.push(el('div', { class: 'summary-col' }));
+          for (let i = 0; i < blocks.length; i++) cols[i % colCount].appendChild(blocks[i]);
+          for (const c of cols) summaryOutEl.appendChild(c);
         }
 
         function renderRaw(resp) {
@@ -745,6 +834,14 @@
             renderSummary(lastSummary || lastFull || {});
           }
         }
+
+        let _resizeTimer = null;
+        window.addEventListener('resize', () => {
+          if (_resizeTimer) clearTimeout(_resizeTimer);
+          _resizeTimer = setTimeout(() => {
+            renderSummary(lastSummary || lastFull || {});
+          }, 120);
+        });
 
         async function copyText(text) {
           try {
@@ -796,8 +893,9 @@
         function verdictKind(verdict) {
           if (!verdict) return 'info';
           const v = String(verdict).toLowerCase();
-          if (v === 'clean') return 'ok';
-          if (v === 'malicious') return 'bad';
+          if (v === 'benign' || v === 'clean') return 'ok';
+          if (v === 'suspicious') return 'warn';
+          if (v === 'malicious' || v === 'error') return 'bad';
           return 'info';
         }
 

@@ -3,7 +3,7 @@ import logging
 import os
 import re
 import shutil
-import signal
+import signal as os_signal
 import subprocess
 import tempfile
 import time
@@ -12,7 +12,7 @@ import struct
 import socket
 from datetime import datetime, timezone
 from typing import List, Optional
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
 import requests
 from azure.servicebus import ServiceBusClient
@@ -21,7 +21,10 @@ from azure.data.tables import TableClient, TableServiceClient
 from azure.core.exceptions import HttpResponseError
 
 from common.result_store import upsert_result_sync
-from common.url_validation import validate_public_https_url
+from common.signals import Signal, aggregate_signals, signal
+from common.url_canonicalization import CanonicalUrl, canonicalize_url
+from common.url_heuristics import HeuristicsResult, evaluate_url_heuristics
+from common.url_validation import UrlValidationError, validate_public_https_url
 
 # ---- Config via env ----
 QUEUE_BACKEND = os.getenv("QUEUE_BACKEND", "servicebus").strip().lower()
@@ -76,6 +79,7 @@ YARA_MAX_STRING_MATCHES = int(os.getenv("YARA_MAX_STRING_MATCHES", "25"))
 YARA_MAX_STRING_LENGTH = int(os.getenv("YARA_MAX_STRING_LENGTH", "200"))
 YARA_VERDICT_MIN_SEVERITY = os.getenv("YARA_VERDICT_MIN_SEVERITY", "high").strip().lower()
 YARA_BINARY = os.getenv("YARA_BINARY", "yara")
+_YARA_RULE_META_CACHE: dict[str, tuple[float, dict[str, dict[str, str]]]] = {}
 
 # ---- Scan engine (URL reputation) ----
 REPUTATION_BLOCKLIST_HOSTS = os.getenv("REPUTATION_BLOCKLIST_HOSTS", "")
@@ -87,6 +91,9 @@ REPUTATION_SUSPICIOUS_KEYWORDS = os.getenv(
     "REPUTATION_SUSPICIOUS_KEYWORDS", "login,verify,update,secure,account,password,bank"
 )
 REPUTATION_MIN_SCORE = int(os.getenv("REPUTATION_MIN_SCORE", "60"))
+REPUTATION_SUSPICIOUS_SCORE = int(
+    os.getenv("REPUTATION_SUSPICIOUS_SCORE", str(max(1, int(REPUTATION_MIN_SCORE / 2))))
+)
 REPUTATION_BLOCK_ON_MALICIOUS = os.getenv("REPUTATION_BLOCK_ON_MALICIOUS", "false").lower() in (
     "1",
     "true",
@@ -120,8 +127,8 @@ def _signal_handler(*_):
     shutdown = True
 
 
-signal.signal(signal.SIGTERM, _signal_handler)
-signal.signal(signal.SIGINT, _signal_handler)
+os_signal.signal(os_signal.SIGTERM, _signal_handler)
+os_signal.signal(os_signal.SIGINT, _signal_handler)
 
 
 def _decode_body(msg) -> dict:
@@ -143,45 +150,46 @@ def process(task: dict):
     start = time.time()
     engines = _get_scan_engines()
 
-    initial_results: Optional[dict[str, dict]] = None
-    if "reputation" in engines and REPUTATION_BLOCK_ON_MALICIOUS:
-        url_verdict, url_scan_results = _scan_url(url, engines)
-        initial_results = url_scan_results
+    try:
+        content, size_bytes, download, url_evaluations, url_signals, reputation_summary = _download(
+            url, engines=engines
+        )
+    except DownloadBlockedError as e:
+        duration_ms = int((time.time() - start) * 1000)
+        verdict = str(e.decision.get("final_verdict") or "malicious").lower()
+        details = dict(e.details or {})
+        details.setdefault("engine", engines[0] if len(engines) == 1 else "multi")
+        details.setdefault("engines", engines)
+        details.setdefault("download_blocked", True)
+        details.setdefault("url", url)
+        _save_result(
+            job_id=job_id,
+            status="completed",
+            verdict=verdict,
+            details=details,
+            size_bytes=0,
+            correlation_id=correlation_id,
+            duration_ms=duration_ms,
+            submitted_at=task.get("submitted_at"),
+            error=None,
+            url=url,
+        )
+        logging.info(
+            "[worker] job_id=%s verdict=%s size=0B duration_ms=%s (blocked)",
+            job_id,
+            verdict,
+            duration_ms,
+        )
+        return verdict, details
 
-        if url_verdict == "malicious":
-            details = {
-                "url": url,
-                "sha256": "",
-                "length": 0,
-                "engine": engines[0] if len(engines) == 1 else "multi",
-                "engines": engines,
-                "results": url_scan_results,
-                "download_blocked": True,
-                "download": {"requested_url": url, "blocked": True},
-            }
-            duration_ms = int((time.time() - start) * 1000)
-            _save_result(
-                job_id=job_id,
-                status="completed",
-                verdict="malicious",
-                details=details,
-                size_bytes=0,
-                correlation_id=correlation_id,
-                duration_ms=duration_ms,
-                submitted_at=task.get("submitted_at"),
-                error=None,
-                url=url,
-            )
-            logging.info(
-                "[worker] job_id=%s verdict=malicious size=0B duration_ms=%s (blocked by reputation)",
-                job_id,
-                duration_ms,
-            )
-            return "malicious", details
-
-    content, size_bytes, download = _download(url)
     verdict, details = _scan_bytes(
-        content, url, engines=engines, initial_results=initial_results, download=download
+        content,
+        url,
+        engines=engines,
+        download=download,
+        url_evaluations=url_evaluations,
+        url_signals=url_signals,
+        reputation_summary=reputation_summary,
     )
     duration_ms = int((time.time() - start) * 1000)
     _save_result(
@@ -206,15 +214,45 @@ def process(task: dict):
     return verdict, details
 
 
-def _download(url: str) -> tuple[bytes, int, dict]:
+def _download(url: str, *, engines: List[str]) -> tuple[
+    bytes, int, dict, list[dict], list[Signal], Optional[dict]
+]:
     session = requests.Session()
     current = url
     redirects: list[dict] = []
+    url_evaluations: list[dict] = []
+    url_signals: list[Signal] = []
 
-    for _ in range(MAX_REDIRECTS + 1):
-        _validate_url_for_download(current)
+    for hop in range(MAX_REDIRECTS + 1):
+        canonical, hop_signals, evaluation = _evaluate_url_hop(
+            current, engines=engines, hop=hop
+        )
+        url_evaluations.append(evaluation)
+        url_signals.extend(hop_signals)
+
+        if "reputation" in engines and REPUTATION_BLOCK_ON_MALICIOUS:
+            hop_decision = evaluation.get("decision") if isinstance(evaluation, dict) else None
+            if isinstance(hop_decision, dict) and hop_decision.get("final_verdict") == "malicious":
+                details = {
+                    "url": url,
+                    "canonical_url": canonicalize_url(url).canonical,
+                    "decision": hop_decision,
+                    "signals": [s.as_dict() for s in url_signals],
+                    "results": {"reputation": evaluation.get("reputation", {})},
+                    "download_blocked": True,
+                    "download": {
+                        "requested_url": url,
+                        "blocked": True,
+                        "blocked_at_hop": hop,
+                        "blocked_url": canonical.canonical,
+                    },
+                    "url_evaluations": url_evaluations,
+                }
+                raise DownloadBlockedError(decision=hop_decision, details=details)
+
+        request_url = canonical.canonical
         with session.get(
-            current,
+            request_url,
             timeout=REQUEST_TIMEOUT,
             stream=True,
             allow_redirects=False,
@@ -223,9 +261,13 @@ def _download(url: str) -> tuple[bytes, int, dict]:
                 location = resp.headers.get("Location")
                 if not location:
                     raise ValueError("redirect without Location header")
-                next_url = urljoin(current, location)
+                next_url = urljoin(request_url, location)
                 redirects.append(
-                    {"from": current, "to": next_url, "status_code": resp.status_code}
+                    {
+                        "from": request_url,
+                        "to": next_url,
+                        "status_code": resp.status_code,
+                    }
                 )
                 current = next_url
                 continue
@@ -242,20 +284,69 @@ def _download(url: str) -> tuple[bytes, int, dict]:
                     raise ValueError("content too large")
             download_info = {
                 "requested_url": url,
-                "final_url": current,
+                "final_url": request_url,
                 "redirects": redirects,
+                "url_evaluations": url_evaluations,
             }
             if content_type:
                 download_info["content_type"] = content_type
             if content_length:
                 download_info["content_length"] = content_length
-            return bytes(buf), len(buf), download_info
+            reputation_summary: Optional[dict] = None
+            if "reputation" in engines:
+                rep_evals = [
+                    e.get("reputation")
+                    for e in url_evaluations
+                    if isinstance(e, dict) and isinstance(e.get("reputation"), dict)
+                ]
+                verdict_rank = {"benign": 0, "suspicious": 1, "error": 2, "malicious": 3}
+                worst_verdict = "benign"
+                max_score = 0
+                matched_rules: set[str] = set()
+                for rep in rep_evals:
+                    if not isinstance(rep, dict):
+                        continue
+                    v = str(rep.get("verdict") or "benign").lower()
+                    if verdict_rank.get(v, 0) > verdict_rank.get(worst_verdict, 0):
+                        worst_verdict = v
+                    try:
+                        max_score = max(max_score, int(rep.get("score") or 0))
+                    except Exception:
+                        pass
+                    mr = rep.get("matched_rules")
+                    if isinstance(mr, list):
+                        matched_rules.update(str(x) for x in mr if x)
+                reputation_summary = {
+                    "verdict": worst_verdict,
+                    "score": max_score,
+                    "suspicious_threshold": REPUTATION_SUSPICIOUS_SCORE,
+                    "malicious_threshold": REPUTATION_MIN_SCORE,
+                    "matched_rules": sorted(matched_rules)[:50],
+                }
+
+            return (
+                bytes(buf),
+                len(buf),
+                download_info,
+                url_evaluations,
+                url_signals,
+                reputation_summary,
+            )
 
     raise ValueError("too many redirects")
 
 
 def _validate_url_for_download(url: str):
-    validate_public_https_url(url, block_private_networks=BLOCK_PRIVATE_NETWORKS)
+    # Canonicalize first to prevent representation bypasses, then validate.
+    canonical = canonicalize_url(url)
+    if canonical.has_userinfo:
+        raise UrlValidationError(
+            code="userinfo_not_allowed", message="userinfo in url is not allowed"
+        )
+    validate_public_https_url(
+        canonical.canonical, block_private_networks=BLOCK_PRIVATE_NETWORKS
+    )
+    return canonical
 
 
 _SUPPORTED_SCAN_ENGINES = {"clamav", "yara", "reputation"}
@@ -281,129 +372,165 @@ def _host_matches_pattern(host: str, pattern: str) -> bool:
     return host == pattern
 
 
-def _reputation_scan(url: str) -> tuple[str, dict]:
-    parsed = urlsplit(url)
-    host = (parsed.hostname or "").strip().lower().rstrip(".")
-    if not host:
-        return "malicious", {
-            "reputation": {"verdict": "malicious", "result": "ERROR", "reason": "missing-host"}
-        }
+class DownloadBlockedError(RuntimeError):
+    def __init__(self, *, decision: dict, details: dict):
+        super().__init__(decision.get("final_verdict") or "download_blocked")
+        self.decision = decision
+        self.details = details
 
-    host_idna = host
-    try:
-        host_idna = host.encode("idna").decode("ascii")
-    except Exception:
-        host_idna = host
+
+def _with_url_context(sig: Signal, *, canonical_url: str, hop: int) -> Signal:
+    ev = dict(sig.evidence or {})
+    ev.setdefault("url", canonical_url)
+    ev.setdefault("hop", hop)
+    return Signal(
+        source=sig.source,
+        verdict=sig.verdict,
+        severity=sig.severity,
+        weight=sig.weight,
+        evidence=ev,
+        ttl=sig.ttl,
+    )
+
+
+def _reputation_signals(
+    canonical: CanonicalUrl, *, requested_url: str, hop: int
+) -> tuple[list[Signal], dict]:
+    host_unicode = (canonical.host_unicode or "").strip().rstrip(".")
+    host_idna = (canonical.host_punycode or "").strip().lower().rstrip(".")
+    if not host_idna:
+        err = signal(
+            source="reputation.error",
+            verdict="error",
+            severity="high",
+            weight=50,
+            evidence={"reason": "missing host"},
+        )
+        return [_with_url_context(err, canonical_url=canonical.canonical, hop=hop)], {
+            "verdict": "error",
+            "reason": "missing-host",
+        }
 
     allowlist = _parse_csv(REPUTATION_ALLOWLIST_HOSTS)
     blocklist = _parse_csv(REPUTATION_BLOCKLIST_HOSTS)
 
     matched_allow = next((p for p in allowlist if _host_matches_pattern(host_idna, p)), "")
     if matched_allow:
-        return "clean", {
-            "reputation": {
-                "verdict": "clean",
-                "host": host,
-                "host_idna": host_idna,
-                "score": 0,
-                "threshold": REPUTATION_MIN_SCORE,
+        s = signal(
+            source="reputation.allowlist",
+            verdict="benign",
+            severity="info",
+            weight=25,
+            evidence={
+                "reason": f"allowlisted host ({matched_allow})",
                 "matched_allowlist": matched_allow,
-                "reasons": ["allowlisted"],
-            }
+                "host": host_unicode,
+                "host_idna": host_idna,
+            },
+        )
+        return [_with_url_context(s, canonical_url=canonical.canonical, hop=hop)], {
+            "verdict": "benign",
+            "host": host_unicode,
+            "host_idna": host_idna,
+            "score": 0,
+            "suspicious_threshold": REPUTATION_SUSPICIOUS_SCORE,
+            "malicious_threshold": REPUTATION_MIN_SCORE,
+            "matched_allowlist": matched_allow,
+            "matched_rules": [],
         }
 
     matched_block = next((p for p in blocklist if _host_matches_pattern(host_idna, p)), "")
     if matched_block:
-        return "malicious", {
-            "reputation": {
-                "verdict": "malicious",
-                "host": host,
-                "host_idna": host_idna,
-                "score": 100,
-                "threshold": REPUTATION_MIN_SCORE,
+        s = signal(
+            source="reputation.blocklist",
+            verdict="malicious",
+            severity="critical",
+            weight=100,
+            evidence={
+                "reason": f"blocklisted host ({matched_block})",
                 "matched_blocklist": matched_block,
-                "reasons": ["blocklisted"],
-            }
+                "host": host_unicode,
+                "host_idna": host_idna,
+            },
+        )
+        return [_with_url_context(s, canonical_url=canonical.canonical, hop=hop)], {
+            "verdict": "malicious",
+            "host": host_unicode,
+            "host_idna": host_idna,
+            "score": 100,
+            "suspicious_threshold": REPUTATION_SUSPICIOUS_SCORE,
+            "malicious_threshold": REPUTATION_MIN_SCORE,
+            "matched_blocklist": matched_block,
+            "matched_rules": [],
         }
 
     # Demo-only marker for consistent presentations (off by default).
-    if ENABLE_DEMO_MARKERS and "test-malicious" in url.lower():
-        return "malicious", {
-            "reputation": {
-                "verdict": "malicious",
-                "host": host,
-                "host_idna": host_idna,
-                "score": 100,
-                "threshold": REPUTATION_MIN_SCORE,
-                "matched_test_marker": "test-malicious",
-                "reasons": ["test-marker"],
-            }
+    if ENABLE_DEMO_MARKERS and "test-malicious" in (requested_url or "").lower():
+        s = signal(
+            source="reputation.demo_marker",
+            verdict="malicious",
+            severity="critical",
+            weight=100,
+            evidence={"reason": "demo marker matched (test-malicious)"},
+        )
+        return [_with_url_context(s, canonical_url=canonical.canonical, hop=hop)], {
+            "verdict": "malicious",
+            "host": host_unicode,
+            "host_idna": host_idna,
+            "score": 100,
+            "suspicious_threshold": REPUTATION_SUSPICIOUS_SCORE,
+            "malicious_threshold": REPUTATION_MIN_SCORE,
+            "matched_test_marker": "test-malicious",
+            "matched_rules": [],
         }
+
+    heuristics: HeuristicsResult = evaluate_url_heuristics(
+        canonical,
+        suspicious_threshold=REPUTATION_SUSPICIOUS_SCORE,
+        malicious_threshold=REPUTATION_MIN_SCORE,
+        env=os.environ,
+    )
+    sigs = [_with_url_context(s, canonical_url=canonical.canonical, hop=hop) for s in heuristics.signals]
+    verdict = sigs[-1].verdict if sigs else "benign"
 
     tld = host_idna.rsplit(".", 1)[-1] if "." in host_idna else host_idna
-    suspicious_tlds = {t.strip().lower() for t in _parse_csv(REPUTATION_SUSPICIOUS_TLDS)}
-    suspicious_keywords = {k.strip().lower() for k in _parse_csv(REPUTATION_SUSPICIOUS_KEYWORDS)}
-
-    score = 0
-    reasons: List[str] = []
-
-    if "xn--" in host_idna:
-        score += 30
-        reasons.append("punycode")
-
-    labels = [p for p in host_idna.split(".") if p]
-    if len(labels) >= 5:
-        score += 15
-        reasons.append("many-subdomains")
-
-    if len(host_idna) >= 45:
-        score += 10
-        reasons.append("long-hostname")
-
-    digit_count = sum(1 for ch in host_idna if ch.isdigit())
-    if digit_count >= 5:
-        score += 10
-        reasons.append("many-digits")
-
-    if host_idna.count("-") >= 3:
-        score += 10
-        reasons.append("many-hyphens")
-
-    if tld in suspicious_tlds:
-        score += 15
-        reasons.append(f"suspicious-tld:{tld}")
-
-    keyword_hits = [k for k in suspicious_keywords if k and k in host_idna]
-    if keyword_hits:
-        score += min(20, 5 * len(keyword_hits))
-        reasons.append("keyword:" + ",".join(sorted(keyword_hits)[:5]))
-
-    verdict = "malicious" if score >= REPUTATION_MIN_SCORE else "clean"
-    return verdict, {
-        "reputation": {
-            "verdict": verdict,
-            "host": host,
-            "host_idna": host_idna,
-            "tld": tld,
-            "score": score,
-            "threshold": REPUTATION_MIN_SCORE,
-            "reasons": reasons,
-        }
+    return sigs, {
+        "verdict": verdict,
+        "host": host_unicode,
+        "host_idna": host_idna,
+        "tld": tld,
+        "score": heuristics.score,
+        "suspicious_threshold": heuristics.suspicious_threshold,
+        "malicious_threshold": heuristics.malicious_threshold,
+        "matched_rules": [m.get("name") for m in heuristics.matched_rules if isinstance(m, dict)],
     }
 
 
-def _scan_url(url: str, engines: List[str]) -> tuple[str, dict]:
-    """Run URL-only engines (no download required)."""
-    results: dict[str, dict] = {}
-    final_verdict = "clean"
-    for engine in engines:
-        if engine != "reputation":
-            continue
-        verdict, reputation_details = _reputation_scan(url)
-        results["reputation"] = reputation_details.get("reputation", reputation_details)
-        if verdict == "malicious":
-            final_verdict = "malicious"
-    return final_verdict, results
+def _evaluate_url_hop(
+    requested_url: str, *, engines: List[str], hop: int
+) -> tuple[CanonicalUrl, list[Signal], dict]:
+    canonical = _validate_url_for_download(requested_url)
+
+    hop_signals: list[Signal] = []
+    reputation: Optional[dict] = None
+    if "reputation" in engines:
+        rep_signals, reputation = _reputation_signals(
+            canonical, requested_url=requested_url, hop=hop
+        )
+        hop_signals.extend(rep_signals)
+
+    decision = aggregate_signals(hop_signals)
+    evaluation = {
+        "hop": hop,
+        "requested_url": requested_url,
+        "canonical": canonical.as_dict(),
+        "decision": decision.as_dict(),
+    }
+    if reputation is not None:
+        evaluation["reputation"] = reputation
+    if hop_signals:
+        evaluation["signals"] = [s.as_dict() for s in hop_signals]
+    return canonical, hop_signals, evaluation
 
 
 def _parse_scan_engines(spec: str) -> List[str]:
@@ -429,6 +556,87 @@ def _parse_scan_engines(spec: str) -> List[str]:
 def _get_scan_engines() -> List[str]:
     engines = _parse_scan_engines(SCAN_ENGINE)
     return engines if engines else ["reputation"]
+
+
+def _parse_yara_rule_metadata(rules_text: str) -> dict[str, dict[str, str]]:
+    rule_re = re.compile(r"^\s*(?:private\s+)?rule\s+([A-Za-z_][A-Za-z0-9_]*)\b")
+    section_re = re.compile(r"^\s*(meta|strings|condition)\s*:\s*$", re.IGNORECASE)
+    kv_re = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$")
+
+    out: dict[str, dict[str, str]] = {}
+    current_rule: Optional[str] = None
+    in_meta = False
+
+    for raw_line in (rules_text or "").splitlines():
+        line = raw_line.rstrip()
+
+        m_rule = rule_re.match(line)
+        if m_rule:
+            current_rule = m_rule.group(1)
+            in_meta = False
+            out.setdefault(current_rule, {})
+            continue
+
+        if current_rule is None:
+            continue
+
+        if line.strip().startswith("}"):
+            current_rule = None
+            in_meta = False
+            continue
+
+        m_section = section_re.match(line)
+        if m_section:
+            section = m_section.group(1).lower()
+            in_meta = section == "meta"
+            continue
+
+        if not in_meta:
+            continue
+
+        m_kv = kv_re.match(line)
+        if not m_kv:
+            continue
+
+        key = m_kv.group(1).strip()
+        value = m_kv.group(2).strip()
+        if len(value) >= 2 and (
+            (value.startswith('"') and value.endswith('"'))
+            or (value.startswith("'") and value.endswith("'"))
+        ):
+            value = value[1:-1]
+            value = value.replace('\\"', '"').replace("\\'", "'")
+
+        if current_rule is not None and key and value:
+            out.setdefault(current_rule, {})[key] = value
+
+    # Drop rules with no metadata to keep output small.
+    return {k: v for k, v in out.items() if v}
+
+
+def _load_yara_rule_metadata(rules_path: str) -> dict[str, dict[str, str]]:
+    path = (rules_path or "").strip()
+    if not path:
+        return {}
+
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        return {}
+
+    cached = _YARA_RULE_META_CACHE.get(path)
+    if cached and cached[0] == mtime:
+        return cached[1]
+
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+    except OSError:
+        return {}
+
+    meta = _parse_yara_rule_metadata(text)
+    _YARA_RULE_META_CACHE[path] = (mtime, meta)
+    return meta
 
 
 def _yara_scan(content: bytes) -> tuple[str, dict]:
@@ -504,6 +712,17 @@ def _yara_scan(content: bytes) -> tuple[str, dict]:
                     truncated = True
                     break
 
+        if match_details:
+            rule_meta = _load_yara_rule_metadata(rules_path)
+            if rule_meta:
+                for m in match_details:
+                    rule = m.get("rule")
+                    if not isinstance(rule, str) or not rule:
+                        continue
+                    meta = rule_meta.get(rule)
+                    if meta:
+                        m["meta"] = meta
+
         verdict_min_severity = (YARA_VERDICT_MIN_SEVERITY or "high").strip().lower()
         severity_rank = {"info": 0, "low": 1, "medium": 2, "high": 3}
         min_rank = severity_rank.get(verdict_min_severity, 3)
@@ -547,52 +766,135 @@ def _scan_bytes(
     url: str,
     *,
     engines: Optional[List[str]] = None,
-    initial_results: Optional[dict[str, dict]] = None,
     download: Optional[dict] = None,
+    url_evaluations: Optional[list[dict]] = None,
+    url_signals: Optional[list[Signal]] = None,
+    reputation_summary: Optional[dict] = None,
 ) -> tuple[str, dict]:
     digest = hashlib.sha256(content).hexdigest()
     engines = engines or _get_scan_engines()
-    results: dict[str, dict] = dict(initial_results or {})
+    results: dict[str, dict] = {}
+    signals: list[Signal] = list(url_signals or [])
 
-    final_verdict = "clean"
     for engine in engines:
         if engine == "reputation":
-            if "reputation" in results:
-                verdict = str(results["reputation"].get("verdict") or "clean").lower()
-                if verdict not in ("clean", "malicious"):
-                    verdict = "clean"
-            else:
-                verdict, reputation_details = _reputation_scan(url)
-                results["reputation"] = reputation_details.get(
-                    "reputation", reputation_details
-                )
+            if isinstance(reputation_summary, dict) and reputation_summary:
+                results["reputation"] = reputation_summary
         elif engine == "clamav":
             if not _get_clamav_hosts():
                 raise ValueError(
                     "CLAMAV_HOST or CLAMAV_HOSTS is required when SCAN_ENGINE includes 'clamav'"
                 )
-            verdict, clamav_details = _clamav_instream_scan(content)
-            results["clamav"] = clamav_details.get("clamav", clamav_details)
+            scan_verdict, clamav_details = _clamav_instream_scan(content)
+            clam = clamav_details.get("clamav", clamav_details)
+            results["clamav"] = clam
+            if scan_verdict == "malicious":
+                signature = ""
+                if isinstance(clam, dict):
+                    signature = str(clam.get("signature") or "")
+                signals.append(
+                    signal(
+                        source="clamav.sig",
+                        verdict="malicious",
+                        severity="critical",
+                        weight=100,
+                        evidence={
+                            "signature": signature,
+                            "reason": f"ClamAV detected {signature or 'a known signature'}",
+                        },
+                    )
+                )
+            else:
+                signals.append(
+                    signal(
+                        source="clamav.result",
+                        verdict="benign",
+                        severity="info",
+                        weight=20,
+                        evidence={"reason": "ClamAV scan OK"},
+                    )
+                )
         elif engine == "yara":
-            verdict, yara_details = _yara_scan(content)
-            results["yara"] = yara_details.get("yara", yara_details)
+            scan_verdict, yara_details = _yara_scan(content)
+            yara = yara_details.get("yara", yara_details)
+            results["yara"] = yara
+
+            malicious_matches: list[str] = []
+            matches: list[str] = []
+            if isinstance(yara, dict):
+                mm = yara.get("malicious_matches")
+                if isinstance(mm, list):
+                    malicious_matches = [str(x) for x in mm if x]
+                m = yara.get("matches")
+                if isinstance(m, list):
+                    matches = [str(x) for x in m if x]
+
+            yara_weight = {"info": 20, "low": 40, "medium": 70, "high": 90, "critical": 100}
+            if malicious_matches:
+                for rule in malicious_matches[:50]:
+                    sev = _yara_rule_severity(rule)
+                    signals.append(
+                        signal(
+                            source=f"yara.rule.{rule}",
+                            verdict="malicious",
+                            severity=sev,
+                            weight=yara_weight.get(sev, 90),
+                            evidence={"rule": rule, "reason": f"YARA match: {rule}"},
+                        )
+                    )
+            elif matches:
+                signals.append(
+                    signal(
+                        source="yara.match",
+                        verdict="benign",
+                        severity="info",
+                        weight=5,
+                        evidence={
+                            "match_count": len(matches),
+                            "matched_rules": matches[:25],
+                            "reason": "YARA matched rules below verdict threshold (informational)",
+                        },
+                    )
+                )
+            else:
+                signals.append(
+                    signal(
+                        source="yara.result",
+                        verdict="benign",
+                        severity="info",
+                        weight=20,
+                        evidence={"reason": "YARA: no matches"},
+                    )
+                )
         else:
             raise ValueError(f"unsupported scan engine: {engine}")
 
-        if verdict == "malicious":
-            final_verdict = "malicious"
+    decision = aggregate_signals(signals)
 
     details = {
         "url": url,
+        "canonical_url": (
+            url_evaluations[0].get("canonical", {}).get("canonical")
+            if isinstance(url_evaluations, list)
+            and url_evaluations
+            and isinstance(url_evaluations[0], dict)
+            else None
+        ),
         "sha256": digest,
         "length": len(content),
         "engine": engines[0] if len(engines) == 1 else "multi",
         "engines": engines,
         "results": results,
+        "decision": decision.as_dict(),
+        "signals": [s.as_dict() for s in signals],
     }
+    if isinstance(url_evaluations, list) and url_evaluations:
+        details["url_evaluations"] = url_evaluations
     if isinstance(download, dict) and download:
         details["download"] = download
-    return final_verdict, details
+    if details.get("canonical_url") is None:
+        details.pop("canonical_url", None)
+    return decision.final_verdict, details
 
 
 def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:

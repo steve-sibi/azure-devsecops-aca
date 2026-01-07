@@ -9,7 +9,7 @@ Notes:
   - Point the worker at a custom rules file via YARA_RULES_PATH.
 */
 
-rule ACA_UrlScanner_Demo_Malicious_Marker
+rule Demo_Malicious_Marker_HIGH
 {
   meta:
     description = "Demo-only: matches an explicit marker string."
@@ -22,7 +22,7 @@ rule ACA_UrlScanner_Demo_Malicious_Marker
     $marker
 }
 
-rule ACA_UrlScanner_EICAR_Test_String_HIGH
+rule EICAR_Test_String_HIGH
 {
   meta:
     description = "Detects the standard EICAR antivirus test string (safe, for demos)."
@@ -35,7 +35,7 @@ rule ACA_UrlScanner_EICAR_Test_String_HIGH
     $eicar
 }
 
-rule ACA_UrlScanner_PowerShell_EncodedCommand_MEDIUM
+rule PowerShell_EncodedCommand_MEDIUM
 {
   meta:
     description = "Potential PowerShell encoded command pattern (often used in droppers)."
@@ -49,7 +49,7 @@ rule ACA_UrlScanner_PowerShell_EncodedCommand_MEDIUM
     all of ($ps, $enc, $b64)
 }
 
-rule ACA_UrlScanner_JS_Obfuscation_Patterns_LOW
+rule JavaScript_Obfuscation_Primitives_LOW
 {
   meta:
     description = "Common JavaScript obfuscation primitives; informational signal."
@@ -65,7 +65,7 @@ rule ACA_UrlScanner_JS_Obfuscation_Patterns_LOW
     2 of them
 }
 
-rule ACA_UrlScanner_HTML_Credential_Harvest_Form_LOW
+rule HTML_Credential_Harvest_Form_LOW
 {
   meta:
     description = "Heuristic-ish: HTML form that appears to collect passwords."
@@ -79,7 +79,7 @@ rule ACA_UrlScanner_HTML_Credential_Harvest_Form_LOW
     all of ($form, $password, $action)
 }
 
-rule ACA_UrlScanner_Filetype_PDF_INFO
+rule Filetype_PDF_INFO
 {
   meta:
     description = "Payload looks like a PDF (not inherently malicious)."
@@ -91,7 +91,7 @@ rule ACA_UrlScanner_Filetype_PDF_INFO
     $pdf at 0
 }
 
-rule ACA_UrlScanner_Filetype_PE_INFO
+rule Filetype_Windows_PE_INFO
 {
   meta:
     description = "Payload looks like a Windows PE/EXE (not inherently malicious)."
@@ -103,7 +103,7 @@ rule ACA_UrlScanner_Filetype_PE_INFO
     $mz at 0
 }
 
-rule ACA_UrlScanner_Large_Base64_Blob_INFO
+rule Large_Base64_Blob_INFO
 {
   meta:
     description = "Contains a large base64-ish blob; may indicate obfuscation or embedded data."

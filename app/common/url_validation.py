@@ -5,7 +5,8 @@ from dataclasses import dataclass
 import ipaddress
 import socket
 from typing import Iterable
-from urllib.parse import urlsplit
+
+from common.url_canonicalization import CanonicalUrl, canonicalize_url
 
 
 @dataclass
@@ -17,26 +18,21 @@ class UrlValidationError(ValueError):
         return self.message
 
 
-def _validate_https_url_shape(url: str) -> str:
-    parsed = urlsplit(url)
-
-    if parsed.scheme.lower() != "https" or not parsed.netloc:
+def _validate_https_url_shape(canonical: CanonicalUrl) -> str:
+    if canonical.scheme != "https" or not canonical.host_punycode:
         raise UrlValidationError(code="https_only", message="only https is allowed")
 
-    host = parsed.hostname
-    if not host:
-        raise UrlValidationError(code="host_required", message="url host is required")
-
-    if parsed.username or parsed.password:
+    if canonical.has_userinfo:
         raise UrlValidationError(
             code="userinfo_not_allowed", message="userinfo in url is not allowed"
         )
 
-    if parsed.port and parsed.port != 443:
+    if canonical.port is not None:
         raise UrlValidationError(
             code="port_not_allowed", message="only default https port 443 is allowed"
         )
 
+    host = canonical.host_punycode
     if host.lower() == "localhost":
         raise UrlValidationError(code="localhost_not_allowed", message="localhost is not allowed")
 
@@ -54,7 +50,8 @@ def _validate_ips_are_public(
 
 
 def validate_public_https_url(url: str, *, block_private_networks: bool = True) -> None:
-    host = _validate_https_url_shape(url)
+    canonical = canonicalize_url(url)
+    host = _validate_https_url_shape(canonical)
 
     if not block_private_networks:
         return
@@ -85,7 +82,8 @@ def validate_public_https_url(url: str, *, block_private_networks: bool = True) 
 async def validate_public_https_url_async(
     url: str, *, block_private_networks: bool = True
 ) -> None:
-    host = _validate_https_url_shape(url)
+    canonical = canonicalize_url(url)
+    host = _validate_https_url_shape(canonical)
 
     if not block_private_networks:
         return

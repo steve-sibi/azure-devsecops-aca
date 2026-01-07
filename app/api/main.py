@@ -248,6 +248,14 @@ def _safe_int(value) -> Optional[int]:
             return None
 
 
+def _yara_rule_severity(rule_name: str) -> str:
+    upper = (rule_name or "").upper()
+    for suffix in ("_INFO", "_LOW", "_MEDIUM", "_HIGH"):
+        if upper.endswith(suffix):
+            return suffix.lstrip("_").lower()
+    return "high"
+
+
 def _parse_details(raw) -> Optional[dict]:
     if raw is None or raw == "":
         return None
@@ -310,6 +318,21 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
     if download_blocked is not None:
         summary["download_blocked"] = download_blocked
 
+    # Decision layer (signals → deterministic aggregation)
+    if isinstance(details, dict) and isinstance(details.get("decision"), dict):
+        d = details["decision"]
+        decision_out: dict = {}
+        for key in ("final_verdict", "confidence", "action"):
+            val = d.get(key)
+            if val is None or val == "":
+                continue
+            decision_out[key] = val
+        reasons = d.get("reasons")
+        if isinstance(reasons, list):
+            decision_out["reasons"] = [str(r) for r in reasons if r][:10]
+        if decision_out:
+            summary["decision"] = decision_out
+
     # Download metadata (if present)
     if isinstance(details, dict) and isinstance(details.get("download"), dict):
         d = details["download"]
@@ -333,7 +356,15 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
         rep = results.get("reputation")
         if isinstance(rep, dict):
             rep_out: dict = {}
-            for key in ("verdict", "score", "threshold", "matched_allowlist", "matched_blocklist"):
+            for key in (
+                "verdict",
+                "score",
+                "threshold",
+                "suspicious_threshold",
+                "malicious_threshold",
+                "matched_allowlist",
+                "matched_blocklist",
+            ):
                 val = rep.get(key)
                 if val is None or val == "":
                     continue
@@ -341,6 +372,9 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
             reasons = rep.get("reasons")
             if isinstance(reasons, list):
                 rep_out["reasons"] = [str(r) for r in reasons if r][:10]
+            matched_rules = rep.get("matched_rules")
+            if isinstance(matched_rules, list):
+                rep_out["matched_rules"] = [str(r) for r in matched_rules if r][:10]
             if rep_out:
                 summary["reputation"] = rep_out
 
@@ -360,11 +394,71 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
         if isinstance(yara, dict):
             yara_out: dict = {}
             mm = yara.get("malicious_matches")
+            malicious_set: set[str] = set()
             if isinstance(mm, list):
-                yara_out["malicious_matches"] = [str(x) for x in mm if x][:25]
+                malicious = [str(x) for x in mm if x]
+                yara_out["malicious_matches"] = malicious[:25]
+                malicious_set = set(malicious)
             matches = yara.get("matches")
             if isinstance(matches, list):
-                yara_out["match_count"] = len(matches)
+                rule_names = [str(x) for x in matches if x]
+                yara_out["match_count"] = len(rule_names)
+                yara_out["matches"] = rule_names[:50]
+            rules_path = yara.get("rules_path")
+            if isinstance(rules_path, str) and rules_path:
+                yara_out["rules_path"] = rules_path
+            verdict_min_severity = yara.get("verdict_min_severity")
+            if isinstance(verdict_min_severity, str) and verdict_min_severity:
+                yara_out["verdict_min_severity"] = verdict_min_severity
+            match_details = yara.get("match_details")
+            if isinstance(match_details, list):
+                details_out: list[dict] = []
+                for item in match_details[:50]:
+                    if not isinstance(item, dict):
+                        continue
+                    rule = item.get("rule")
+                    if not isinstance(rule, str) or not rule:
+                        continue
+                    out_item: dict = {
+                        "rule": rule,
+                        "severity": _yara_rule_severity(rule),
+                        "counts_toward_verdict": rule in malicious_set,
+                    }
+                    meta_raw = item.get("meta")
+                    if isinstance(meta_raw, dict) and meta_raw:
+                        meta_out: dict = {}
+                        for key in ("description", "reference", "author"):
+                            val = meta_raw.get(key)
+                            if val is None or val == "":
+                                continue
+                            if not isinstance(val, str):
+                                val = str(val)
+                            meta_out[key] = val[:500]
+                        if meta_out:
+                            out_item["meta"] = meta_out
+                    strings_raw = item.get("strings")
+                    if isinstance(strings_raw, list) and strings_raw:
+                        strings_out: list[dict] = []
+                        for s in strings_raw[:50]:
+                            if not isinstance(s, dict):
+                                continue
+                            offset = _safe_int(s.get("offset"))
+                            identifier = s.get("identifier")
+                            value = s.get("value")
+                            out_s: dict = {}
+                            if offset is not None:
+                                out_s["offset"] = offset
+                            if isinstance(identifier, str) and identifier:
+                                out_s["identifier"] = identifier
+                            if isinstance(value, str) and value:
+                                out_s["value"] = value
+                            if out_s:
+                                strings_out.append(out_s)
+                        if strings_out:
+                            out_item["strings"] = strings_out
+                    details_out.append(out_item)
+                if details_out:
+                    yara_out["match_details"] = details_out
             truncated = yara.get("truncated")
             if isinstance(truncated, bool):
                 yara_out["truncated"] = truncated
