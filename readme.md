@@ -540,6 +540,7 @@ custom_scale_rule {
   custom_rule_type = "azure-servicebus"
   metadata = {
     queueName    = local.scan_queue_name
+    namespace    = "<service-bus-namespace>"
     messageCount = "20"
   }
   authentication {
@@ -601,8 +602,8 @@ curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}"
     - Ensure the scaler secrets `sb-manage` (fetch queue) and `sb-scan-manage` (scan queue) come from SAS rules that include **Manage**.
         
     - Queue name in the scaler metadata matches the actual queue.
-        
-    - Generate enough messages to exceed `messageCount` threshold.
+    
+    - `messageCount` is the target used in the scaling formula (`desiredReplicas = ceil(queueLength/messageCount)`); if queue length stays > 0 and replicas stay at 0, the scaler/auth is misconfigured.
 
 - **Scan stays `queued`**
     - The worker likely isn’t processing messages. Check worker logs:

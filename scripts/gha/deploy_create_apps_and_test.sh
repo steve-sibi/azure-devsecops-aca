@@ -85,16 +85,36 @@ diagnose_api() {
 }
 
 diagnose_e2e() {
-  az containerapp logs show -g "${RG}" -n "${PREFIX}-api" --type console --tail 200 2>&1 \
-    | python3 "${FORMAT_LOGS_PY}" || true
-  az containerapp logs show -g "${RG}" -n "${PREFIX}-fetcher" --type console --tail 200 2>&1 \
-    | python3 "${FORMAT_LOGS_PY}" || true
-  az containerapp logs show -g "${RG}" -n "${PREFIX}-fetcher" --type system --tail 200 2>&1 \
-    | python3 "${FORMAT_LOGS_PY}" || true
-  az containerapp logs show -g "${RG}" -n "${PREFIX}-worker" --type console --tail 200 2>&1 \
-    | python3 "${FORMAT_LOGS_PY}" || true
-  az containerapp logs show -g "${RG}" -n "${PREFIX}-worker" --type system --tail 200 2>&1 \
-    | python3 "${FORMAT_LOGS_PY}" || true
+  local sbns="${PREFIX}-sbns"
+  local scan_queue="${QUEUE_NAME}-scan"
+
+  echo "[deploy] Service Bus queue depths:"
+  az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${QUEUE_NAME}" \
+    --query "{queue:name,active:countDetails.activeMessageCount,dead:countDetails.deadLetterMessageCount}" -o tsv 2>/dev/null || true
+  az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${scan_queue}" \
+    --query "{queue:name,active:countDetails.activeMessageCount,dead:countDetails.deadLetterMessageCount}" -o tsv 2>/dev/null || true
+
+  show_app() {
+    local app="$1"
+    echo "---- ${app} ----"
+    az containerapp show -g "${RG}" -n "${app}" -o table 2>/dev/null || true
+    az containerapp revision list -g "${RG}" -n "${app}" -o table 2>/dev/null || true
+    local replicas
+    replicas="$(az containerapp replica list -g "${RG}" -n "${app}" --query "length(@)" -o tsv 2>/dev/null || echo "")"
+    echo "[deploy] ${app} replicas=${replicas:-unknown}"
+    if [[ "${replicas}" =~ ^[0-9]+$ ]] && [[ "${replicas}" -gt 0 ]]; then
+      az containerapp logs show -g "${RG}" -n "${app}" --type console --tail 200 2>&1 \
+        | python3 "${FORMAT_LOGS_PY}" || true
+      az containerapp logs show -g "${RG}" -n "${app}" --type system --tail 200 2>&1 \
+        | python3 "${FORMAT_LOGS_PY}" || true
+    else
+      echo "[deploy] ${app}: no active replicas; skipping log tail."
+    fi
+  }
+
+  show_app "${PREFIX}-api"
+  show_app "${PREFIX}-fetcher"
+  show_app "${PREFIX}-worker"
 }
 
 echo "[deploy] Smoke test API (/healthz)..."

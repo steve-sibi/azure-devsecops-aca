@@ -240,6 +240,7 @@ resource "azurerm_container_app" "fetcher" {
       custom_rule_type = "azure-servicebus"
       metadata = {
         queueName    = azurerm_servicebus_queue.q.name
+        namespace    = azurerm_servicebus_namespace.sb.name
         messageCount = "20"
       }
       authentication {
@@ -379,6 +380,7 @@ resource "azurerm_container_app" "worker" {
       custom_rule_type = "azure-servicebus"
       metadata = {
         queueName    = azurerm_servicebus_queue.q_scan.name
+        namespace    = azurerm_servicebus_namespace.sb.name
         messageCount = "20"
       }
       authentication {
