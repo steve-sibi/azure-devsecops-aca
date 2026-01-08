@@ -79,11 +79,6 @@ jobs:
         with:
           dockerfile: app/worker/Dockerfile.sidecar
 
-      - name: Hadolint (ClamAV)
-        uses: hadolint/hadolint-action@v3.1.0
-        with:
-          dockerfile: app/clamav/Dockerfile
-
   build-and-scan:
     needs: [python-quality, iac-and-docker-lint]
     runs-on: ubuntu-latest
@@ -98,8 +93,6 @@ jobs:
             dockerfile: app/api/Dockerfile
           - name: worker
             dockerfile: app/worker/Dockerfile.sidecar
-          - name: clamav
-            dockerfile: app/clamav/Dockerfile
     steps:
       - uses: actions/checkout@v4
 

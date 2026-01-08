@@ -116,9 +116,13 @@ SUB="$(az account show --query id -o tsv)"
 APPINSIGHTS_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Insights/components/${PREFIX}-appi"
 SB_NS_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns"
 SB_QUEUE_ID="${SB_NS_ID}/queues/${QUEUE_NAME}"
+SB_SCAN_QUEUE_ID="${SB_NS_ID}/queues/${QUEUE_NAME}-scan"
 Q_SEND_ID="${SB_QUEUE_ID}/authorizationRules/api-send"
 Q_LISTEN_ID="${SB_QUEUE_ID}/authorizationRules/worker-listen"
 Q_MANAGE_ID="${SB_QUEUE_ID}/authorizationRules/scale-manage"
+Q_SCAN_SEND_ID="${SB_SCAN_QUEUE_ID}/authorizationRules/fetcher-send"
+Q_SCAN_LISTEN_ID="${SB_SCAN_QUEUE_ID}/authorizationRules/worker-scan-listen"
+Q_SCAN_MANAGE_ID="${SB_SCAN_QUEUE_ID}/authorizationRules/scale-manage-scan"
 
 exists() { az resource show --ids "$1" >/dev/null 2>&1; }
 instate() { terraform -chdir="${INFRA_DIR}" state show "$1" >/dev/null 2>&1; }
@@ -132,6 +136,9 @@ fi
 if exists "${SB_QUEUE_ID}" && ! instate azurerm_servicebus_queue.q; then
   terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue.q "${SB_QUEUE_ID}" || true
 fi
+if exists "${SB_SCAN_QUEUE_ID}" && ! instate azurerm_servicebus_queue.q_scan; then
+  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue.q_scan "${SB_SCAN_QUEUE_ID}" || true
+fi
 if exists "${Q_SEND_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_send; then
   terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_send "${Q_SEND_ID}" || true
 fi
@@ -140,6 +147,15 @@ if exists "${Q_LISTEN_ID}" && ! instate azurerm_servicebus_queue_authorization_r
 fi
 if exists "${Q_MANAGE_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_manage; then
   terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_manage "${Q_MANAGE_ID}" || true
+fi
+if exists "${Q_SCAN_SEND_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_scan_send; then
+  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_scan_send "${Q_SCAN_SEND_ID}" || true
+fi
+if exists "${Q_SCAN_LISTEN_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_scan_listen; then
+  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_scan_listen "${Q_SCAN_LISTEN_ID}" || true
+fi
+if exists "${Q_SCAN_MANAGE_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_scan_manage; then
+  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_scan_manage "${Q_SCAN_MANAGE_ID}" || true
 fi
 
 echo "[deploy] Terraform apply (infra only, no apps)..."
@@ -151,4 +167,3 @@ terraform -chdir="${INFRA_DIR}" apply -auto-approve -input=false -no-color -lock
   -var="create_apps=false"
 
 echo "[deploy] Infra bootstrap complete."
-
