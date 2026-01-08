@@ -2,7 +2,7 @@
 
 End-to-end, cloud-native **URL scanning pipeline** on **Azure Container Apps (ACA)** using **Terraform** and **GitHub Actions (OIDC)**.
 
-What this project demonstrates (resume-friendly):
+What this project demonstrates:
 
 - **DevSecOps Approach**: Focused on implementing infrastructure in an automated, shift-left manner
 - **Secure API surface**: `X-API-Key` auth + per-key rate limiting + SSRF protections
@@ -12,7 +12,7 @@ What this project demonstrates (resume-friendly):
 - **Cloud-native secrets**: **Key Vault** stores secrets, resolved by **UAMI** at deploy/runtime
 - **Built-in UI**: minimal dashboard at `/` plus Swagger at `/docs`
 
-> Shareable, reproducible, “nuke-and-recreate” demo or starter for lightweight production.
+> Shareable, reproducible, “nuke-and-recreate” project or starter for lightweight production.
 
 ## 0) Quick demo (local, ~2 minutes)
 
