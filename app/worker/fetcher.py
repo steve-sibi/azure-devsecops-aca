@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Optional
 
 from azure.data.tables import TableClient, TableServiceClient
-from azure.core.exceptions import HttpResponseError
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 
@@ -94,7 +93,7 @@ def _save_result(
     submitted_at: Optional[str] = None,
     error: Optional[str] = None,
     url: Optional[str] = None,
-):
+) -> bool:
     scanned_at = _utc_now_iso()
 
     extra = {
@@ -112,6 +111,10 @@ def _save_result(
         details_out["url"] = url
 
     try:
+        if RESULT_BACKEND == "table" and not table_client:
+            raise RuntimeError("Result store not initialized (table_client)")
+        if RESULT_BACKEND == "redis" and not redis_client:
+            raise RuntimeError("Result store not initialized (redis_client)")
         upsert_result_sync(
             backend=RESULT_BACKEND,
             partition_key=RESULT_PARTITION,
@@ -126,8 +129,12 @@ def _save_result(
             redis_prefix=os.getenv("REDIS_RESULT_PREFIX", "scan:"),
             redis_ttl_seconds=int(os.getenv("REDIS_RESULT_TTL_SECONDS", "0")),
         )
-    except HttpResponseError as e:
-        logging.error("[fetcher] Failed to persist result: %s", e)
+        return True
+    except Exception:
+        logging.exception(
+            "[fetcher] Failed to persist result (job_id=%s status=%s)", job_id, status
+        )
+        return False
 
 
 def _enqueue_scan(payload: dict, *, message_id: str):
@@ -178,7 +185,7 @@ def process(task: dict):
 
     engines = scan_worker._get_scan_engines()
     start = time.time()
-    _save_result(
+    if not _save_result(
         job_id=job_id,
         status="fetching",
         verdict="",
@@ -186,7 +193,8 @@ def process(task: dict):
         correlation_id=correlation_id,
         submitted_at=submitted_at,
         url=url,
-    )
+    ):
+        raise RuntimeError("failed to persist fetcher status")
 
     try:
         (
@@ -205,7 +213,7 @@ def process(task: dict):
         details.setdefault("engines", engines)
         details.setdefault("download_blocked", True)
         details.setdefault("url", url)
-        _save_result(
+        if not _save_result(
             job_id=job_id,
             status="completed",
             verdict=verdict,
@@ -216,7 +224,8 @@ def process(task: dict):
             submitted_at=submitted_at,
             error=None,
             url=url,
-        )
+        ):
+            raise RuntimeError("failed to persist blocked scan result")
         logging.info(
             "[fetcher] job_id=%s verdict=%s size=0B duration_ms=%s (blocked)",
             job_id,
@@ -252,7 +261,7 @@ def process(task: dict):
 
     _enqueue_scan(forward_payload, message_id=str(job_id))
 
-    _save_result(
+    if not _save_result(
         job_id=job_id,
         status="queued_scan",
         verdict="",
@@ -270,7 +279,8 @@ def process(task: dict):
         submitted_at=submitted_at,
         error=None,
         url=url,
-    )
+    ):
+        raise RuntimeError("failed to persist queued_scan status")
 
     logging.info(
         "[fetcher] job_id=%s queued scan size=%sB duration_ms=%s",

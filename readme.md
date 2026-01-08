@@ -508,6 +508,7 @@ curl -sS "${API_URL}/scan/${JOB_ID}?view=full" -H "X-API-Key: ${API_KEY}" | pyth
 ### Where are scan results stored?
 
 - **Primary**: `GET /scan/{job_id}` (reads from the configured result backend: Azure Table Storage by default; Redis in `docker-compose.yml`)
+- **Note**: Azure Table has a ~64KB per-property limit; large `details` payloads are compacted/truncated (look for `_truncated` in `view=full`). Tune with `RESULT_DETAILS_MAX_BYTES`.
 - **Local (optional)**: `docker compose exec redis redis-cli HGETALL "scan:<job_id>"`
 - **GitHub Actions**: open the Deploy run and find the `job_id=...` line under “End-to-end scan test” (you can query it via the API afterwards)
 - **Azure Portal (optional)**: Storage account `<prefix>scan` → Table service → `scanresults` (PartitionKey `scan`)

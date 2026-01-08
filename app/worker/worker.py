@@ -15,7 +15,6 @@ import requests
 from azure.servicebus import ServiceBusClient
 from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 from azure.data.tables import TableClient, TableServiceClient
-from azure.core.exceptions import HttpResponseError
 
 from common.result_store import upsert_result_sync
 from common.signals import Signal, aggregate_signals, signal
@@ -211,7 +210,7 @@ def process(task: dict):
         details.setdefault("engines", engines)
         details.setdefault("download_blocked", True)
         details.setdefault("url", url)
-        _save_result(
+        if not _save_result(
             job_id=job_id,
             status="completed",
             verdict=verdict,
@@ -222,7 +221,8 @@ def process(task: dict):
             submitted_at=task.get("submitted_at"),
             error=None,
             url=url,
-        )
+        ):
+            raise RuntimeError("failed to persist blocked scan result")
         logging.info(
             "[worker] job_id=%s verdict=%s size=0B duration_ms=%s (blocked)",
             job_id,
@@ -241,14 +241,7 @@ def process(task: dict):
         reputation_summary=reputation_summary,
     )
     duration_ms = int((time.time() - start) * 1000)
-    if ARTIFACT_DELETE_ON_SUCCESS:
-        artifact_path = task.get("artifact_path")
-        if isinstance(artifact_path, str) and artifact_path.strip():
-            try:
-                (Path(ARTIFACT_DIR) / Path(artifact_path).name).unlink(missing_ok=True)
-            except Exception:
-                pass
-    _save_result(
+    if not _save_result(
         job_id=job_id,
         status="completed",
         verdict=verdict,
@@ -259,7 +252,15 @@ def process(task: dict):
         submitted_at=task.get("submitted_at"),
         error=None,
         url=url,
-    )
+    ):
+        raise RuntimeError("failed to persist scan result")
+    if ARTIFACT_DELETE_ON_SUCCESS:
+        artifact_path = task.get("artifact_path")
+        if isinstance(artifact_path, str) and artifact_path.strip():
+            try:
+                (Path(ARTIFACT_DIR) / Path(artifact_path).name).unlink(missing_ok=True)
+            except Exception:
+                pass
     logging.info(
         "[worker] job_id=%s verdict=%s size=%sB duration_ms=%s",
         job_id,
@@ -342,7 +343,6 @@ def _download(url: str, *, engines: List[str]) -> tuple[
                 "requested_url": url,
                 "final_url": request_url,
                 "redirects": redirects,
-                "url_evaluations": url_evaluations,
             }
             if content_type:
                 download_info["content_type"] = content_type
@@ -810,7 +810,7 @@ def _save_result(
     submitted_at: Optional[str] = None,
     error: Optional[str] = None,
     url: Optional[str] = None,
-):
+) -> bool:
     scanned_at = datetime.now(timezone.utc).isoformat()
 
     extra = {
@@ -827,6 +827,10 @@ def _save_result(
     if url and "url" not in details_out:
         details_out["url"] = url
     try:
+        if RESULT_BACKEND == "table" and not table_client:
+            raise RuntimeError("Result store not initialized (table_client)")
+        if RESULT_BACKEND == "redis" and not redis_client:
+            raise RuntimeError("Result store not initialized (redis_client)")
         upsert_result_sync(
             backend=RESULT_BACKEND,
             partition_key=RESULT_PARTITION,
@@ -841,8 +845,12 @@ def _save_result(
             redis_prefix=REDIS_RESULT_PREFIX,
             redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
         )
-    except HttpResponseError as e:
-        logging.error("[worker] Failed to persist result: %s", e)
+        return True
+    except Exception:
+        logging.exception(
+            "[worker] Failed to persist result (job_id=%s status=%s)", job_id, status
+        )
+        return False
 
 
 def main():

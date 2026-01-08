@@ -27,3 +27,6 @@ venv/
 # IDE/editor
 .idea/
 .vscode/
+
+# Local Azure CLI config (used by some scripts)
+.azure/
