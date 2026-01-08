@@ -11,6 +11,45 @@ def _redis_key(prefix: str, job_id: str) -> str:
     return f"{prefix}{job_id}"
 
 
+_STATUS_RANKS: dict[str, int] = {
+    "queued": 10,
+    "fetching": 20,
+    "queued_scan": 30,
+    "retrying": 40,
+    # terminal
+    "completed": 100,
+    "error": 100,
+}
+
+_TERMINAL_STATUSES = {"completed", "error"}
+
+
+def _status_rank(status: Optional[str]) -> int:
+    key = (status or "").strip().lower()
+    return _STATUS_RANKS.get(key, 0)
+
+
+def _coerce_int(value: Any, *, default: int = 0) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return default
+
+
+def _should_skip_regression(
+    *, existing: Optional[dict], new_status: str, new_rank: int
+) -> bool:
+    if not isinstance(existing, dict) or not existing:
+        return False
+    existing_status = str(existing.get("status") or "").strip().lower()
+    existing_rank = _coerce_int(existing.get("status_rank"), default=_status_rank(existing_status))
+
+    # Never regress status, and never overwrite a terminal status with a different terminal status.
+    if existing_status in _TERMINAL_STATUSES and new_status != existing_status:
+        return True
+    return new_rank < existing_rank
+
+
 def _json_dumps_compact(value: Any) -> str:
     return json.dumps(value, separators=(",", ":"), ensure_ascii=False)
 
@@ -179,6 +218,16 @@ async def upsert_result_async(
     if backend == "table":
         if not table_client:
             return
+        new_status = str(status or "").strip().lower()
+        new_rank = _status_rank(new_status)
+        try:
+            existing = await table_client.get_entity(partition_key=partition_key, row_key=job_id)
+        except ResourceNotFoundError:
+            existing = None
+        except Exception:
+            existing = None
+        if _should_skip_regression(existing=existing, new_status=new_status, new_rank=new_rank):
+            return
         entity = _build_table_entity(
             partition_key=partition_key,
             job_id=job_id,
@@ -189,6 +238,7 @@ async def upsert_result_async(
             extra=extra,
             max_details_bytes=max_details_bytes,
         )
+        entity["status_rank"] = new_rank
         await table_client.upsert_entity(entity=entity)
         return
 
@@ -196,9 +246,18 @@ async def upsert_result_async(
         if not redis_client:
             return
         key = _redis_key(redis_prefix, job_id)
+        new_status = str(status or "").strip().lower()
+        new_rank = _status_rank(new_status)
+        try:
+            existing = await redis_client.hgetall(key)
+        except Exception:
+            existing = None
+        if _should_skip_regression(existing=existing, new_status=new_status, new_rank=new_rank):
+            return
         mapping = _build_redis_mapping(
             status=status, verdict=verdict, error=error, details=details, extra=extra
         )
+        mapping["status_rank"] = str(new_rank)
         await redis_client.hset(key, mapping=mapping)
         if redis_ttl_seconds > 0:
             await redis_client.expire(key, redis_ttl_seconds)
@@ -253,6 +312,16 @@ def upsert_result_sync(
     if backend == "table":
         if not table_client:
             return
+        new_status = str(status or "").strip().lower()
+        new_rank = _status_rank(new_status)
+        try:
+            existing = table_client.get_entity(partition_key=partition_key, row_key=job_id)
+        except ResourceNotFoundError:
+            existing = None
+        except Exception:
+            existing = None
+        if _should_skip_regression(existing=existing, new_status=new_status, new_rank=new_rank):
+            return
         entity = _build_table_entity(
             partition_key=partition_key,
             job_id=job_id,
@@ -263,6 +332,7 @@ def upsert_result_sync(
             extra=extra,
             max_details_bytes=max_details_bytes,
         )
+        entity["status_rank"] = new_rank
         table_client.upsert_entity(entity=entity)
         return
 
@@ -270,9 +340,18 @@ def upsert_result_sync(
         if not redis_client:
             return
         key = _redis_key(redis_prefix, job_id)
+        new_status = str(status or "").strip().lower()
+        new_rank = _status_rank(new_status)
+        try:
+            existing = redis_client.hgetall(key)
+        except Exception:
+            existing = None
+        if _should_skip_regression(existing=existing, new_status=new_status, new_rank=new_rank):
+            return
         mapping = _build_redis_mapping(
             status=status, verdict=verdict, error=error, details=details, extra=extra
         )
+        mapping["status_rank"] = str(new_rank)
         redis_client.hset(key, mapping=mapping)
         if redis_ttl_seconds > 0:
             redis_client.expire(key, redis_ttl_seconds)

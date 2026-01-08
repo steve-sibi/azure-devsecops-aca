@@ -259,8 +259,6 @@ def process(task: dict):
         "reputation_summary": reputation_summary,
     }
 
-    _enqueue_scan(forward_payload, message_id=str(job_id))
-
     if not _save_result(
         job_id=job_id,
         status="queued_scan",
@@ -281,6 +279,8 @@ def process(task: dict):
         url=url,
     ):
         raise RuntimeError("failed to persist queued_scan status")
+
+    _enqueue_scan(forward_payload, message_id=str(job_id))
 
     logging.info(
         "[fetcher] job_id=%s queued scan size=%sB duration_ms=%s",
