@@ -57,6 +57,33 @@ resource "azurerm_key_vault_secret" "sb_manage" {
   depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
+resource "azurerm_key_vault_secret" "sb_scan_send" {
+  name            = "ServiceBusScanSend"
+  value           = azurerm_servicebus_queue_authorization_rule.q_scan_send.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "servicebus-send"
+  expiration_date = timeadd(timestamp(), "8760h")
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+}
+
+resource "azurerm_key_vault_secret" "sb_scan_listen" {
+  name            = "ServiceBusScanListen"
+  value           = azurerm_servicebus_queue_authorization_rule.q_scan_listen.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "servicebus-listen"
+  expiration_date = timeadd(timestamp(), "8760h")
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+}
+
+resource "azurerm_key_vault_secret" "sb_scan_manage" {
+  name            = "ServiceBusScanManage"
+  value           = azurerm_servicebus_queue_authorization_rule.q_scan_manage.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "servicebus-manage"
+  expiration_date = timeadd(timestamp(), "8760h")
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+}
+
 resource "azurerm_key_vault_secret" "results_conn" {
   name         = "ScanResultsConn"
   value        = azurerm_storage_account.results.primary_connection_string
@@ -79,4 +106,3 @@ resource "azurerm_role_assignment" "kv_secrets_uami" {
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.uami.principal_id
 }
-

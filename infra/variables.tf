@@ -13,7 +13,7 @@ variable "resource_group_name" {
 variable "create_apps" {
   type        = bool
   default     = false
-  description = "If true, creates API/Worker/ClamAV Container Apps."
+  description = "If true, creates API/Fetcher/Worker Container Apps."
 }
 
 variable "image_tag" {
@@ -46,6 +46,12 @@ variable "queue_name" {
   description = "Service Bus queue name."
 }
 
+variable "scan_queue_name" {
+  type        = string
+  default     = ""
+  description = "Optional Service Bus scan queue name (defaults to <queue_name>-scan)."
+}
+
 variable "tags" {
   type = map(string)
   default = {
@@ -67,8 +73,8 @@ variable "results_table_name" {
   description = "Table name for storing scan results."
 }
 
-variable "clamav_db_share_quota_gb" {
+variable "artifacts_share_quota_gb" {
   type        = number
   default     = 2
-  description = "Azure Files share quota (GB) for persisting the ClamAV signature database."
+  description = "Azure Files share quota (GB) for persisting fetched artifacts between fetcher and worker."
 }

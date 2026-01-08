@@ -19,21 +19,26 @@ provider "azurerm" {
 }
 
 locals {
-  acr_name            = "${var.prefix}acr"
-  kv_name             = "${var.prefix}-kv"
-  sb_ns_name          = "${var.prefix}-sbns"
-  la_name             = "${var.prefix}-la"
-  ai_name             = "${var.prefix}-appi"
-  env_name            = "${var.prefix}-acaenv"
-  api_name            = "${var.prefix}-api"
-  worker_name         = "${var.prefix}-worker"
-  clamav_name         = "${var.prefix}-clamav"
-  clamav_updater_name = "${var.prefix}-clamav-updater"
-  clamav_db_share     = "${var.prefix}-clamav-db"
-  clamav_db_storage   = "clamavdb"
-  uami_name           = "${var.prefix}-uami"
-  results_sa          = "${var.prefix}scan"
-  results_table       = var.results_table_name
+  acr_name          = "${var.prefix}acr"
+  kv_name           = "${var.prefix}-kv"
+  sb_ns_name        = "${var.prefix}-sbns"
+  la_name           = "${var.prefix}-la"
+  ai_name           = "${var.prefix}-appi"
+  env_name          = "${var.prefix}-acaenv"
+  api_name          = "${var.prefix}-api"
+  fetcher_name      = "${var.prefix}-fetcher"
+  worker_name       = "${var.prefix}-worker"
+  artifacts_share   = "${var.prefix}-artifacts"
+  artifacts_storage = "artifacts"
+  uami_name         = "${var.prefix}-uami"
+  results_sa        = "${var.prefix}scan"
+  results_table     = var.results_table_name
+
+  scan_queue_name = (
+    trimspace(var.scan_queue_name) != ""
+    ? var.scan_queue_name
+    : "${var.queue_name}-scan"
+  )
 }
 
 # Split by concern for readability:

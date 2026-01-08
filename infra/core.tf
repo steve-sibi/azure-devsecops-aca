@@ -54,6 +54,13 @@ resource "azurerm_servicebus_queue" "q" {
   max_size_in_megabytes = 1024
 }
 
+# Separate queue for the scan/analyzer stage (fetcher forwards here).
+resource "azurerm_servicebus_queue" "q_scan" {
+  name                  = local.scan_queue_name
+  namespace_id          = azurerm_servicebus_namespace.sb.id
+  max_size_in_megabytes = 1024
+}
+
 # Storage for scan results (Table)
 resource "azurerm_storage_account" "results" {
   name                            = local.results_sa
@@ -95,6 +102,28 @@ resource "azurerm_servicebus_queue_authorization_rule" "q_manage" {
   send   = true
 }
 
+# ---------- Least-privilege authorization rules at SCAN QUEUE scope ----------
+resource "azurerm_servicebus_queue_authorization_rule" "q_scan_send" {
+  name     = "fetcher-send"
+  queue_id = azurerm_servicebus_queue.q_scan.id
+  send     = true
+}
+
+resource "azurerm_servicebus_queue_authorization_rule" "q_scan_listen" {
+  name     = "worker-scan-listen"
+  queue_id = azurerm_servicebus_queue.q_scan.id
+  listen   = true
+}
+
+resource "azurerm_servicebus_queue_authorization_rule" "q_scan_manage" {
+  name     = "scale-manage-scan"
+  queue_id = azurerm_servicebus_queue.q_scan.id
+
+  manage = true
+  listen = true
+  send   = true
+}
+
 # Container Apps Environment
 resource "azurerm_container_app_environment" "env" {
   name                       = local.env_name
@@ -104,21 +133,20 @@ resource "azurerm_container_app_environment" "env" {
   tags                       = var.tags
 }
 
-# ClamAV signature DB persistence (Azure Files share mounted into ACA)
-resource "azurerm_storage_share" "clamav_db" {
+resource "azurerm_storage_share" "artifacts" {
   count                = var.create_apps ? 1 : 0
-  name                 = local.clamav_db_share
+  name                 = local.artifacts_share
   storage_account_name = azurerm_storage_account.results.name
-  quota                = var.clamav_db_share_quota_gb
+  quota                = var.artifacts_share_quota_gb
 }
 
-resource "azurerm_container_app_environment_storage" "clamav_db" {
+resource "azurerm_container_app_environment_storage" "artifacts" {
   count                        = var.create_apps ? 1 : 0
-  name                         = local.clamav_db_storage
+  name                         = local.artifacts_storage
   container_app_environment_id = azurerm_container_app_environment.env.id
 
   account_name = azurerm_storage_account.results.name
-  share_name   = azurerm_storage_share.clamav_db[0].name
+  share_name   = azurerm_storage_share.artifacts[0].name
   access_key   = azurerm_storage_account.results.primary_access_key
   access_mode  = "ReadWrite"
 }

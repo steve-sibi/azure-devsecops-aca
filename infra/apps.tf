@@ -1,52 +1,3 @@
-# --- ClamAV signature updater (writes to Azure Files share) ---
-resource "azurerm_container_app" "clamav_updater" {
-  count                        = var.create_apps ? 1 : 0
-  name                         = local.clamav_updater_name
-  resource_group_name          = data.azurerm_resource_group.rg.name
-  container_app_environment_id = azurerm_container_app_environment.env.id
-  revision_mode                = "Single"
-  tags                         = var.tags
-
-  identity {
-    type         = "UserAssigned"
-    identity_ids = [azurerm_user_assigned_identity.uami.id]
-  }
-
-  registry {
-    server   = data.azurerm_container_registry.acr.login_server
-    identity = azurerm_user_assigned_identity.uami.id
-  }
-
-  template {
-    container {
-      name   = "clamav-updater"
-      image  = "${data.azurerm_container_registry.acr.login_server}/${local.clamav_name}:${var.image_tag}"
-      cpu    = 0.5
-      memory = "1Gi"
-
-      args = ["/usr/local/bin/clamav-freshclam-updater"]
-
-      volume_mounts {
-        name = "clamav-db"
-        path = "/var/lib/clamav"
-      }
-    }
-
-    volume {
-      name         = "clamav-db"
-      storage_name = azurerm_container_app_environment_storage.clamav_db[0].name
-      storage_type = "AzureFile"
-    }
-
-    min_replicas = 1
-    max_replicas = 1
-  }
-
-  depends_on = [
-    azurerm_role_assignment.acr_pull_uami,
-  ]
-}
-
 # --- API app ---
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
@@ -156,6 +107,155 @@ resource "azurerm_container_app" "api" {
   ]
 }
 
+# --- Fetcher app (downloads + artifact handoff) ---
+resource "azurerm_container_app" "fetcher" {
+  count                        = var.create_apps ? 1 : 0
+  name                         = local.fetcher_name
+  resource_group_name          = data.azurerm_resource_group.rg.name
+  container_app_environment_id = azurerm_container_app_environment.env.id
+  revision_mode                = "Single"
+  tags                         = var.tags
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.uami.id]
+  }
+
+  registry {
+    server   = data.azurerm_container_registry.acr.login_server
+    identity = azurerm_user_assigned_identity.uami.id
+  }
+
+  secret {
+    name                = "sb-listen"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_listen.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
+  secret {
+    name                = "sb-scan-send"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_scan_send.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
+  secret {
+    name  = "appi-conn"
+    value = azurerm_application_insights.appi.connection_string
+  }
+
+  secret {
+    name                = "results-conn"
+    key_vault_secret_id = azurerm_key_vault_secret.results_conn.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
+  # KEDA scaler needs Manage to read queue metrics
+  secret {
+    name                = "sb-manage"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_manage.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
+  template {
+    container {
+      name   = "fetcher"
+      image  = "${data.azurerm_container_registry.acr.login_server}/${local.worker_name}:${var.image_tag}"
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "WORKER_MODE"
+        value = "fetcher"
+      }
+      env {
+        name        = "SERVICEBUS_CONN"
+        secret_name = "sb-listen"
+      }
+      env {
+        name        = "SERVICEBUS_SCAN_CONN"
+        secret_name = "sb-scan-send"
+      }
+      env {
+        name  = "QUEUE_NAME"
+        value = var.queue_name
+      }
+      env {
+        name  = "SCAN_QUEUE_NAME"
+        value = local.scan_queue_name
+      }
+      env {
+        name        = "APPINSIGHTS_CONN"
+        secret_name = "appi-conn"
+      }
+      env {
+        name        = "RESULT_STORE_CONN"
+        secret_name = "results-conn"
+      }
+      env {
+        name  = "RESULT_TABLE"
+        value = local.results_table
+      }
+      env {
+        name  = "ARTIFACT_DIR"
+        value = "/artifacts"
+      }
+      env {
+        name  = "BLOCK_PRIVATE_NETWORKS"
+        value = "true"
+      }
+      env {
+        name  = "MAX_REDIRECTS"
+        value = "5"
+      }
+      env {
+        name  = "SCAN_ENGINE"
+        value = "reputation,content"
+      }
+      env {
+        name  = "CONTENT_MAX_TEXT_BYTES"
+        value = "200000"
+      }
+      env {
+        name  = "CONTENT_MAX_BASE64_MATCH"
+        value = "50000"
+      }
+
+      volume_mounts {
+        name = "artifacts"
+        path = "/artifacts"
+      }
+    }
+
+    volume {
+      name         = "artifacts"
+      storage_name = azurerm_container_app_environment_storage.artifacts[0].name
+      storage_type = "AzureFile"
+    }
+
+    min_replicas = 0
+    max_replicas = 5
+
+    custom_scale_rule {
+      name             = "sb-scaler"
+      custom_rule_type = "azure-servicebus"
+      metadata = {
+        queueName    = azurerm_servicebus_queue.q.name
+        messageCount = "20"
+      }
+      authentication {
+        secret_name       = "sb-manage"
+        trigger_parameter = "connection"
+      }
+    }
+  }
+
+  depends_on = [
+    azurerm_key_vault_access_policy.kv_uami,
+    azurerm_role_assignment.kv_secrets_uami,
+    azurerm_role_assignment.acr_pull_uami,
+  ]
+}
+
 # --- Worker app ---
 resource "azurerm_container_app" "worker" {
   count                        = var.create_apps ? 1 : 0
@@ -177,14 +277,14 @@ resource "azurerm_container_app" "worker" {
 
   # KV-backed secrets for runtime and scaling
   secret {
-    name                = "sb-listen"
-    key_vault_secret_id = azurerm_key_vault_secret.sb_listen.id
+    name                = "sb-scan-listen"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_scan_listen.id
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
   secret {
-    name                = "sb-manage"
-    key_vault_secret_id = azurerm_key_vault_secret.sb_manage.id
+    name                = "sb-scan-manage"
+    key_vault_secret_id = azurerm_key_vault_secret.sb_scan_manage.id
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
@@ -208,11 +308,11 @@ resource "azurerm_container_app" "worker" {
 
       env {
         name        = "SERVICEBUS_CONN"
-        secret_name = "sb-listen"
+        secret_name = "sb-scan-listen"
       }
       env {
         name  = "QUEUE_NAME"
-        value = var.queue_name
+        value = local.scan_queue_name
       }
       env {
         name        = "APPINSIGHTS_CONN"
@@ -227,6 +327,18 @@ resource "azurerm_container_app" "worker" {
         value = local.results_table
       }
       env {
+        name  = "WORKER_MODE"
+        value = "analyzer"
+      }
+      env {
+        name  = "ARTIFACT_DIR"
+        value = "/artifacts"
+      }
+      env {
+        name  = "ARTIFACT_DELETE_ON_SUCCESS"
+        value = "false"
+      }
+      env {
         name  = "BLOCK_PRIVATE_NETWORKS"
         value = "true"
       }
@@ -235,27 +347,27 @@ resource "azurerm_container_app" "worker" {
         value = "5"
       }
       env {
-        name  = "CLAMAV_HOST"
-        value = "127.0.0.1"
-      }
-      env {
-        name  = "CLAMAV_PORT"
-        value = "3310"
-      }
-      env {
         name  = "SCAN_ENGINE"
-        value = "reputation,clamav,yara"
+        value = "reputation,content"
+      }
+      env {
+        name  = "CONTENT_MAX_TEXT_BYTES"
+        value = "200000"
+      }
+      env {
+        name  = "CONTENT_MAX_BASE64_MATCH"
+        value = "50000"
       }
 
       volume_mounts {
-        name = "clamav-db"
-        path = "/var/lib/clamav"
+        name = "artifacts"
+        path = "/artifacts"
       }
     }
 
     volume {
-      name         = "clamav-db"
-      storage_name = azurerm_container_app_environment_storage.clamav_db[0].name
+      name         = "artifacts"
+      storage_name = azurerm_container_app_environment_storage.artifacts[0].name
       storage_type = "AzureFile"
     }
 
@@ -266,11 +378,11 @@ resource "azurerm_container_app" "worker" {
       name             = "sb-scaler"
       custom_rule_type = "azure-servicebus"
       metadata = {
-        queueName    = azurerm_servicebus_queue.q.name
+        queueName    = azurerm_servicebus_queue.q_scan.name
         messageCount = "20"
       }
       authentication {
-        secret_name       = "sb-manage"
+        secret_name       = "sb-scan-manage"
         trigger_parameter = "connection"
       }
     }
