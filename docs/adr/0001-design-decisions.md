@@ -19,6 +19,8 @@ This project is meant to be a “nuke-and-recreate” portfolio demo that highli
 
 - Table Storage is cheap, simple, and sufficient for “job status + details” in a demo.
 - Local development uses Redis to keep the local loop fast.
+- Azure Table has a ~64KB per-property limit; the app compacts/truncates large `details` payloads (tunable via `RESULT_DETAILS_MAX_BYTES`).
+- Result writes are monotonic (a late status update won’t overwrite a newer/terminal status); a `status_rank` field is stored for this purpose.
 
 ### Key Vault secret references + UAMI
 
@@ -32,4 +34,3 @@ This project is meant to be a “nuke-and-recreate” portfolio demo that highli
 ## Consequences
 
 - The repo stays approachable and reproducible, but it deliberately avoids some production features (private networking, per-user auth, signing/provenance enforcement).
-

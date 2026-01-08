@@ -132,12 +132,12 @@ sequenceDiagram
   SB-->>KEDA: messageCount
   KEDA-->>F: Scale out replicas (min 0..max 5)
 
-  F->>SB: Receive messages
-  F->>F: Download (SSRF protected)
-  F->>FS: Write artifact bytes
-  F->>SB2: Send scan message (artifact ref)
-  F->>T: Upsert status=queued_scan
-  F->>SB: Complete message
+	  F->>SB: Receive messages
+	  F->>F: Download (SSRF protected)
+	  F->>FS: Write artifact bytes
+	  F->>T: Upsert status=queued_scan
+	  F->>SB2: Send scan message (artifact ref)
+	  F->>SB: Complete message
 
   KEDA->>SB2: Poll queue length
   SB2-->>KEDA: messageCount
@@ -484,6 +484,17 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `POST /scan` (requires API key)
 - `GET /scan/{job_id}?view=summary|full` (requires API key; `summary` is default)
 
+### Scan status lifecycle
+
+`GET /scan/{job_id}` returns a `status` that progresses monotonically (out-of-order writes are ignored so status won’t go “backwards”).
+
+- `queued`: job accepted and enqueued by the API
+- `fetching`: fetcher is downloading (SSRF-protected) and preparing an artifact
+- `queued_scan`: artifact is ready and the scan stage has been queued
+- `retrying`: transient failure; will retry automatically (up to `MAX_RETRIES`)
+- `completed`: finished; check `verdict` + `summary` (and `details` if `view=full`)
+- `error`: failed; check `error` + `details`
+
 ### Try it (CLI)
 
 Submit a scan:
@@ -508,7 +519,7 @@ curl -sS "${API_URL}/scan/${JOB_ID}?view=full" -H "X-API-Key: ${API_KEY}" | pyth
 ### Where are scan results stored?
 
 - **Primary**: `GET /scan/{job_id}` (reads from the configured result backend: Azure Table Storage by default; Redis in `docker-compose.yml`)
-- **Note**: Azure Table has a ~64KB per-property limit; large `details` payloads are compacted/truncated (look for `_truncated` in `view=full`). Tune with `RESULT_DETAILS_MAX_BYTES`.
+- **Note**: Azure Table has a ~64KB per-property limit; large `details` payloads are compacted/truncated (look for `_truncated` in `view=full`). Tune with `RESULT_DETAILS_MAX_BYTES`. A `status_rank` field may also be stored to prevent status regression.
 - **Local (optional)**: `docker compose exec redis redis-cli HGETALL "scan:<job_id>"`
 - **GitHub Actions**: open the Deploy run and find the `job_id=...` line under “End-to-end scan test” (you can query it via the API afterwards)
 - **Azure Portal (optional)**: Storage account `<prefix>scan` → Table service → `scanresults` (PartitionKey `scan`)
