@@ -122,7 +122,7 @@ sequenceDiagram
   participant T as Azure Table Storage (scanresults)
   participant LA as Log Analytics
 
-  Note over API,F,W: Secrets (Service Bus + ApiKey + results conn) come from Key Vault via ACA<br/>secret references at deploy time using the UAMI (no runtime KV calls).
+  Note over API,W: Secrets (Service Bus + ApiKey + results conn) are injected via Key Vault references resolved by the UAMI at deploy time (no runtime KV calls).
 
   C->>API: POST /scan {url}
   API->>T: Upsert status=queued
