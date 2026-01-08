@@ -704,66 +704,24 @@
             ], { tone: repTone });
           }
 
-          const clam = pick(s, 'clamav');
-          if (clam) {
-            const clamRes = String(clam.result || '');
-            const clamKind = (clamRes === 'OK') ? 'ok' : (clamRes === 'FOUND' ? 'bad' : 'info');
-            block('ClamAV', [
-              ['Result', clamRes ? badgeValue(clamKind, clamRes) : ''],
-              ['Signature', clam.signature ? codeValue(clam.signature) : ''],
-            ], { tone: clamKind });
-          }
-
-          const yara = pick(s, 'yara');
-          if (yara) {
-            const malicious = Array.isArray(yara.malicious_matches) ? yara.malicious_matches : [];
-            const matches = Array.isArray(yara.matches) ? yara.matches : [];
-            const details = Array.isArray(yara.match_details) ? yara.match_details : [];
-            const yaraTone = malicious.length ? 'bad' : 'info';
-            let detailsNode = '';
-            if (details.length) {
-              const lines = [];
-              for (const m of details) {
-                if (!m || typeof m !== 'object') continue;
-                const rule = String(m.rule || '');
-                if (!rule) continue;
-                const severity = m.severity ? String(m.severity) : '';
-                const counts = (m.counts_toward_verdict === true);
-                lines.push(rule + (severity ? (' [' + severity + ']') : '') + (counts ? ' (counts toward verdict)' : ''));
-                const meta = (m.meta && typeof m.meta === 'object') ? m.meta : null;
-                if (meta) {
-                  if (meta.description) lines.push('  desc: ' + String(meta.description));
-                  if (meta.reference) lines.push('  ref: ' + String(meta.reference));
-                  if (meta.author) lines.push('  author: ' + String(meta.author));
-                }
-                const strs = Array.isArray(m.strings) ? m.strings : [];
-                for (const s of strs) {
-                  if (!s || typeof s !== 'object') continue;
-                  const offNum = Number(s.offset);
-                  const off = Number.isFinite(offNum) ? ('0x' + offNum.toString(16)) : '';
-                  const id = s.identifier ? String(s.identifier) : '';
-                  const val = s.value ? String(s.value) : '';
-                  const prefix = '  ' + (off ? (off + ':') : '') + (id ? (id + ': ') : '');
-                  lines.push(prefix + val);
-                }
-                lines.push('');
-              }
-              const text = lines.join('\n').trim();
-              detailsNode = el('details', { class: 'disclosure' },
-                el('summary', { text: 'Show match details (' + details.length + ')' }),
-                el('pre', { text: text || 'No details.' })
-              );
-            }
-            block('YARA', [
-              ['Malicious matches', malicious.length ? codeValue(malicious.join(', ')) : 'none'],
-              ['Severity threshold', yara.verdict_min_severity ? codeValue(yara.verdict_min_severity) : ''],
-              ['Verdict rule', yara.verdict_min_severity ? ('malicious if any matched rule is at/above ' + String(yara.verdict_min_severity) + ' (derived from rule name suffix)') : ''],
-              ['Rules file', yara.rules_path ? codeValue(yara.rules_path, { copy: true, copyLabel: 'Copy rules file' }) : ''],
-              ['Matched rules', matches.length ? codeValue(matches.join(', ')) : (yara.match_count ? 'none' : '')],
-              ['Match count', yara.match_count != null ? codeValue(yara.match_count) : ''],
-              ['Match details', detailsNode],
-              ['Truncated', (yara.truncated === true ? 'yes' : (yara.truncated === false ? 'no' : ''))],
-            ], { tone: yaraTone });
+          const content = pick(s, 'content');
+          if (content) {
+            const hasForm = (content.has_form === true);
+            const hasPassword = (content.has_password_field === true);
+            const hasMeta = (content.has_meta_refresh === true);
+            const prim = Array.isArray(content.js_obfuscation_primitives) ? content.js_obfuscation_primitives : [];
+            const b64 = Number(content.base64_blob_max_len);
+            const suspicious = (hasForm && hasPassword) || hasMeta || (prim.length >= 2) || (Number.isFinite(b64) && b64 >= 5000);
+            const tone = suspicious ? 'bad' : 'info';
+            block('Content', [
+              ['Content-Type', content.content_type ? codeValue(String(content.content_type)) : ''],
+              ['Text bytes scanned', (content.text_bytes_scanned != null ? codeValue(String(content.text_bytes_scanned)) : '')],
+              ['Has form', (content.has_form === true ? 'yes' : (content.has_form === false ? 'no' : ''))],
+              ['Has password field', (content.has_password_field === true ? 'yes' : (content.has_password_field === false ? 'no' : ''))],
+              ['Meta refresh', (content.has_meta_refresh === true ? 'yes' : (content.has_meta_refresh === false ? 'no' : ''))],
+              ['JS primitives', prim.length ? prim.join(', ') : ''],
+              ['Max base64 blob', (Number.isFinite(b64) ? codeValue(String(b64)) : '')],
+            ], { tone: tone });
           }
 
           const dl = pick(s, 'download');

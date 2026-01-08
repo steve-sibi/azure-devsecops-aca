@@ -248,14 +248,6 @@ def _safe_int(value) -> Optional[int]:
             return None
 
 
-def _yara_rule_severity(rule_name: str) -> str:
-    upper = (rule_name or "").upper()
-    for suffix in ("_INFO", "_LOW", "_MEDIUM", "_HIGH"):
-        if upper.endswith(suffix):
-            return suffix.lstrip("_").lower()
-    return "high"
-
-
 def _parse_details(raw) -> Optional[dict]:
     if raw is None or raw == "":
         return None
@@ -378,92 +370,27 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
             if rep_out:
                 summary["reputation"] = rep_out
 
-        clam = results.get("clamav")
-        if isinstance(clam, dict):
-            clam_out: dict = {}
-            res = clam.get("result")
-            if isinstance(res, str) and res:
-                clam_out["result"] = res
-            sig = clam.get("signature")
-            if isinstance(sig, str) and sig:
-                clam_out["signature"] = sig
-            if clam_out:
-                summary["clamav"] = clam_out
-
-        yara = results.get("yara")
-        if isinstance(yara, dict):
-            yara_out: dict = {}
-            mm = yara.get("malicious_matches")
-            malicious_set: set[str] = set()
-            if isinstance(mm, list):
-                malicious = [str(x) for x in mm if x]
-                yara_out["malicious_matches"] = malicious[:25]
-                malicious_set = set(malicious)
-            matches = yara.get("matches")
-            if isinstance(matches, list):
-                rule_names = [str(x) for x in matches if x]
-                yara_out["match_count"] = len(rule_names)
-                yara_out["matches"] = rule_names[:50]
-            rules_path = yara.get("rules_path")
-            if isinstance(rules_path, str) and rules_path:
-                yara_out["rules_path"] = rules_path
-            verdict_min_severity = yara.get("verdict_min_severity")
-            if isinstance(verdict_min_severity, str) and verdict_min_severity:
-                yara_out["verdict_min_severity"] = verdict_min_severity
-            match_details = yara.get("match_details")
-            if isinstance(match_details, list):
-                details_out: list[dict] = []
-                for item in match_details[:50]:
-                    if not isinstance(item, dict):
-                        continue
-                    rule = item.get("rule")
-                    if not isinstance(rule, str) or not rule:
-                        continue
-                    out_item: dict = {
-                        "rule": rule,
-                        "severity": _yara_rule_severity(rule),
-                        "counts_toward_verdict": rule in malicious_set,
-                    }
-                    meta_raw = item.get("meta")
-                    if isinstance(meta_raw, dict) and meta_raw:
-                        meta_out: dict = {}
-                        for key in ("description", "reference", "author"):
-                            val = meta_raw.get(key)
-                            if val is None or val == "":
-                                continue
-                            if not isinstance(val, str):
-                                val = str(val)
-                            meta_out[key] = val[:500]
-                        if meta_out:
-                            out_item["meta"] = meta_out
-                    strings_raw = item.get("strings")
-                    if isinstance(strings_raw, list) and strings_raw:
-                        strings_out: list[dict] = []
-                        for s in strings_raw[:50]:
-                            if not isinstance(s, dict):
-                                continue
-                            offset = _safe_int(s.get("offset"))
-                            identifier = s.get("identifier")
-                            value = s.get("value")
-                            out_s: dict = {}
-                            if offset is not None:
-                                out_s["offset"] = offset
-                            if isinstance(identifier, str) and identifier:
-                                out_s["identifier"] = identifier
-                            if isinstance(value, str) and value:
-                                out_s["value"] = value
-                            if out_s:
-                                strings_out.append(out_s)
-                        if strings_out:
-                            out_item["strings"] = strings_out
-                    details_out.append(out_item)
-                if details_out:
-                    yara_out["match_details"] = details_out
-            truncated = yara.get("truncated")
-            if isinstance(truncated, bool):
-                yara_out["truncated"] = truncated
-            if yara_out:
-                summary["yara"] = yara_out
+        content = results.get("content")
+        if isinstance(content, dict):
+            content_out: dict = {}
+            ct = content.get("content_type")
+            if isinstance(ct, str) and ct:
+                content_out["content_type"] = ct
+            scanned = _safe_int(content.get("text_bytes_scanned"))
+            if scanned is not None:
+                content_out["text_bytes_scanned"] = scanned
+            for key in ("has_form", "has_password_field", "has_meta_refresh"):
+                val = content.get(key)
+                if isinstance(val, bool):
+                    content_out[key] = val
+            base64_max = _safe_int(content.get("base64_blob_max_len"))
+            if base64_max is not None:
+                content_out["base64_blob_max_len"] = base64_max
+            prim = content.get("js_obfuscation_primitives")
+            if isinstance(prim, list):
+                content_out["js_obfuscation_primitives"] = [str(x) for x in prim if x][:10]
+            if content_out:
+                summary["content"] = content_out
 
     return summary
 

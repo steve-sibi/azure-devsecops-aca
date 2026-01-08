@@ -7,24 +7,14 @@ services:
       timeout: 3s
       retries: 20
 
-  clamav-updater:
+  artifacts-init:
     build:
       context: ./app
-      dockerfile: clamav/Dockerfile
+      dockerfile: worker/Dockerfile.sidecar
     user: "0"
-    command: ["/usr/local/bin/clamav-freshclam-updater"]
+    command: ["sh", "-c", "mkdir -p /artifacts && chmod 777 /artifacts"]
     volumes:
-      - clamav-db:/var/lib/clamav
-    healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "for f in /var/lib/clamav/*.cvd /var/lib/clamav/*.cld /var/lib/clamav/*.cud; do [ -e \"$$f\" ] && exit 0; done; exit 1",
-        ]
-      interval: 10s
-      timeout: 3s
-      retries: 30
-      start_period: 90s
+      - artifacts:/artifacts
 
   api:
     build:
@@ -60,29 +50,55 @@ services:
       timeout: 3s
       retries: 20
 
+  fetcher:
+    build:
+      context: ./app
+      dockerfile: worker/Dockerfile.sidecar
+    environment:
+      WORKER_MODE: fetcher
+      QUEUE_NAME: ${QUEUE_NAME:-tasks}
+      SCAN_QUEUE_NAME: ${SCAN_QUEUE_NAME:-tasks-scan}
+      QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}
+      RESULT_BACKEND: ${RESULT_BACKEND:-redis}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-queue:tasks}
+      REDIS_DLQ_KEY: ${REDIS_FETCHER_DLQ_KEY:-dlq:tasks}
+      REDIS_SCAN_QUEUE_KEY: ${REDIS_SCAN_QUEUE_KEY:-queue:tasks-scan}
+      REDIS_RESULT_PREFIX: ${REDIS_RESULT_PREFIX:-scan:}
+      REDIS_RESULT_TTL_SECONDS: ${REDIS_RESULT_TTL_SECONDS:-0}
+      SCAN_ENGINE: ${SCAN_ENGINE:-reputation,content}
+      CONTENT_MAX_TEXT_BYTES: ${CONTENT_MAX_TEXT_BYTES:-200000}
+      CONTENT_MAX_BASE64_MATCH: ${CONTENT_MAX_BASE64_MATCH:-50000}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-10}
+      MAX_DOWNLOAD_BYTES: ${MAX_DOWNLOAD_BYTES:-1048576}
+      MAX_REDIRECTS: ${MAX_REDIRECTS:-5}
+      BLOCK_PRIVATE_NETWORKS: ${BLOCK_PRIVATE_NETWORKS:-true}
+      ARTIFACT_DIR: /artifacts
+    volumes:
+      - artifacts:/artifacts
+    depends_on:
+      redis:
+        condition: service_healthy
+      artifacts-init:
+        condition: service_completed_successfully
+
   worker:
     build:
       context: ./app
       dockerfile: worker/Dockerfile.sidecar
     environment:
-      QUEUE_NAME: ${QUEUE_NAME:-tasks}
+      WORKER_MODE: analyzer
+      QUEUE_NAME: ${SCAN_QUEUE_NAME:-tasks-scan}
       QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}
       RESULT_BACKEND: ${RESULT_BACKEND:-redis}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
-      REDIS_QUEUE_KEY: ${REDIS_QUEUE_KEY:-queue:tasks}
-      REDIS_DLQ_KEY: ${REDIS_DLQ_KEY:-dlq:tasks}
+      REDIS_QUEUE_KEY: ${REDIS_SCAN_QUEUE_KEY:-queue:tasks-scan}
+      REDIS_DLQ_KEY: ${REDIS_DLQ_KEY:-dlq:tasks-scan}
       REDIS_RESULT_PREFIX: ${REDIS_RESULT_PREFIX:-scan:}
       REDIS_RESULT_TTL_SECONDS: ${REDIS_RESULT_TTL_SECONDS:-0}
-      SCAN_ENGINE: ${SCAN_ENGINE:-clamav}
-      CLAMAV_HOST: 127.0.0.1
-      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
-      YARA_RULES_PATH: ${YARA_RULES_PATH:-yara-rules/default.yar}
-      YARA_TIMEOUT: ${YARA_TIMEOUT:-5}
-      YARA_MAX_MATCHES: ${YARA_MAX_MATCHES:-50}
-      YARA_MAX_STRING_MATCHES: ${YARA_MAX_STRING_MATCHES:-25}
-      YARA_MAX_STRING_LENGTH: ${YARA_MAX_STRING_LENGTH:-200}
-      YARA_VERDICT_MIN_SEVERITY: ${YARA_VERDICT_MIN_SEVERITY:-high}
-      YARA_BINARY: ${YARA_BINARY:-yara}
+      SCAN_ENGINE: ${SCAN_ENGINE:-reputation,content}
+      CONTENT_MAX_TEXT_BYTES: ${CONTENT_MAX_TEXT_BYTES:-200000}
+      CONTENT_MAX_BASE64_MATCH: ${CONTENT_MAX_BASE64_MATCH:-50000}
       REPUTATION_ALLOWLIST_HOSTS: ${REPUTATION_ALLOWLIST_HOSTS:-}
       REPUTATION_BLOCKLIST_HOSTS: ${REPUTATION_BLOCKLIST_HOSTS:-}
       REPUTATION_MIN_SCORE: ${REPUTATION_MIN_SCORE:-60}
@@ -93,13 +109,15 @@ services:
       MAX_RETRIES: ${MAX_RETRIES:-5}
       MAX_WAIT: ${MAX_WAIT:-5}
       BLOCK_PRIVATE_NETWORKS: ${BLOCK_PRIVATE_NETWORKS:-true}
+      ARTIFACT_DIR: /artifacts
+      ARTIFACT_DELETE_ON_SUCCESS: ${ARTIFACT_DELETE_ON_SUCCESS:-false}
     volumes:
-      - clamav-db:/var/lib/clamav:ro
+      - artifacts:/artifacts
     depends_on:
       redis:
         condition: service_healthy
-      clamav-updater:
-        condition: service_healthy
+      artifacts-init:
+        condition: service_completed_successfully
 
 volumes:
-  clamav-db:
+  artifacts:

@@ -2,15 +2,12 @@ import json
 import logging
 import os
 import re
-import shutil
 import signal as os_signal
-import subprocess
-import tempfile
 import time
 import hashlib
-import struct
-import socket
+import secrets
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urljoin
 
@@ -57,29 +54,22 @@ REDIS_DLQ_KEY = os.getenv("REDIS_DLQ_KEY", f"dlq:{QUEUE_NAME}")
 REDIS_RESULT_PREFIX = os.getenv("REDIS_RESULT_PREFIX", "scan:")
 REDIS_RESULT_TTL_SECONDS = int(os.getenv("REDIS_RESULT_TTL_SECONDS", "0"))
 
-# ---- Scan engine (ClamAV) ----
-CLAMAV_HOST = os.getenv("CLAMAV_HOST")  # e.g. "127.0.0.1" (local clamd sidecar)
-CLAMAV_HOSTS = os.getenv(
-    "CLAMAV_HOSTS"
-)  # optional CSV of fallbacks, tried in order
-CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
-CLAMAV_TIMEOUT = float(os.getenv("CLAMAV_TIMEOUT", "10"))
-CLAMAV_MAX_RETRIES = int(os.getenv("CLAMAV_MAX_RETRIES", "2"))
-CLAMAV_RETRY_DEADLINE_SECONDS = float(os.getenv("CLAMAV_RETRY_DEADLINE_SECONDS", "30"))
-CLAMAV_CHUNK_SIZE = int(os.getenv("CLAMAV_CHUNK_SIZE", "16384"))
-SCAN_ENGINE = os.getenv(
-    "SCAN_ENGINE", "clamav" if (CLAMAV_HOSTS or CLAMAV_HOST) else "reputation"
-).strip().lower()
+# ---- Artifact handoff (fetcher -> analyzer) ----
+ARTIFACT_DIR = os.getenv("ARTIFACT_DIR", "/artifacts").strip() or "/artifacts"
+ARTIFACT_DELETE_ON_SUCCESS = os.getenv("ARTIFACT_DELETE_ON_SUCCESS", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
 
-# ---- Scan engine (YARA, bundled in the worker container) ----
-YARA_RULES_PATH = os.getenv("YARA_RULES_PATH", "yara-rules/default.yar")
-YARA_TIMEOUT = float(os.getenv("YARA_TIMEOUT", "5"))
-YARA_MAX_MATCHES = int(os.getenv("YARA_MAX_MATCHES", "50"))
-YARA_MAX_STRING_MATCHES = int(os.getenv("YARA_MAX_STRING_MATCHES", "25"))
-YARA_MAX_STRING_LENGTH = int(os.getenv("YARA_MAX_STRING_LENGTH", "200"))
-YARA_VERDICT_MIN_SEVERITY = os.getenv("YARA_VERDICT_MIN_SEVERITY", "high").strip().lower()
-YARA_BINARY = os.getenv("YARA_BINARY", "yara")
-_YARA_RULE_META_CACHE: dict[str, tuple[float, dict[str, dict[str, str]]]] = {}
+# ---- Scan engines (URL safety) ----
+# - reputation: URL/domain heuristics + allow/block lists
+# - content: lightweight content heuristics on the fetched response body
+SCAN_ENGINE = os.getenv("SCAN_ENGINE", "reputation,content").strip().lower()
+
+# Content heuristics tuning (keep conservative to reduce false positives)
+CONTENT_MAX_TEXT_BYTES = int(os.getenv("CONTENT_MAX_TEXT_BYTES", str(200_000)))
+CONTENT_MAX_BASE64_MATCH = int(os.getenv("CONTENT_MAX_BASE64_MATCH", str(50_000)))
 
 # ---- Scan engine (URL reputation) ----
 REPUTATION_BLOCKLIST_HOSTS = os.getenv("REPUTATION_BLOCKLIST_HOSTS", "")
@@ -151,9 +141,68 @@ def process(task: dict):
     engines = _get_scan_engines()
 
     try:
-        content, size_bytes, download, url_evaluations, url_signals, reputation_summary = _download(
-            url, engines=engines
-        )
+        artifact_path = task.get("artifact_path")
+        if isinstance(artifact_path, str) and artifact_path.strip():
+            artifact_name = Path(artifact_path).name
+            full_path = Path(ARTIFACT_DIR) / artifact_name
+            content = full_path.read_bytes()
+            size_bytes = len(content)
+
+            expected_size = task.get("artifact_size_bytes")
+            if expected_size is not None:
+                try:
+                    if int(expected_size) != size_bytes:
+                        raise ValueError(
+                            f"artifact size mismatch (expected={expected_size} actual={size_bytes})"
+                        )
+                except Exception:
+                    pass
+
+            expected_sha = task.get("artifact_sha256")
+            if isinstance(expected_sha, str) and expected_sha:
+                actual_sha = hashlib.sha256(content).hexdigest()
+                if not secrets.compare_digest(actual_sha, expected_sha.lower()):
+                    raise ValueError("artifact sha256 mismatch")
+
+            download = task.get("download") if isinstance(task.get("download"), dict) else {}
+            url_evaluations = (
+                task.get("url_evaluations")
+                if isinstance(task.get("url_evaluations"), list)
+                else []
+            )
+            url_signals_raw = task.get("url_signals")
+            url_signals = []
+            if isinstance(url_signals_raw, list):
+                for item in url_signals_raw:
+                    if not isinstance(item, dict):
+                        continue
+                    url_signals.append(
+                        signal(
+                            source=str(item.get("source") or "unknown"),
+                            verdict=str(item.get("verdict") or "error"),
+                            severity=str(item.get("severity") or "info"),
+                            weight=int(item.get("weight") or 0),
+                            evidence=item.get("evidence")
+                            if isinstance(item.get("evidence"), dict)
+                            else None,
+                            ttl=int(item.get("ttl") or 0),
+                        )
+                    )
+
+            reputation_summary = (
+                task.get("reputation_summary")
+                if isinstance(task.get("reputation_summary"), dict)
+                else None
+            )
+        else:
+            (
+                content,
+                size_bytes,
+                download,
+                url_evaluations,
+                url_signals,
+                reputation_summary,
+            ) = _download(url, engines=engines)
     except DownloadBlockedError as e:
         duration_ms = int((time.time() - start) * 1000)
         verdict = str(e.decision.get("final_verdict") or "malicious").lower()
@@ -192,6 +241,13 @@ def process(task: dict):
         reputation_summary=reputation_summary,
     )
     duration_ms = int((time.time() - start) * 1000)
+    if ARTIFACT_DELETE_ON_SUCCESS:
+        artifact_path = task.get("artifact_path")
+        if isinstance(artifact_path, str) and artifact_path.strip():
+            try:
+                (Path(ARTIFACT_DIR) / Path(artifact_path).name).unlink(missing_ok=True)
+            except Exception:
+                pass
     _save_result(
         job_id=job_id,
         status="completed",
@@ -349,7 +405,7 @@ def _validate_url_for_download(url: str):
     return canonical
 
 
-_SUPPORTED_SCAN_ENGINES = {"clamav", "yara", "reputation"}
+_SUPPORTED_SCAN_ENGINES = {"content", "reputation"}
 
 
 def _parse_csv(spec: str) -> List[str]:
@@ -555,210 +611,136 @@ def _parse_scan_engines(spec: str) -> List[str]:
 
 def _get_scan_engines() -> List[str]:
     engines = _parse_scan_engines(SCAN_ENGINE)
-    return engines if engines else ["reputation"]
+    if not engines:
+        engines = ["reputation", "content"]
+    if "reputation" not in engines:
+        engines.insert(0, "reputation")
+    return engines
 
 
-def _parse_yara_rule_metadata(rules_text: str) -> dict[str, dict[str, str]]:
-    rule_re = re.compile(r"^\s*(?:private\s+)?rule\s+([A-Za-z_][A-Za-z0-9_]*)\b")
-    section_re = re.compile(r"^\s*(meta|strings|condition)\s*:\s*$", re.IGNORECASE)
-    kv_re = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=\s*(.+?)\s*$")
-
-    out: dict[str, dict[str, str]] = {}
-    current_rule: Optional[str] = None
-    in_meta = False
-
-    for raw_line in (rules_text or "").splitlines():
-        line = raw_line.rstrip()
-
-        m_rule = rule_re.match(line)
-        if m_rule:
-            current_rule = m_rule.group(1)
-            in_meta = False
-            out.setdefault(current_rule, {})
-            continue
-
-        if current_rule is None:
-            continue
-
-        if line.strip().startswith("}"):
-            current_rule = None
-            in_meta = False
-            continue
-
-        m_section = section_re.match(line)
-        if m_section:
-            section = m_section.group(1).lower()
-            in_meta = section == "meta"
-            continue
-
-        if not in_meta:
-            continue
-
-        m_kv = kv_re.match(line)
-        if not m_kv:
-            continue
-
-        key = m_kv.group(1).strip()
-        value = m_kv.group(2).strip()
-        if len(value) >= 2 and (
-            (value.startswith('"') and value.endswith('"'))
-            or (value.startswith("'") and value.endswith("'"))
-        ):
-            value = value[1:-1]
-            value = value.replace('\\"', '"').replace("\\'", "'")
-
-        if current_rule is not None and key and value:
-            out.setdefault(current_rule, {})[key] = value
-
-    # Drop rules with no metadata to keep output small.
-    return {k: v for k, v in out.items() if v}
+_B64_RE = re.compile(r"(?:[A-Za-z0-9+/]{1000,}={0,2})")
+_PASSWORD_RE = re.compile(r"type\s*=\s*['\"]?password['\"]?", re.IGNORECASE)
+_FORM_RE = re.compile(r"<\s*form\b", re.IGNORECASE)
+_META_REFRESH_RE = re.compile(r"http-equiv\s*=\s*['\"]refresh['\"]", re.IGNORECASE)
 
 
-def _load_yara_rule_metadata(rules_path: str) -> dict[str, dict[str, str]]:
-    path = (rules_path or "").strip()
-    if not path:
-        return {}
+def _content_scan(
+    content: bytes, *, url: str, download: Optional[dict] = None
+) -> tuple[dict, list[Signal]]:
+    content_type = ""
+    if isinstance(download, dict):
+        ct = download.get("content_type")
+        if isinstance(ct, str) and ct:
+            content_type = ct.strip().lower()
 
+    sample = content[: max(0, CONTENT_MAX_TEXT_BYTES)]
+    text = ""
     try:
-        mtime = os.path.getmtime(path)
-    except OSError:
-        return {}
+        text = sample.decode("utf-8", "replace")
+    except Exception:
+        try:
+            text = sample.decode("latin-1", "replace")
+        except Exception:
+            text = ""
 
-    cached = _YARA_RULE_META_CACHE.get(path)
-    if cached and cached[0] == mtime:
-        return cached[1]
+    has_form = bool(text and _FORM_RE.search(text))
+    has_password = bool(text and _PASSWORD_RE.search(text))
+    has_meta_refresh = bool(text and _META_REFRESH_RE.search(text))
 
-    try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
-            text = f.read()
-    except OSError:
-        return {}
+    primitives = [
+        "eval(",
+        "unescape(",
+        "fromcharcode",
+        "atob(",
+        "btoa(",
+    ]
+    primitive_hits = [p for p in primitives if text and p in text.lower()]
 
-    meta = _parse_yara_rule_metadata(text)
-    _YARA_RULE_META_CACHE[path] = (mtime, meta)
-    return meta
+    b64_max_len = 0
+    if text:
+        m = _B64_RE.search(text)
+        if m:
+            b64_max_len = min(len(m.group(0)), CONTENT_MAX_BASE64_MATCH)
 
+    features = {
+        "content_type": content_type,
+        "text_bytes_scanned": len(sample),
+        "has_form": has_form,
+        "has_password_field": has_password,
+        "has_meta_refresh": has_meta_refresh,
+        "js_obfuscation_primitives": primitive_hits[:10],
+        "base64_blob_max_len": b64_max_len,
+    }
 
-def _yara_scan(content: bytes) -> tuple[str, dict]:
-    rules_path = (YARA_RULES_PATH or "").strip()
-    if not rules_path:
-        raise ValueError("YARA_RULES_PATH is required when SCAN_ENGINE includes 'yara'")
-    if not os.path.exists(rules_path):
-        raise ValueError(f"YARA_RULES_PATH not found: {rules_path}")
+    signals: list[Signal] = []
 
-    yara_bin = (YARA_BINARY or "yara").strip()
-    if not shutil.which(yara_bin):
-        raise ValueError(f"YARA binary not found on PATH: {yara_bin}")
-
-    tmp_path: Optional[str] = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            prefix="scan-", suffix=".bin", delete=False
-        ) as f:
-            tmp_path = f.name
-            f.write(content)
-
-        cmd = [yara_bin, "-s", rules_path, tmp_path]
-        proc = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=YARA_TIMEOUT,
-        )
-        if proc.returncode not in (0, 1):
-            stderr = (proc.stderr or proc.stdout or "").strip()
-            raise ValueError(
-                f"yara scan failed (exit={proc.returncode}): {stderr or 'unknown error'}"
+    if has_form and has_password:
+        signals.append(
+            signal(
+                source="content.password_form",
+                verdict="suspicious",
+                severity="high",
+                weight=80,
+                evidence={
+                    "reason": "HTML contains a password form (possible phishing/login capture)",
+                    "url": url,
+                },
             )
+        )
 
-        rule_names: List[str] = []
-        match_details: List[dict] = []
-        truncated = False
+    if has_meta_refresh:
+        signals.append(
+            signal(
+                source="content.meta_refresh",
+                verdict="suspicious",
+                severity="medium",
+                weight=50,
+                evidence={"reason": "HTML contains a meta refresh redirect", "url": url},
+            )
+        )
 
-        current: Optional[dict] = None
-        if proc.returncode == 0:
-            for raw_line in (proc.stdout or "").splitlines():
-                line = raw_line.strip()
-                if not line:
-                    continue
+    if len(primitive_hits) >= 2:
+        signals.append(
+            signal(
+                source="content.js_obfuscation",
+                verdict="suspicious",
+                severity="medium",
+                weight=60,
+                evidence={
+                    "reason": "JavaScript contains common obfuscation primitives",
+                    "matches": primitive_hits[:10],
+                    "url": url,
+                },
+            )
+        )
 
-                if line.startswith("0x") and current is not None:
-                    m = re.match(r"^0x([0-9a-fA-F]+):([^:]+):\\s*(.*)$", line)
-                    if not m:
-                        continue
-                    if len(current["strings"]) >= max(1, YARA_MAX_STRING_MATCHES):
-                        continue
-                    offset = int(m.group(1), 16)
-                    identifier = m.group(2).strip()
-                    value = m.group(3).strip()
-                    if len(value) > max(0, YARA_MAX_STRING_LENGTH):
-                        value = value[: max(0, YARA_MAX_STRING_LENGTH)] + "…"
-                    current["strings"].append(
-                        {"offset": offset, "identifier": identifier, "value": value}
-                    )
-                    continue
+    if b64_max_len >= 5000:
+        signals.append(
+            signal(
+                source="content.large_base64",
+                verdict="suspicious",
+                severity="low",
+                weight=40,
+                evidence={
+                    "reason": "Response contains a large base64 blob (possible obfuscation/embedding)",
+                    "max_len": b64_max_len,
+                    "url": url,
+                },
+            )
+        )
 
-                # Start of a new match: "<rule> <target>" (target is the temp path).
-                rule = line.split(maxsplit=1)[0]
-                if not rule:
-                    continue
+    if not signals:
+        signals.append(
+            signal(
+                source="content.ok",
+                verdict="benign",
+                severity="info",
+                weight=10,
+                evidence={"reason": "No suspicious content indicators found", "url": url},
+            )
+        )
 
-                if rule not in rule_names:
-                    rule_names.append(rule)
-                current = {"rule": rule, "strings": []}
-                match_details.append(current)
-
-                if len(rule_names) >= max(1, YARA_MAX_MATCHES):
-                    truncated = True
-                    break
-
-        if match_details:
-            rule_meta = _load_yara_rule_metadata(rules_path)
-            if rule_meta:
-                for m in match_details:
-                    rule = m.get("rule")
-                    if not isinstance(rule, str) or not rule:
-                        continue
-                    meta = rule_meta.get(rule)
-                    if meta:
-                        m["meta"] = meta
-
-        verdict_min_severity = (YARA_VERDICT_MIN_SEVERITY or "high").strip().lower()
-        severity_rank = {"info": 0, "low": 1, "medium": 2, "high": 3}
-        min_rank = severity_rank.get(verdict_min_severity, 3)
-        malicious_matches = [
-            rule
-            for rule in rule_names
-            if severity_rank.get(_yara_rule_severity(rule), 3) >= min_rank
-        ]
-
-        verdict = "malicious" if malicious_matches else "clean"
-        return verdict, {
-            "yara": {
-                "matches": rule_names,
-                "malicious_matches": malicious_matches,
-                "match_details": match_details,
-                "rules_path": rules_path,
-                "verdict_min_severity": verdict_min_severity,
-                "truncated": truncated,
-            }
-        }
-    except subprocess.TimeoutExpired as e:
-        raise ValueError(f"yara scan timed out after {YARA_TIMEOUT}s") from e
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-
-
-def _yara_rule_severity(rule_name: str) -> str:
-    upper = (rule_name or "").upper()
-    for suffix in ("_INFO", "_LOW", "_MEDIUM", "_HIGH"):
-        if upper.endswith(suffix):
-            return suffix.lstrip("_").lower()
-    return "high"
+    return {"content": features}, signals
 
 
 def _scan_bytes(
@@ -780,92 +762,12 @@ def _scan_bytes(
         if engine == "reputation":
             if isinstance(reputation_summary, dict) and reputation_summary:
                 results["reputation"] = reputation_summary
-        elif engine == "clamav":
-            if not _get_clamav_hosts():
-                raise ValueError(
-                    "CLAMAV_HOST or CLAMAV_HOSTS is required when SCAN_ENGINE includes 'clamav'"
-                )
-            scan_verdict, clamav_details = _clamav_instream_scan(content)
-            clam = clamav_details.get("clamav", clamav_details)
-            results["clamav"] = clam
-            if scan_verdict == "malicious":
-                signature = ""
-                if isinstance(clam, dict):
-                    signature = str(clam.get("signature") or "")
-                signals.append(
-                    signal(
-                        source="clamav.sig",
-                        verdict="malicious",
-                        severity="critical",
-                        weight=100,
-                        evidence={
-                            "signature": signature,
-                            "reason": f"ClamAV detected {signature or 'a known signature'}",
-                        },
-                    )
-                )
-            else:
-                signals.append(
-                    signal(
-                        source="clamav.result",
-                        verdict="benign",
-                        severity="info",
-                        weight=20,
-                        evidence={"reason": "ClamAV scan OK"},
-                    )
-                )
-        elif engine == "yara":
-            scan_verdict, yara_details = _yara_scan(content)
-            yara = yara_details.get("yara", yara_details)
-            results["yara"] = yara
-
-            malicious_matches: list[str] = []
-            matches: list[str] = []
-            if isinstance(yara, dict):
-                mm = yara.get("malicious_matches")
-                if isinstance(mm, list):
-                    malicious_matches = [str(x) for x in mm if x]
-                m = yara.get("matches")
-                if isinstance(m, list):
-                    matches = [str(x) for x in m if x]
-
-            yara_weight = {"info": 20, "low": 40, "medium": 70, "high": 90, "critical": 100}
-            if malicious_matches:
-                for rule in malicious_matches[:50]:
-                    sev = _yara_rule_severity(rule)
-                    signals.append(
-                        signal(
-                            source=f"yara.rule.{rule}",
-                            verdict="malicious",
-                            severity=sev,
-                            weight=yara_weight.get(sev, 90),
-                            evidence={"rule": rule, "reason": f"YARA match: {rule}"},
-                        )
-                    )
-            elif matches:
-                signals.append(
-                    signal(
-                        source="yara.match",
-                        verdict="benign",
-                        severity="info",
-                        weight=5,
-                        evidence={
-                            "match_count": len(matches),
-                            "matched_rules": matches[:25],
-                            "reason": "YARA matched rules below verdict threshold (informational)",
-                        },
-                    )
-                )
-            else:
-                signals.append(
-                    signal(
-                        source="yara.result",
-                        verdict="benign",
-                        severity="info",
-                        weight=20,
-                        evidence={"reason": "YARA: no matches"},
-                    )
-                )
+        elif engine == "content":
+            content_results, content_signals = _content_scan(
+                content, url=url, download=download
+            )
+            results.update(content_results)
+            signals.extend(content_signals)
         else:
             raise ValueError(f"unsupported scan engine: {engine}")
 
@@ -895,94 +797,6 @@ def _scan_bytes(
     if details.get("canonical_url") is None:
         details.pop("canonical_url", None)
     return decision.final_verdict, details
-
-
-def _clamav_instream_scan(content: bytes) -> tuple[str, dict]:
-    """Scan bytes via clamd INSTREAM protocol."""
-    hosts = _get_clamav_hosts()
-    if not hosts:
-        raise ValueError("clamav scan failed: no CLAMAV_HOST(S) configured")
-
-    last_err: Optional[Exception] = None
-
-    deadline = time.monotonic() + CLAMAV_RETRY_DEADLINE_SECONDS
-    for attempt in range(CLAMAV_MAX_RETRIES + 1):
-        for host in hosts:
-            # clamd can accept INSTREAM as either newline-delimited or null-terminated.
-            for cmd in (b"zINSTREAM\0", b"INSTREAM\n"):
-                try:
-                    with socket.create_connection(
-                        (host, CLAMAV_PORT), timeout=CLAMAV_TIMEOUT
-                    ) as sock:
-                        sock.settimeout(CLAMAV_TIMEOUT)
-
-                        sock.sendall(cmd)
-                        view = memoryview(content)
-                        for i in range(0, len(content), CLAMAV_CHUNK_SIZE):
-                            chunk = view[i : i + CLAMAV_CHUNK_SIZE]
-                            sock.sendall(struct.pack("!I", len(chunk)))
-                            sock.sendall(chunk)
-                        sock.sendall(struct.pack("!I", 0))
-
-                        buf = b""
-                        while True:
-                            part = sock.recv(4096)
-                            if not part:
-                                break
-                            buf += part
-                            if b"\0" in buf or b"\n" in buf:
-                                break
-
-                        line = (
-                            buf.split(b"\0", 1)[0]
-                            .split(b"\n", 1)[0]
-                            .decode("utf-8", "replace")
-                            .strip()
-                        )
-                        if not line:
-                            raise ValueError("empty clamd response")
-
-                        # Typical responses:
-                        #   "stream: OK"
-                        #   "stream: Eicar-Test-Signature FOUND"
-                        #   "stream: <reason> ERROR"
-                        if line.endswith(" OK"):
-                            return "clean", {"clamav": {"result": "OK"}}
-                        if line.endswith(" FOUND"):
-                            signature = line.split(": ", 1)[1].rsplit(" FOUND", 1)[0]
-                            return "malicious", {
-                                "clamav": {"result": "FOUND", "signature": signature}
-                            }
-                        if line.endswith(" ERROR") or " ERROR" in line:
-                            raise ValueError(f"clamd error: {line}")
-
-                        # Unexpected response; fail closed.
-                        raise ValueError(f"unexpected clamd response: {line}")
-                except (OSError, ValueError) as e:
-                    last_err = RuntimeError(f"{host}:{CLAMAV_PORT}: {e}")
-
-        if attempt >= CLAMAV_MAX_RETRIES or time.monotonic() >= deadline:
-            break
-        time.sleep(min(0.5 * (2**attempt), 10.0))
-
-    raise ValueError(f"clamav scan failed: {last_err}")
-
-
-def _get_clamav_hosts() -> List[str]:
-    hosts: List[str] = []
-    if CLAMAV_HOSTS:
-        hosts.extend([h.strip() for h in CLAMAV_HOSTS.split(",") if h.strip()])
-    if CLAMAV_HOST:
-        hosts.append(CLAMAV_HOST.strip())
-
-    unique_hosts: List[str] = []
-    seen: set[str] = set()
-    for host in hosts:
-        if host in seen:
-            continue
-        seen.add(host)
-        unique_hosts.append(host)
-    return unique_hosts
 
 
 def _save_result(
@@ -1065,27 +879,6 @@ def main():
 
     engines = _get_scan_engines()
     logging.info("[worker] Scan engines: %s", engines)
-
-    if "clamav" in engines:
-        hosts = _get_clamav_hosts()
-        if not hosts:
-            raise RuntimeError(
-                "SCAN_ENGINE includes 'clamav' but CLAMAV_HOST/CLAMAV_HOSTS is not set"
-            )
-        logging.info("[worker] ClamAV configured: hosts=%s port=%s", hosts, CLAMAV_PORT)
-
-    if "yara" in engines:
-        rules_path = (YARA_RULES_PATH or "").strip()
-        if not rules_path:
-            raise RuntimeError(
-                "SCAN_ENGINE includes 'yara' but YARA_RULES_PATH is not set"
-            )
-        if not os.path.exists(rules_path):
-            raise RuntimeError(f"YARA_RULES_PATH not found: {rules_path}")
-        yara_bin = (YARA_BINARY or "yara").strip()
-        if not shutil.which(yara_bin):
-            raise RuntimeError(f"YARA binary not found on PATH: {yara_bin}")
-        logging.info("[worker] YARA configured: rules=%s", rules_path)
 
     logging.info("[worker] started; waiting for messages...")
 

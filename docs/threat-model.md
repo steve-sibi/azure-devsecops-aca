@@ -7,15 +7,15 @@ This is a demo project, but it intentionally implements a few “real-world” c
 - API surface (public ingress) and API keys
 - Service Bus queue messages (scan jobs)
 - Scan results (Table Storage or Redis locally)
+- Fetched artifacts (Azure Files share; Docker volume locally)
 - Container images + build pipeline
-- ClamAV signature database (Azure Files share in Azure; Docker volume locally)
 
 ## Trust boundaries
 
 - Public internet → API (`POST /scan`)
 - API → queue backend (Service Bus / Redis)
-- Worker → public internet (downloads URLs)
-- Worker → ClamAV (local `clamd` process)
+- Fetcher → public internet (downloads URLs)
+- Fetcher/Worker → artifacts share (Azure Files / Docker volume)
 - Apps → result store (Table Storage / Redis)
 - GitHub Actions → Azure (OIDC) → Terraform / deployments
 
@@ -29,7 +29,7 @@ This is a demo project, but it intentionally implements a few “real-world” c
 ### Malicious content / decompression bombs / large payloads
 
 - Download is streamed with a hard size cap (`MAX_DOWNLOAD_BYTES`) and timeouts (`REQUEST_TIMEOUT`).
-- Scanning is done on the downloaded bytes (ClamAV/YARA) without executing content.
+- Scanning is done on the downloaded bytes (URL/domain reputation + lightweight content heuristics) without executing content.
 
 ### Abuse / DoS of the API
 
@@ -51,4 +51,3 @@ This is a demo project, but it intentionally implements a few “real-world” c
 - Private networking / Private Link / WAF
 - Strong multi-tenant auth and per-user API keys
 - Sandbox detonation of payloads
-
