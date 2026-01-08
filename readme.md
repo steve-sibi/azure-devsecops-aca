@@ -49,7 +49,7 @@ curl -i -sS -X POST http://localhost:8000/scan \
   -d '{"url":"https://127.0.0.1","type":"url"}'
 ```
 
-> Note: first local run may take a few minutes while `clamav-updater` downloads signatures. For faster local iteration, set `SCAN_ENGINE=reputation` (or `SCAN_ENGINE=yara`) in `.env`.
+> Note: default `SCAN_ENGINE=reputation,content`. If you only want URL reputation heuristics (no body inspection), set `SCAN_ENGINE=reputation` in `.env`.
 
 ## 1) Architecture
 
@@ -70,31 +70,38 @@ HTTP POST ─►│  FastAPI     │ ──────────────�
                     │ via KEDA                                                  │
                     ▼                                                           │
            ┌────────────────────┐         UAMI + KV ref                         │
-           │ Worker (Container  │◄──────────────────────────────────────────────┘
+           │ Fetcher (Container │◄──────────────────────────────────────────────┘
            │ Apps, min=0)       │
-           └────────────────────┘
-                 │         │
-        (writes results)   │ (scan via clamd localhost:3310)
-                 ▼         ▼
-      ┌────────────────┐  ┌─────────────────────┐
-      │ Azure Table    │  │  ClamAV (clamd)     │
-      │ scanresults    │  │  inside worker      │
-      └────────────────┘  └─────────────────────┘
-                 ▲
-                 │ (signatures via shared volume)
+           └────────┬───────────┘
+                    │ (download + store artifact)
+                    ▼
       ┌─────────────────────┐
       │ Azure Files share   │
-      │ (<prefix>-clamav-db)│
-      └─────────────────────┘
-                 ▲
-                 │ (freshclam update loop)
+      │ (<prefix>-artifacts)│
+      └────────┬────────────┘
+               │ (enqueue scan job)
+               ▼
       ┌─────────────────────┐
-      │ ClamAV updater app  │
-      │ (<prefix>-clamav-updater) │
-      └─────────────────────┘
-                  │
-            (logs/metrics)
-                  ▼
+      │ Service Bus Queue   │
+      │ (<tasks>-scan)      │
+      └────────┬────────────┘
+               │ (scale trigger via KEDA)
+               ▼
+      ┌────────────────────┐
+      │ Worker (Container  │
+      │ Apps, min=0)       │
+      └────────┬───────────┘
+               │
+      (analyze artifact bytes:
+       reputation + content)
+               ▼
+    ┌────────────────┐
+    │ Azure Table    │
+    │ scanresults    │
+    └────────────────┘
+            │
+      (logs/metrics)
+            ▼
       ┌─────────────────────┐   (optional traces to App Insights)
       │    Log Analytics    │
       └─────────────────────┘
@@ -108,14 +115,14 @@ sequenceDiagram
   participant API as FastAPI (Container App)
   participant SB as Service Bus Queue (tasks)
   participant KEDA as KEDA Scaler
+  participant F as Fetcher (Container App)
+  participant FS as Azure Files (artifacts)
+  participant SB2 as Service Bus Queue (tasks-scan)
   participant W as Worker (Container App)
-  participant AV as ClamAV (clamd localhost)
-  participant U as ClamAV updater (freshclam)
   participant T as Azure Table Storage (scanresults)
   participant LA as Log Analytics
 
-  Note over API,W: Secrets (Service Bus + ApiKey + results conn) come from Key Vault via ACA<br/>secret references at deploy time using the UAMI (no runtime KV calls).
-  Note over U,W: Signatures persist in an Azure Files share mounted at /var/lib/clamav.
+  Note over API,F,W: Secrets (Service Bus + ApiKey + results conn) come from Key Vault via ACA<br/>secret references at deploy time using the UAMI (no runtime KV calls).
 
   C->>API: POST /scan {url}
   API->>T: Upsert status=queued
@@ -123,14 +130,24 @@ sequenceDiagram
 
   KEDA->>SB: Poll queue length
   SB-->>KEDA: messageCount
+  KEDA-->>F: Scale out replicas (min 0..max 5)
+
+  F->>SB: Receive messages
+  F->>F: Download (SSRF protected)
+  F->>FS: Write artifact bytes
+  F->>SB2: Send scan message (artifact ref)
+  F->>T: Upsert status=queued_scan
+  F->>SB: Complete message
+
+  KEDA->>SB2: Poll queue length
+  SB2-->>KEDA: messageCount
   KEDA-->>W: Scale out replicas (min 0..max 5)
 
-  W->>SB: Receive messages
-  W->>W: Download (SSRF protected)
-  W->>AV: Stream bytes (INSTREAM)
-  AV-->>W: Verdict/signature
+  W->>SB2: Receive messages
+  W->>FS: Read artifact bytes
+  W->>W: Analyze (reputation + content heuristics)
   W->>T: Upsert status=completed/error
-  W->>SB: Complete message
+  W->>SB2: Complete message
   W-->>LA: Console logs (processing info)
 
   C->>API: GET /scan/{job_id}
@@ -138,12 +155,10 @@ sequenceDiagram
   API-->>C: JSON result
 ```
 *Flow*
-- Client calls `POST /scan` on the API → message goes to the Service Bus **queue**
-    
-- KEDA scales the worker based on **queue depth**
-    
-- Worker receives, processes, and completes messages
-    
+- Client calls `POST /scan` on the API → message goes to the Service Bus **fetch queue** (`tasks`)
+- KEDA scales the **fetcher** based on fetch queue depth; fetcher downloads + writes artifacts to Azure Files
+- Fetcher enqueues a second message to the Service Bus **scan queue** (`<tasks>-scan`)
+- KEDA scales the **worker** based on scan queue depth; worker analyzes artifact bytes (reputation + content heuristics) and completes messages
 - Results are written to **Table Storage** (`scanresults`) and can be fetched via `GET /scan/{job_id}`
 - Logs land in **Log Analytics**; optional traces in **App Insights**
 
@@ -164,15 +179,13 @@ sequenceDiagram
     
     - Namespace: `<prefix>-sbns`
         
-    - Queue: `tasks` (default)
+    - Queue: `tasks` (default; fetch queue)
+    - Queue: `<tasks>-scan` (default; scan queue)
         
-    - **Queue SAS rules**:
+    - **Queue SAS rules** (least-privilege, queue-scoped):
         
-        - `api-send` (**Send**)
-        
-        - `worker-listen` (**Listen**)
-            
-        - `scale-manage` (**Manage** + Listen + Send; scaler needs Manage)
+        - Fetch queue (`tasks`): `api-send` (**Send**), `worker-listen` (**Listen**), `scale-manage` (**Manage**)
+        - Scan queue (`<tasks>-scan`): `fetcher-send` (**Send**), `worker-scan-listen` (**Listen**), `scale-manage-scan` (**Manage**)
             
 - **Storage (results)**:
     
@@ -190,25 +203,25 @@ sequenceDiagram
     
     - `<prefix>-api` (FastAPI; ingress on `:8000`)
         
-    - `<prefix>-worker` (KEDA scale rule on the queue; min=0, max=5; runs `clamd` locally)
+    - `<prefix>-fetcher` (KEDA scale rule on the fetch queue; min=0, max=5; downloads + writes artifacts)
 
-    - `<prefix>-clamav-updater` (ClamAV signatures updater; mounts Azure Files share and runs `freshclam` loop)
-        
-    - Azure Files share: `<prefix>-clamav-db` (persisted ClamAV signature database)
+    - `<prefix>-worker` (KEDA scale rule on the scan queue; min=0, max=5; analyzes artifact bytes)
+
+    - Azure Files share: `<prefix>-artifacts` (fetched artifacts for scan handoff)
 
 **Secrets (via Key Vault references, resolved by ACA):**
 
-- API container env `SERVICEBUS_CONN` ← KV secret **(send)**, secretRef e.g. `sb-send`
+- API container env `SERVICEBUS_CONN` ← KV secret **(send to fetch queue)**, secretRef e.g. `sb-send`
 - API container env `API_KEY` ← KV secret `ApiKey`, secretRef `api-key`
     
-- Worker container env `SERVICEBUS_CONN` ← KV secret **(listen)**, secretRef e.g. `sb-listen`
+- Fetcher container env `SERVICEBUS_CONN` ← KV secret **(listen to fetch queue)**, secretRef e.g. `sb-listen`
+- Fetcher container env `SERVICEBUS_SCAN_CONN` ← KV secret **(send to scan queue)**, secretRef e.g. `sb-scan-send`
     
-- KEDA scale rule auth uses KV secret **(manage)**, secretRef e.g. `sb-manage` (not injected into container)
+- Worker container env `SERVICEBUS_CONN` ← KV secret **(listen to scan queue)**, secretRef e.g. `sb-scan-listen`
+    
+- KEDA scale rule auth uses KV secrets **(manage)**: `sb-manage` (fetch queue) + `sb-scan-manage` (scan queue) (not injected into container)
     
 - API/worker env `RESULT_STORE_CONN` and `RESULT_TABLE` for scan status storage (from Storage Table)
-
-- Worker env `CLAMAV_HOST=127.0.0.1` + `CLAMAV_PORT=3310` point to the local `clamd` process (not secrets)
-    
 
 > The apps use the connection string path by default. You can toggle **Managed Identity** in the API for Service Bus (`USE_MANAGED_IDENTITY=true` + `SERVICEBUS_FQDN`), but it’s optional.
 
@@ -261,7 +274,7 @@ azure-devsecops-aca/
 │  │  ├─ dashboard.html
 │  │  ├─ main.py
 │  │  └─ requirements.txt
-│  ├─ clamav/             # ClamAV updater image + configs (freshclam + healthcheck helper)
+│  ├─ clamav/             # reserved for future file scanning (not used by URL scanner)
 │  │  ├─ Dockerfile
 │  │  ├─ clamd.sidecar.conf
 │  │  ├─ freshclam.conf
@@ -271,7 +284,7 @@ azure-devsecops-aca/
 │     ├─ Dockerfile.sidecar
 │     ├─ worker.py
 │     ├─ requirements.txt
-│     └─ yara-rules/
+│     └─ yara-rules/      # reserved (not used by URL scanner)
 │        └─ default.yar
 ├─ infra/
 │  ├─ backend.tf
@@ -289,7 +302,7 @@ azure-devsecops-aca/
 ## 5) CI/CD workflow
 ### CI (`.github/workflows/ci.yml`)
 
-- Build API, Worker, and ClamAV (Docker Buildx, with cache)
+- Build API and Worker (Docker Buildx, with cache)
     
 - Trivy image scan (HIGH/CRITICAL)
     
@@ -412,10 +425,8 @@ docker compose up --build
 
 Default API key: `local-dev-key` (change via `.env`).
 
-> Note: the first run may take a few minutes while `clamav-updater` downloads signatures into the shared volume (the worker waits for them).
-> If you want a faster local loop, set `SCAN_ENGINE=reputation` (or `SCAN_ENGINE=yara`) in `.env`.
-> YARA rules live at `app/worker/yara-rules/default.yar` (override with `YARA_RULES_PATH`); the worker also records matching string snippets and you can control which rule severities affect the verdict via `YARA_VERDICT_MIN_SEVERITY`.
-> You can also add `reputation` to `SCAN_ENGINE` to score domains (configurable allow/block lists + heuristics). If you want to block downloads for known-bad domains, set `REPUTATION_BLOCK_ON_MALICIOUS=true`.
+> Note: default `SCAN_ENGINE=reputation,content`. To disable body heuristics, set `SCAN_ENGINE=reputation` in `.env`.
+> If you want to block downloads for known-bad domains, set `REPUTATION_BLOCK_ON_MALICIOUS=true`.
 > Demo marker: set `ENABLE_DEMO_MARKERS=true` to treat URLs containing the substring `test-malicious` as malicious (off by default).
 
 #### Docker “\<none\>” images (dangling)
@@ -494,15 +505,6 @@ curl -sS "${API_URL}/scan/${JOB_ID}?view=summary" -H "X-API-Key: ${API_KEY}" | p
 curl -sS "${API_URL}/scan/${JOB_ID}?view=full" -H "X-API-Key: ${API_KEY}" | python3 -m json.tool
 ```
 
-Test “malicious” behavior (ClamAV): scan a URL that serves the EICAR test string over HTTPS (safe test malware signature):
-
-```bash
-curl -sS -X POST "${API_URL}/scan" \
-  -H "content-type: application/json" \
-  -H "X-API-Key: ${API_KEY}" \
-  -d '{"url":"https://<your-eicar-test-file-host>/eicar.txt","type":"url"}'
-```
-
 ### Where are scan results stored?
 
 - **Primary**: `GET /scan/{job_id}` (reads from the configured result backend: Azure Table Storage by default; Redis in `docker-compose.yml`)
@@ -527,7 +529,7 @@ curl -sS -X POST "${API_URL}/scan" \
 
 ### KEDA scaling
 
-Worker is configured:
+Fetcher and worker are configured:
 
 - `min_replicas = 0`, `max_replicas = 5`
     
@@ -537,11 +539,11 @@ custom_scale_rule {
   name             = "sb-scaler"
   custom_rule_type = "azure-servicebus"
   metadata = {
-    queueName    = var.queue_name
+    queueName    = local.scan_queue_name
     messageCount = "20"
   }
   authentication {
-    secret_name       = "sb-manage"
+    secret_name       = "sb-scan-manage"
     trigger_parameter = "connection"
   }
 }
@@ -596,7 +598,7 @@ curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}"
         
 - **KEDA not scaling**
     
-    - Ensure the scaler secret `sb-manage` comes from the `scale-manage` SAS rule (it must include **Manage**).
+    - Ensure the scaler secrets `sb-manage` (fetch queue) and `sb-scan-manage` (scan queue) come from SAS rules that include **Manage**.
         
     - Queue name in the scaler metadata matches the actual queue.
         
@@ -708,12 +710,13 @@ To restart later, just re-run the **Deploy** workflow.
 **Worker (`app/worker/worker.py`)**
 - Receives messages from the configured queue backend (Azure Service Bus by default; Redis locally).
     
-- For scan jobs: optionally runs URL/domain reputation checks (`reputation`), downloads HTTPS content with size/time caps, scans via the configured engine(s) (`clamav` via `clamd`, `yara` via bundled rules), and writes status/verdicts to the configured result backend. Retries up to `MAX_RETRIES`.
+- For scan jobs: runs URL/domain reputation checks (`reputation`) and lightweight response-body heuristics (`content`) over the fetched bytes, then writes status/verdicts to the configured result backend. Retries up to `MAX_RETRIES`.
 
 ## 14) Extending this project (future work)
 
 - **Per-user API keys**: store *hashed* keys in Table Storage, add admin endpoints to mint/revoke keys, and attach per-key quotas.
-- **Deepen scanning**: expand the bundled YARA rules, add file-type sniffing, and/or sandboxed detonation; keep ClamAV for baseline signature scanning.
+- **Deepen scanning**: integrate external reputation sources (Safe Browsing/VirusTotal), enrich redirect analysis, and add more HTML/JS heuristics.
+- **File scanning (separate track)**: add a dedicated pipeline for file artifacts and run heavier engines (e.g., ClamAV/YARA) in a separate worker.
 - **Front the API**: add API Management / Front Door + WAF, request validation, and centralized auth.
 - **DAST in CI**: run OWASP ZAP against the deployed `/scan` endpoint using a non-prod API key.
 - **Supply-chain hardening**: SBOM generation (Syft), vulnerability gating (Grype), image signing (Cosign), and provenance.
