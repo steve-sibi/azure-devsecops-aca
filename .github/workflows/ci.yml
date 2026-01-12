@@ -65,7 +65,7 @@ jobs:
           checkov -d infra --framework terraform --quiet -o sarif --output-file checkov.sarif || true
       - name: Upload Checkov SARIF
         if: ${{ always() && hashFiles('checkov.sarif') != '' }}
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: checkov.sarif
           category: checkov-terraform
@@ -113,6 +113,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Trivy scan ${{ matrix.name }} image → SARIF
+        id: trivy_scan
         continue-on-error: true
         uses: aquasecurity/trivy-action@0.20.0
         with:
@@ -120,11 +121,38 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           format: sarif
-          output: trivy-${{ matrix.name }}.sarif
+          output: ${{ github.workspace }}/trivy-${{ matrix.name }}.sarif
           exit-code: '0' # keep pipeline green; review SARIF for issues
+      - name: Prepare Trivy SARIF (${{ matrix.name }})
+        id: trivy_sarif
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sarif_file="$GITHUB_WORKSPACE/trivy-${{ matrix.name }}.sarif"
+          scan_outcome="${{ steps.trivy_scan.outcome }}"
+
+          if [ -s "$sarif_file" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
+
+          if [ "$scan_outcome" = "success" ]; then
+            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
+            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "sarif_file=" >> "$GITHUB_OUTPUT"
       - name: Upload Trivy SARIF (${{ matrix.name }})
-        if: ${{ always() && hashFiles(format('trivy-{0}.sarif', matrix.name)) != '' }}
-        uses: github/codeql-action/upload-sarif@v3
+        if: ${{ always() && steps.trivy_sarif.outputs.found == 'true' }}
+        uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: trivy-${{ matrix.name }}.sarif
+          sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}
           category: trivy-${{ matrix.name }}
