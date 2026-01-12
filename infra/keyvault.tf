@@ -85,11 +85,12 @@ resource "azurerm_key_vault_secret" "sb_scan_manage" {
 }
 
 resource "azurerm_key_vault_secret" "results_conn" {
-  name         = "ScanResultsConn"
-  value        = azurerm_storage_account.results.primary_connection_string
-  key_vault_id = data.azurerm_key_vault.kv.id
-  content_type = "table-connection-string"
-  depends_on   = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+  name            = "ScanResultsConn"
+  value           = azurerm_storage_account.results.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "table-connection-string"
+  expiration_date = timeadd(timestamp(), "8760h")
+  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 # Give the UAMI read on KV so apps can resolve secrets at creation time
