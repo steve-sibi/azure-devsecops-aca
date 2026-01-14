@@ -426,6 +426,7 @@ docker compose up --build
 Default API key: `local-dev-key` (change via `.env`).
 
 > Note: default `SCAN_ENGINE=reputation,content`. To disable body heuristics, set `SCAN_ENGINE=reputation` in `.env`.
+> Optional external checks: set `SCAN_ENGINE=reputation,urlhaus,urlscan,content` to include URLhaus (known-bad, no API key) and urlscan.io (requires `URLSCAN_API_KEY`; free tier is typically public). On Azure, set Terraform vars `scan_engine` and `urlscan_api_key`.
 > If you want to block downloads for known-bad domains, set `REPUTATION_BLOCK_ON_MALICIOUS=true`.
 > Demo marker: set `ENABLE_DEMO_MARKERS=true` to treat URLs containing the substring `test-malicious` as malicious (off by default).
 
@@ -728,7 +729,7 @@ To restart later, just re-run the **Deploy** workflow.
 ## 14) Extending this project (future work)
 
 - **Per-user API keys**: store *hashed* keys in Table Storage, add admin endpoints to mint/revoke keys, and attach per-key quotas.
-- **Deepen scanning**: integrate external reputation sources (Safe Browsing/VirusTotal), enrich redirect analysis, and add more HTML/JS heuristics.
+- **Deepen scanning**: add more external reputation sources (Safe Browsing/VirusTotal), enrich redirect analysis, and add more HTML/JS heuristics.
 - **File scanning (separate track)**: add a dedicated pipeline for file artifacts and run heavier engines (e.g., ClamAV/YARA) in a separate worker.
 - **Front the API**: add API Management / Front Door + WAF, request validation, and centralized auth.
 - **DAST in CI**: run OWASP ZAP against the deployed `/scan` endpoint using a non-prod API key.
