@@ -370,6 +370,42 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
             if rep_out:
                 summary["reputation"] = rep_out
 
+        urlscan = results.get("urlscan")
+        if isinstance(urlscan, dict):
+            urlscan_out: dict = {}
+            for key in ("status", "verdict", "result_url", "uuid"):
+                val = urlscan.get(key)
+                if isinstance(val, str) and val:
+                    urlscan_out[key] = val
+            score = urlscan.get("score")
+            score_int = _safe_int(score)
+            if score_int is not None:
+                urlscan_out["score"] = score_int
+            categories = urlscan.get("categories")
+            if isinstance(categories, list):
+                urlscan_out["categories"] = [str(c) for c in categories if c][:10]
+            err = urlscan.get("error")
+            if isinstance(err, str) and err:
+                urlscan_out["error"] = err
+            if urlscan_out:
+                summary["urlscan"] = urlscan_out
+
+        urlhaus = results.get("urlhaus")
+        if isinstance(urlhaus, dict):
+            urlhaus_out: dict = {}
+            for key in ("status", "query_status", "verdict", "reference", "threat", "url_status"):
+                val = urlhaus.get(key)
+                if isinstance(val, str) and val:
+                    urlhaus_out[key] = val
+            tags = urlhaus.get("tags")
+            if isinstance(tags, list):
+                urlhaus_out["tags"] = [str(t) for t in tags if t][:10]
+            err = urlhaus.get("error")
+            if isinstance(err, str) and err:
+                urlhaus_out["error"] = err
+            if urlhaus_out:
+                summary["urlhaus"] = urlhaus_out
+
         content = results.get("content")
         if isinstance(content, dict):
             content_out: dict = {}

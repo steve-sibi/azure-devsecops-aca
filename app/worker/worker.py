@@ -63,12 +63,37 @@ ARTIFACT_DELETE_ON_SUCCESS = os.getenv("ARTIFACT_DELETE_ON_SUCCESS", "false").lo
 
 # ---- Scan engines (URL safety) ----
 # - reputation: URL/domain heuristics + allow/block lists
+# - urlscan: optional external scan via urlscan.io
+# - urlhaus: optional external known-bad lookup via URLhaus (abuse.ch)
 # - content: lightweight content heuristics on the fetched response body
 SCAN_ENGINE = os.getenv("SCAN_ENGINE", "reputation,content").strip().lower()
 
 # Content heuristics tuning (keep conservative to reduce false positives)
 CONTENT_MAX_TEXT_BYTES = int(os.getenv("CONTENT_MAX_TEXT_BYTES", str(200_000)))
 CONTENT_MAX_BASE64_MATCH = int(os.getenv("CONTENT_MAX_BASE64_MATCH", str(50_000)))
+
+# ---- External scan engine (urlscan.io) ----
+URLSCAN_API_KEY = (os.getenv("URLSCAN_API_KEY") or "").strip()
+URLSCAN_BASE_URL = (
+    os.getenv("URLSCAN_BASE_URL", "https://urlscan.io/api/v1").strip().rstrip("/")
+)
+URLSCAN_VISIBILITY = (os.getenv("URLSCAN_VISIBILITY", "public") or "public").strip().lower()
+URLSCAN_TIMEOUT_SECONDS = int(os.getenv("URLSCAN_TIMEOUT_SECONDS", "10"))
+URLSCAN_MAX_WAIT_SECONDS = int(os.getenv("URLSCAN_MAX_WAIT_SECONDS", "25"))
+URLSCAN_POLL_INTERVAL_SECONDS = int(os.getenv("URLSCAN_POLL_INTERVAL_SECONDS", "2"))
+URLSCAN_SUSPICIOUS_SCORE = int(os.getenv("URLSCAN_SUSPICIOUS_SCORE", "50"))
+URLSCAN_MALICIOUS_SCORE = int(os.getenv("URLSCAN_MALICIOUS_SCORE", "80"))
+
+# ---- External known-bad source (URLhaus) ----
+URLHAUS_BASE_URL = (
+    os.getenv("URLHAUS_BASE_URL", "https://urlhaus-api.abuse.ch/v1").strip().rstrip("/")
+)
+URLHAUS_API_KEY = (os.getenv("URLHAUS_API_KEY") or "").strip()
+URLHAUS_API_KEY_HEADER = (
+    os.getenv("URLHAUS_API_KEY_HEADER", "Auth-Key") or "Auth-Key"
+).strip() or "Auth-Key"
+URLHAUS_TIMEOUT_SECONDS = int(os.getenv("URLHAUS_TIMEOUT_SECONDS", "10"))
+URLHAUS_MATCH_WEIGHT = int(os.getenv("URLHAUS_MATCH_WEIGHT", "90"))
 
 # ---- Scan engine (URL reputation) ----
 REPUTATION_BLOCKLIST_HOSTS = os.getenv("REPUTATION_BLOCKLIST_HOSTS", "")
@@ -405,7 +430,7 @@ def _validate_url_for_download(url: str):
     return canonical
 
 
-_SUPPORTED_SCAN_ENGINES = {"content", "reputation"}
+_SUPPORTED_SCAN_ENGINES = {"content", "reputation", "urlscan", "urlhaus"}
 
 
 def _parse_csv(spec: str) -> List[str]:
@@ -743,6 +768,383 @@ def _content_scan(
     return {"content": features}, signals
 
 
+def _urlscan_scan(target_url: str) -> tuple[dict, list[Signal]]:
+    # urlscan.io is an external service; avoid failing the whole scan if it's misconfigured.
+    if not URLSCAN_API_KEY:
+        return (
+            {"status": "skipped", "reason": "URLSCAN_API_KEY not configured"},
+            [
+                signal(
+                    source="urlscan.skipped",
+                    verdict="benign",
+                    severity="info",
+                    weight=0,
+                    evidence={"reason": "urlscan.io skipped (missing URLSCAN_API_KEY)"},
+                )
+            ],
+        )
+
+    if not URLSCAN_BASE_URL:
+        return (
+            {"status": "skipped", "reason": "URLSCAN_BASE_URL not configured"},
+            [
+                signal(
+                    source="urlscan.skipped",
+                    verdict="benign",
+                    severity="info",
+                    weight=0,
+                    evidence={"reason": "urlscan.io skipped (missing URLSCAN_BASE_URL)"},
+                )
+            ],
+        )
+
+    def _headers() -> dict:
+        return {
+            "Accept": "application/json",
+            "User-Agent": "aca-url-scanner/1.0",
+            "API-Key": URLSCAN_API_KEY,
+        }
+
+    def _safe_json(resp: requests.Response) -> dict:
+        try:
+            doc = resp.json()
+        except Exception:
+            return {}
+        return doc if isinstance(doc, dict) else {"value": doc}
+
+    summary: dict = {
+        "status": "error",
+        "visibility": URLSCAN_VISIBILITY,
+    }
+    sigs: list[Signal] = []
+
+    session = requests.Session()
+    try:
+        submit_url = f"{URLSCAN_BASE_URL}/scan/"
+        payload = {"url": target_url, "visibility": URLSCAN_VISIBILITY}
+        submit = session.post(
+            submit_url,
+            json=payload,
+            headers=_headers(),
+            timeout=max(1, int(URLSCAN_TIMEOUT_SECONDS or 10)),
+        )
+        if submit.status_code == 429:
+            raise RuntimeError("rate_limited")
+        submit.raise_for_status()
+        submit_doc = _safe_json(submit)
+
+        uuid = submit_doc.get("uuid")
+        if not isinstance(uuid, str) or not uuid.strip():
+            task = submit_doc.get("task") if isinstance(submit_doc.get("task"), dict) else {}
+            uuid = task.get("uuid") if isinstance(task.get("uuid"), str) else ""
+        uuid = str(uuid or "").strip()
+        if not uuid:
+            raise RuntimeError("missing_uuid")
+
+        result_url = submit_doc.get("result")
+        api_url = submit_doc.get("api")
+        if isinstance(result_url, str) and result_url.strip():
+            summary["result_url"] = result_url.strip()
+        if isinstance(api_url, str) and api_url.strip():
+            summary["api_url"] = api_url.strip()
+        summary["uuid"] = uuid
+
+        result_endpoint = f"{URLSCAN_BASE_URL}/result/{uuid}/"
+        started = time.monotonic()
+        last_status = None
+        while True:
+            resp = session.get(
+                result_endpoint,
+                headers=_headers(),
+                timeout=max(1, int(URLSCAN_TIMEOUT_SECONDS or 10)),
+            )
+            last_status = resp.status_code
+            if resp.status_code == 200:
+                result_doc = _safe_json(resp)
+                verdicts = (
+                    result_doc.get("verdicts")
+                    if isinstance(result_doc.get("verdicts"), dict)
+                    else {}
+                )
+                overall = (
+                    verdicts.get("overall")
+                    if isinstance(verdicts.get("overall"), dict)
+                    else {}
+                )
+
+                malicious_flag = overall.get("malicious")
+                malicious = (
+                    bool(malicious_flag)
+                    if isinstance(malicious_flag, bool)
+                    else None
+                )
+                raw_score = overall.get("score")
+                score: Optional[int] = None
+                if isinstance(raw_score, (int, float)) and not isinstance(raw_score, bool):
+                    score = int(raw_score)
+                elif isinstance(raw_score, str) and raw_score.strip().lstrip("-").isdigit():
+                    score = int(raw_score)
+
+                raw_categories = overall.get("categories")
+                categories: list[str] = []
+                if isinstance(raw_categories, list):
+                    for c in raw_categories:
+                        if isinstance(c, str) and c.strip():
+                            categories.append(c.strip())
+                        if len(categories) >= 10:
+                            break
+
+                verdict = "benign"
+                if malicious is True:
+                    verdict = "malicious"
+                elif score is not None and score >= int(URLSCAN_MALICIOUS_SCORE):
+                    verdict = "malicious"
+                elif categories:
+                    verdict = "suspicious"
+                elif score is not None and score >= int(URLSCAN_SUSPICIOUS_SCORE):
+                    verdict = "suspicious"
+
+                summary["status"] = "ok"
+                summary["verdict"] = verdict
+                if malicious is not None:
+                    summary["malicious"] = malicious
+                if score is not None:
+                    summary["score"] = score
+                if categories:
+                    summary["categories"] = categories
+
+                if verdict == "malicious":
+                    sev, weight = "high", 80
+                elif verdict == "suspicious":
+                    sev, weight = "medium", 40
+                else:
+                    sev, weight = "info", 10
+
+                sigs.append(
+                    signal(
+                        source="urlscan.verdict",
+                        verdict=verdict,
+                        severity=sev,
+                        weight=weight,
+                        evidence={
+                            "reason": "urlscan.io verdict",
+                            "verdict": verdict,
+                            "score": score,
+                            "categories": categories,
+                            "result_url": summary.get("result_url"),
+                            "uuid": uuid,
+                        },
+                    )
+                )
+                break
+
+            if resp.status_code in (404, 202):
+                if int(time.monotonic() - started) >= int(URLSCAN_MAX_WAIT_SECONDS):
+                    raise TimeoutError("urlscan_result_timeout")
+                time.sleep(max(1, int(URLSCAN_POLL_INTERVAL_SECONDS or 2)))
+                continue
+
+            if resp.status_code == 429:
+                raise RuntimeError("rate_limited")
+
+            # Other non-200 responses are treated as non-fatal engine errors.
+            raise RuntimeError(f"result_http_{resp.status_code}")
+
+        return summary, sigs
+    except Exception as e:
+        summary["status"] = "error"
+        summary["error"] = str(e)
+        if last_status is not None:
+            summary["last_status_code"] = int(last_status)
+        sigs.append(
+            signal(
+                source="urlscan.error",
+                verdict="benign",
+                severity="info",
+                weight=0,
+                evidence={
+                    "reason": "urlscan.io scan failed (non-fatal)",
+                    "error": str(e),
+                },
+            )
+        )
+        return summary, sigs
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
+def _urlhaus_scan(target_url: str) -> tuple[dict, list[Signal]]:
+    if not URLHAUS_BASE_URL:
+        return (
+            {"status": "skipped", "reason": "URLHAUS_BASE_URL not configured"},
+            [
+                signal(
+                    source="urlhaus.skipped",
+                    verdict="benign",
+                    severity="info",
+                    weight=0,
+                    evidence={"reason": "URLhaus lookup skipped (missing URLHAUS_BASE_URL)"},
+                )
+            ],
+        )
+
+    def _safe_json(resp: requests.Response) -> dict:
+        try:
+            doc = resp.json()
+        except Exception:
+            return {}
+        return doc if isinstance(doc, dict) else {"value": doc}
+
+    session = requests.Session()
+    try:
+        endpoint = f"{URLHAUS_BASE_URL}/url/"
+        headers = {"Accept": "application/json", "User-Agent": "aca-url-scanner/1.0"}
+        if URLHAUS_API_KEY:
+            headers[URLHAUS_API_KEY_HEADER] = URLHAUS_API_KEY
+        resp = session.post(
+            endpoint,
+            data={"url": target_url},
+            headers=headers,
+            timeout=max(1, int(URLHAUS_TIMEOUT_SECONDS or 10)),
+        )
+        resp.raise_for_status()
+        doc = _safe_json(resp)
+        query_status = str(doc.get("query_status") or "").strip().lower()
+
+        summary: dict = {
+            "status": "ok",
+            "query_status": query_status,
+        }
+
+        if query_status == "no_results":
+            summary["verdict"] = "benign"
+            return summary, [
+                signal(
+                    source="urlhaus.no_results",
+                    verdict="benign",
+                    severity="info",
+                    weight=0,
+                    evidence={
+                        "reason": "No match in URLhaus (not proof of safety)",
+                        "url": target_url,
+                    },
+                )
+            ]
+
+        if query_status != "ok":
+            summary["status"] = "error"
+            summary["error"] = query_status or "unknown"
+            return summary, [
+                signal(
+                    source="urlhaus.error",
+                    verdict="benign",
+                    severity="info",
+                    weight=0,
+                    evidence={
+                        "reason": "URLhaus lookup failed (non-fatal)",
+                        "query_status": query_status or None,
+                        "url": target_url,
+                    },
+                )
+            ]
+
+        # query_status == ok -> treat as known-bad evidence
+        reference = doc.get("urlhaus_reference")
+        threat = doc.get("threat")
+        url_status = doc.get("url_status")
+        tags_raw = doc.get("tags")
+        tags: list[str] = []
+        if isinstance(tags_raw, list):
+            for item in tags_raw:
+                if isinstance(item, str) and item.strip():
+                    tags.append(item.strip())
+                if len(tags) >= 15:
+                    break
+
+        summary["verdict"] = "malicious"
+        if isinstance(reference, str) and reference.strip():
+            summary["reference"] = reference.strip()
+        if isinstance(threat, str) and threat.strip():
+            summary["threat"] = threat.strip()
+        if isinstance(url_status, str) and url_status.strip():
+            summary["url_status"] = url_status.strip()
+        if tags:
+            summary["tags"] = tags
+
+        return summary, [
+            signal(
+                source="urlhaus.match",
+                verdict="malicious",
+                severity="high",
+                weight=max(0, int(URLHAUS_MATCH_WEIGHT)),
+                evidence={
+                    "reason": "URL found in URLhaus (known bad)",
+                    "reference": summary.get("reference"),
+                    "threat": summary.get("threat"),
+                    "url_status": summary.get("url_status"),
+                    "tags": tags,
+                    "url": target_url,
+                },
+            )
+        ]
+    except requests.HTTPError as e:
+        resp = getattr(e, "response", None)
+        status_code = getattr(resp, "status_code", None)
+        snippet = ""
+        try:
+            body = getattr(resp, "text", "")
+            if isinstance(body, str) and body.strip():
+                snippet = body.strip()[:500]
+        except Exception:
+            snippet = ""
+
+        details: dict = {"status": "error", "error": str(e)}
+        if isinstance(status_code, int):
+            details["status_code"] = status_code
+        if snippet:
+            details["response_snippet"] = snippet
+        if status_code == 401 and not URLHAUS_API_KEY:
+            details["hint"] = (
+                "401 from URLhaus; if this endpoint requires auth in your environment, set URLHAUS_API_KEY and URLHAUS_API_KEY_HEADER"
+            )
+        return details, [
+            signal(
+                source="urlhaus.error",
+                verdict="benign",
+                severity="info",
+                weight=0,
+                evidence={
+                    "reason": "URLhaus lookup failed (non-fatal)",
+                    "error": str(e),
+                    "status_code": status_code,
+                    "url": target_url,
+                },
+            )
+        ]
+    except Exception as e:
+        return {"status": "error", "error": str(e)}, [
+            signal(
+                source="urlhaus.error",
+                verdict="benign",
+                severity="info",
+                weight=0,
+                evidence={
+                    "reason": "URLhaus lookup failed (non-fatal)",
+                    "error": str(e),
+                    "url": target_url,
+                },
+            )
+        ]
+    finally:
+        try:
+            session.close()
+        except Exception:
+            pass
+
+
 def _scan_bytes(
     content: bytes,
     url: str,
@@ -762,6 +1164,24 @@ def _scan_bytes(
         if engine == "reputation":
             if isinstance(reputation_summary, dict) and reputation_summary:
                 results["reputation"] = reputation_summary
+        elif engine == "urlscan":
+            scan_url = url
+            if isinstance(download, dict):
+                final_url = download.get("final_url")
+                if isinstance(final_url, str) and final_url.strip():
+                    scan_url = final_url.strip()
+            urlscan_out, urlscan_signals = _urlscan_scan(scan_url)
+            results["urlscan"] = urlscan_out
+            signals.extend(urlscan_signals)
+        elif engine == "urlhaus":
+            scan_url = url
+            if isinstance(download, dict):
+                final_url = download.get("final_url")
+                if isinstance(final_url, str) and final_url.strip():
+                    scan_url = final_url.strip()
+            urlhaus_out, urlhaus_signals = _urlhaus_scan(scan_url)
+            results["urlhaus"] = urlhaus_out
+            signals.extend(urlhaus_signals)
         elif engine == "content":
             content_results, content_signals = _content_scan(
                 content, url=url, download=download

@@ -669,6 +669,8 @@
           const url = s.url || '';
           const decision = pick(s, 'decision') || {};
           const rep = pick(s, 'reputation');
+          const urlscan = pick(s, 'urlscan');
+          const urlhaus = pick(s, 'urlhaus');
           const content = pick(s, 'content');
           const dl = pick(s, 'download');
 
@@ -740,7 +742,7 @@
             ['Fetch blocked', blocked === true ? 'yes' : (blocked === false ? 'no' : '')],
           ].filter(Boolean), { tone: blocked ? 'bad' : 'info' });
 
-          if (rep || content) {
+          if (rep || content || urlscan || urlhaus) {
             function checkLabel(v) {
               const vv = String(v || '').toLowerCase();
               if (vv === 'benign') return 'OK';
@@ -752,6 +754,43 @@
 
             const urlCheckVerdict = rep && rep.verdict ? String(rep.verdict).toLowerCase() : '';
             const urlCheck = urlCheckVerdict ? badgeValue(verdictKind(urlCheckVerdict), checkLabel(urlCheckVerdict) || urlCheckVerdict) : '';
+
+            const urlscanStatus = urlscan && urlscan.status ? String(urlscan.status).toLowerCase() : '';
+            const urlscanVerdict = urlscan && urlscan.verdict ? String(urlscan.verdict).toLowerCase() : '';
+            let urlscanCheck = '';
+            if (urlscan) {
+              const badge = urlscanVerdict
+                ? badgeValue(verdictKind(urlscanVerdict), checkLabel(urlscanVerdict) || urlscanVerdict)
+                : (urlscanStatus === 'error'
+                  ? badgeValue('warn', 'error')
+                  : (urlscanStatus === 'skipped'
+                    ? badgeValue('info', 'skipped')
+                    : (urlscanStatus ? badgeValue('info', urlscanStatus) : '')));
+              const reportUrl = urlscan.result_url ? String(urlscan.result_url) : '';
+              if (reportUrl) {
+                urlscanCheck = el('span', { class: 'value-row' }, badge, linkValue(reportUrl, { copy: true, copyLabel: 'Copy urlscan.io report URL' }));
+              } else {
+                urlscanCheck = badge;
+              }
+            }
+
+            const urlhausStatus = urlhaus && urlhaus.status ? String(urlhaus.status).toLowerCase() : '';
+            const urlhausVerdict = urlhaus && urlhaus.verdict ? String(urlhaus.verdict).toLowerCase() : '';
+            const urlhausQuery = urlhaus && urlhaus.query_status ? String(urlhaus.query_status).toLowerCase() : '';
+            let urlhausCheck = '';
+            if (urlhaus) {
+              const label = (urlhausQuery === 'no_results') ? 'no match' : (checkLabel(urlhausVerdict) || urlhausVerdict || urlhausStatus || 'unknown');
+              const kind = urlhausVerdict
+                ? verdictKind(urlhausVerdict)
+                : (urlhausStatus === 'error' ? 'warn' : 'info');
+              const badge = badgeValue(kind, label);
+              const refUrl = urlhaus.reference ? String(urlhaus.reference) : '';
+              if (refUrl) {
+                urlhausCheck = el('span', { class: 'value-row' }, badge, linkValue(refUrl, { copy: true, copyLabel: 'Copy URLhaus reference URL' }));
+              } else {
+                urlhausCheck = badge;
+              }
+            }
 
             const hasForm = content && content.has_form === true;
             const hasPassword = content && content.has_password_field === true;
@@ -769,11 +808,14 @@
               if (prim.length >= 2) highlights.push('Possible obfuscated JavaScript');
               if (Number.isFinite(b64) && b64 >= 5000) highlights.push('Large base64 blob');
             }
+            if (urlhausVerdict === 'malicious') highlights.push('Listed on URLhaus');
             if (rep && rep.matched_blocklist) highlights.push('Matched blocklist');
             if (rep && rep.matched_allowlist) highlights.push('Matched allowlist');
 
             block('Checks', [
               ['URL patterns', urlCheck],
+              ['External scan (urlscan.io)', urlscanCheck],
+              ['Known-bad (URLhaus)', urlhausCheck],
               ['Page content', contentCheck],
               ['Highlights', highlights.length ? highlights.slice(0, 4).join(' • ') : (status === 'completed' ? 'No notable indicators.' : '')],
             ], { tone: 'info', spanAll: true });
@@ -793,6 +835,8 @@
             decision: (decision && Object.keys(decision).length) ? decision : undefined,
             download: dl || undefined,
             reputation: rep || undefined,
+            urlscan: urlscan || undefined,
+            urlhaus: urlhaus || undefined,
             content: content || undefined,
           };
 
