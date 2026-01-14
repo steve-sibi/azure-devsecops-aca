@@ -73,6 +73,25 @@ variable "results_table_name" {
   description = "Table name for storing scan results."
 }
 
+variable "scan_engine" {
+  type        = string
+  default     = "reputation,content"
+  description = "Comma-separated scan engines for the fetcher/worker (e.g. reputation,urlscan,content)."
+}
+
+variable "urlscan_api_key" {
+  type        = string
+  default     = ""
+  description = "Optional urlscan.io API key for the urlscan engine (leave empty to disable external scans)."
+  sensitive   = true
+}
+
+variable "urlscan_visibility" {
+  type        = string
+  default     = "public"
+  description = "urlscan.io submission visibility (free tier is typically public)."
+}
+
 variable "artifacts_share_quota_gb" {
   type        = number
   default     = 2

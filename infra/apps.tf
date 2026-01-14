@@ -209,7 +209,7 @@ resource "azurerm_container_app" "fetcher" {
       }
       env {
         name  = "SCAN_ENGINE"
-        value = "reputation,content"
+        value = var.scan_engine
       }
       env {
         name  = "CONTENT_MAX_TEXT_BYTES"
@@ -300,6 +300,15 @@ resource "azurerm_container_app" "worker" {
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
+  dynamic "secret" {
+    for_each = nonsensitive(var.urlscan_api_key) != "" ? [1] : []
+    content {
+      name                = "urlscan-api-key"
+      key_vault_secret_id = azurerm_key_vault_secret.urlscan_api_key[0].id
+      identity            = azurerm_user_assigned_identity.uami.id
+    }
+  }
+
   template {
     container {
       name   = "worker"
@@ -349,7 +358,18 @@ resource "azurerm_container_app" "worker" {
       }
       env {
         name  = "SCAN_ENGINE"
-        value = "reputation,content"
+        value = var.scan_engine
+      }
+      env {
+        name  = "URLSCAN_VISIBILITY"
+        value = var.urlscan_visibility
+      }
+      dynamic "env" {
+        for_each = nonsensitive(var.urlscan_api_key) != "" ? [1] : []
+        content {
+          name        = "URLSCAN_API_KEY"
+          secret_name = "urlscan-api-key"
+        }
       }
       env {
         name  = "CONTENT_MAX_TEXT_BYTES"
