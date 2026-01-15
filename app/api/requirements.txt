@@ -1,6 +1,7 @@
 fastapi==0.115.14
 starlette>=0.42.0,<0.47.0
 uvicorn[standard]==0.30.6
+python-multipart>=0.0.9
 azure-servicebus~=7.12
 # Optional, for MI path in main.py:
 azure-identity>=1.16.0

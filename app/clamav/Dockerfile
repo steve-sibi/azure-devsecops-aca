@@ -10,11 +10,14 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends \
       ca-certificates \
       clamav \
+      clamav-daemon \
       clamav-freshclam \
       tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY clamav/freshclam.conf /etc/clamav/freshclam.conf
+COPY clamav/clamd.sidecar.conf /etc/clamav/clamd.sidecar.conf
+COPY clamav/clamd.compose.conf /etc/clamav/clamd.compose.conf
 COPY clamav/freshclam-updater.sh /usr/local/bin/clamav-freshclam-updater
 
 RUN chmod +x /usr/local/bin/clamav-freshclam-updater \

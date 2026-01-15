@@ -16,6 +16,15 @@ services:
     volumes:
       - artifacts:/artifacts
 
+  clamav:
+    build:
+      context: ./app
+      dockerfile: clamav/Dockerfile
+    command:
+      - sh
+      - -c
+      - freshclam --config-file=/etc/clamav/freshclam.conf && exec /usr/sbin/clamd --config-file=/etc/clamav/clamd.compose.conf
+
   api:
     build:
       context: ./app
@@ -37,9 +46,16 @@ services:
       RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-60}
       RATE_LIMIT_WINDOW_SECONDS: ${RATE_LIMIT_WINDOW_SECONDS:-60}
       BLOCK_PRIVATE_NETWORKS: ${BLOCK_PRIVATE_NETWORKS:-true}
+      CLAMAV_HOST: ${CLAMAV_HOST:-clamav}
+      CLAMAV_PORT: ${CLAMAV_PORT:-3310}
+      CLAMAV_TIMEOUT_SECONDS: ${CLAMAV_TIMEOUT_SECONDS:-8}
+      FILE_SCAN_MAX_BYTES: ${FILE_SCAN_MAX_BYTES:-10485760}
+      FILE_SCAN_INCLUDE_VERSION: ${FILE_SCAN_INCLUDE_VERSION:-true}
     depends_on:
       redis:
         condition: service_healthy
+      clamav:
+        condition: service_started
     healthcheck:
       test:
         - CMD
