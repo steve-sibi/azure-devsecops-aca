@@ -274,8 +274,9 @@ azure-devsecops-aca/
 │  │  ├─ dashboard.html
 │  │  ├─ main.py
 │  │  └─ requirements.txt
-│  ├─ clamav/             # reserved for future file scanning (not used by URL scanner)
+│  ├─ clamav/             # ClamAV container config (used by the file scanner)
 │  │  ├─ Dockerfile
+│  │  ├─ clamd.compose.conf
 │  │  ├─ clamd.sidecar.conf
 │  │  ├─ freshclam.conf
 │  │  ├─ freshclam-updater.sh
@@ -717,6 +718,8 @@ To restart later, just re-run the **Deploy** workflow.
 - `POST /scan` -> requires `X-API-Key`, enforces SSRF protections, enqueues a scan job, and records a queued status in the configured result backend (`RESULT_BACKEND=table` on Azure; `RESULT_BACKEND=redis` locally).
     
 - `GET /scan/{job_id}` -> reads the configured result backend and returns the current status/verdict.
+
+- `POST /file/scan` -> requires `X-API-Key`, scans an uploaded file or pasted payload with ClamAV, and returns an immediate verdict (UI at `/file`).
     
 - `GET /healthz` -> basic health.
     
