@@ -1,3 +1,4 @@
+import base64
 from contextlib import asynccontextmanager
 from collections import deque
 from datetime import datetime, timezone
@@ -16,12 +17,17 @@ from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus.exceptions import ServiceBusError
 from azure.data.tables.aio import TableServiceClient
-from fastapi import FastAPI, HTTPException, Request, Security
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Security, UploadFile
 from fastapi.responses import HTMLResponse
 from fastapi.security.api_key import APIKeyHeader
-from fastapi import Query
 from pydantic import BaseModel, Field
 
+from common.clamav_client import (
+    ClamAVConnectionError,
+    ClamAVError,
+    clamd_scan_bytes,
+    clamd_version,
+)
 from common.result_store import get_result_async, upsert_result_async
 from common.url_validation import UrlValidationError, validate_public_https_url_async
 
@@ -58,8 +64,22 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
 )
 MAX_DASHBOARD_POLL_SECONDS = int(os.getenv("MAX_DASHBOARD_POLL_SECONDS", "180"))
 
+# File scanning (ClamAV)
+CLAMAV_HOST = (os.getenv("CLAMAV_HOST", "127.0.0.1") or "127.0.0.1").strip()
+CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
+CLAMAV_TIMEOUT_SECONDS = float(os.getenv("CLAMAV_TIMEOUT_SECONDS", "8"))
+FILE_SCAN_MAX_BYTES = int(os.getenv("FILE_SCAN_MAX_BYTES", str(10 * 1024 * 1024)))  # 10MB
+FILE_SCAN_INCLUDE_VERSION = os.getenv("FILE_SCAN_INCLUDE_VERSION", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # HTML dashboard template lives alongside this file.
 DASHBOARD_TEMPLATE = Path(__file__).with_name("dashboard.html").read_text(
+    encoding="utf-8"
+)
+FILE_SCANNER_TEMPLATE = Path(__file__).with_name("file_scanner.html").read_text(
     encoding="utf-8"
 )
 
@@ -87,6 +107,59 @@ class ScanRequest(BaseModel):
     type: str = Field("url", pattern="^(url|file)$")
     source: Optional[str] = Field(None, description="Optional source identifier")
     metadata: Optional[dict] = Field(None, description="Optional metadata")
+
+
+async def _read_upload_bytes_limited(
+    upload: UploadFile, *, max_bytes: int
+) -> tuple[bytes, str]:
+    hasher = hashlib.sha256()
+    total = 0
+    parts: list[bytes] = []
+    while True:
+        chunk = await upload.read(64 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large (max {max_bytes} bytes)",
+            )
+        hasher.update(chunk)
+        parts.append(chunk)
+    return b"".join(parts), hasher.hexdigest()
+
+
+def _decode_payload_bytes(
+    payload: str, *, is_base64: bool, max_bytes: int
+) -> tuple[bytes, str]:
+    raw = (payload or "").strip()
+    if not raw:
+        raise HTTPException(status_code=400, detail="payload cannot be empty")
+
+    if is_base64:
+        compact = "".join(raw.split())
+        estimated_len = (len(compact) * 3) // 4
+        if estimated_len > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Payload too large (max {max_bytes} bytes after base64 decode)",
+            )
+        try:
+            data = base64.b64decode(compact, validate=True)
+        except Exception:
+            raise HTTPException(
+                status_code=400, detail="payload_base64=true but payload is not valid base64"
+            )
+    else:
+        data = raw.encode("utf-8")
+
+    if len(data) > max_bytes:
+        raise HTTPException(
+            status_code=413, detail=f"Payload too large (max {max_bytes} bytes)"
+        )
+
+    return data, hashlib.sha256(data).hexdigest()
 
 
 async def _validate_scan_url(url: str):
@@ -593,6 +666,107 @@ async def dashboard():
             "__MAX_DASHBOARD_POLL_SECONDS__", str(int(MAX_DASHBOARD_POLL_SECONDS or 0))
         )
     )
+
+
+@app.get("/file", response_class=HTMLResponse)
+async def file_scanner():
+    template = FILE_SCANNER_TEMPLATE
+    api_key_header_html = html.escape(API_KEY_HEADER or "")
+    api_key_header_json = json.dumps(API_KEY_HEADER or "X-API-Key")
+    return (
+        template.replace("__API_KEY_HEADER__", api_key_header_html)
+        .replace("__API_KEY_HEADER_JSON__", api_key_header_json)
+        .replace("__FILE_SCAN_MAX_BYTES__", str(int(FILE_SCAN_MAX_BYTES or 0)))
+    )
+
+
+@app.post("/file/scan")
+async def scan_file(
+    file: Optional[UploadFile] = File(None),
+    payload: Optional[str] = Form(None),
+    payload_base64: bool = Form(False),
+    _: None = Security(require_api_key),
+):
+    if file is None and not (isinstance(payload, str) and payload.strip()):
+        raise HTTPException(status_code=400, detail="Provide a file or payload")
+
+    input_type = "file" if file is not None else "payload"
+
+    filename = None
+    content_type = None
+    if file is not None:
+        filename = (file.filename or "upload.bin").strip() or "upload.bin"
+        content_type = file.content_type or "application/octet-stream"
+        data, sha256 = await _read_upload_bytes_limited(
+            file, max_bytes=int(FILE_SCAN_MAX_BYTES or 0)
+        )
+        await file.close()
+    else:
+        data, sha256 = _decode_payload_bytes(
+            payload or "",
+            is_base64=bool(payload_base64),
+            max_bytes=int(FILE_SCAN_MAX_BYTES or 0),
+        )
+        filename = "payload.bin" if payload_base64 else "payload.txt"
+        content_type = (
+            "application/octet-stream" if payload_base64 else "text/plain; charset=utf-8"
+        )
+
+    started = time.monotonic()
+    try:
+        result = clamd_scan_bytes(
+            data,
+            host=CLAMAV_HOST,
+            port=CLAMAV_PORT,
+            timeout_seconds=float(CLAMAV_TIMEOUT_SECONDS or 0),
+        )
+    except ClamAVConnectionError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"ClamAV is unavailable ({CLAMAV_HOST}:{CLAMAV_PORT}): {e}",
+        )
+    except ClamAVError as e:
+        raise HTTPException(status_code=502, detail=f"ClamAV scan failed: {e}")
+
+    duration_ms = int((time.monotonic() - started) * 1000)
+
+    version = None
+    if FILE_SCAN_INCLUDE_VERSION:
+        try:
+            version = clamd_version(
+                host=CLAMAV_HOST,
+                port=CLAMAV_PORT,
+                timeout_seconds=min(2.0, float(CLAMAV_TIMEOUT_SECONDS or 0) or 2.0),
+            )
+        except ClamAVError:
+            version = None
+
+    response: dict = {
+        "scan_id": str(uuid4()),
+        "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "input_type": input_type,
+        "filename": filename,
+        "content_type": content_type,
+        "size_bytes": len(data),
+        "sha256": sha256,
+        "engine": "clamav",
+        "verdict": result.verdict,
+        "duration_ms": duration_ms,
+        "clamav": {
+            "host": CLAMAV_HOST,
+            "port": CLAMAV_PORT,
+            "response": result.raw,
+        },
+    }
+
+    if result.signature:
+        response["signature"] = result.signature
+    if result.error:
+        response["clamav"]["error"] = result.error
+    if version:
+        response["clamav"]["version"] = version
+
+    return response
 
 
 @app.post("/tasks")
