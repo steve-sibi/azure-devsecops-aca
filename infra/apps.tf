@@ -94,6 +94,27 @@ resource "azurerm_container_app" "api" {
         name  = "BLOCK_PRIVATE_NETWORKS"
         value = "true"
       }
+      env {
+        name  = "CLAMAV_HOST"
+        value = "127.0.0.1"
+      }
+      env {
+        name  = "CLAMAV_PORT"
+        value = "3310"
+      }
+    }
+
+    # Sidecar ClamAV daemon for /file/scan.
+    container {
+      name   = "clamav"
+      image  = "${data.azurerm_container_registry.acr.login_server}/${local.clamav_name}:${var.image_tag}"
+      cpu    = 0.5
+      memory = "1Gi"
+
+      env {
+        name  = "CLAMD_CONFIG_FILE"
+        value = "/etc/clamav/clamd.sidecar.conf"
+      }
     }
 
     min_replicas = var.api_min_replicas

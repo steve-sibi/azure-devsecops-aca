@@ -44,9 +44,20 @@ if ! have_db; then
   exit 1
 fi
 
-echo "[clamav-updater] starting update loop..."
-interval="${FRESHCLAM_INTERVAL_SECONDS:-7200}"
-while true; do
-  freshclam --config-file=/etc/clamav/freshclam.conf 2>&1 | tee -a "${LOG_DIR}/freshclam.log" || true
-  sleep "${interval}"
-done
+freshclam_disable="${FRESHCLAM_DISABLE:-false}"
+if [ "${freshclam_disable}" != "1" ] && [ "${freshclam_disable}" != "true" ] && [ "${freshclam_disable}" != "yes" ]; then
+  echo "[clamav-updater] starting freshclam update loop..."
+  interval="${FRESHCLAM_INTERVAL_SECONDS:-7200}"
+  (
+    while true; do
+      freshclam --config-file=/etc/clamav/freshclam.conf 2>&1 | tee -a "${LOG_DIR}/freshclam.log" || true
+      sleep "${interval}"
+    done
+  ) &
+else
+  echo "[clamav-updater] freshclam update loop disabled (FRESHCLAM_DISABLE=${freshclam_disable})."
+fi
+
+clamd_conf="${CLAMD_CONFIG_FILE:-/etc/clamav/clamd.sidecar.conf}"
+echo "[clamav-updater] starting clamd (${clamd_conf})..."
+exec /usr/sbin/clamd --config-file="${clamd_conf}"

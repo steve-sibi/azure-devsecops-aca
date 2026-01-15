@@ -114,6 +114,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Build & push ClamAV
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/clamav/Dockerfile
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
   create-apps:
     needs: [build-and-push]
     runs-on: ubuntu-latest

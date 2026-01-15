@@ -26,6 +26,7 @@ locals {
   ai_name           = "${var.prefix}-appi"
   env_name          = "${var.prefix}-acaenv"
   api_name          = "${var.prefix}-api"
+  clamav_name       = "${var.prefix}-clamav"
   fetcher_name      = "${var.prefix}-fetcher"
   worker_name       = "${var.prefix}-worker"
   artifacts_share   = "${var.prefix}-artifacts"
