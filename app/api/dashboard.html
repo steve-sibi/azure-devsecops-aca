@@ -214,6 +214,11 @@
         background: var(--primary-soft);
         border-color: var(--primary-soft-border);
       }
+      .tab[aria-current="page"] {
+        background: var(--primary-soft);
+        border-color: var(--primary-soft-border);
+      }
+      a.tab { text-decoration: none; display: inline-flex; align-items: center; }
       .panel.hidden { display: none; }
       .summary-grid {
         display: grid;
@@ -366,6 +371,8 @@
           <p class="sub">Submit scan jobs and poll results. Swagger: <a href="/docs">/docs</a>. API key required for scan endpoints.</p>
         </div>
         <div class="actions">
+          <a class="tab" aria-current="page" href="/">URL scanner</a>
+          <a class="tab" href="/file">File scanner</a>
           <button id="clearHistory" type="button">Clear history</button>
         </div>
       </header>

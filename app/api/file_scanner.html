@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Azure DevSecOps File Scanner</title>
+    <meta name="description" content="Scan uploaded files or payloads with ClamAV." />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f6f7fb;
+        --card: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --shadow: 0 10px 30px rgba(0,0,0,0.08);
+        --primary: #2563eb;
+        --primary-ink: #ffffff;
+        --success: #16a34a;
+        --success-ink: #ffffff;
+        --success-soft: rgba(22,163,74,0.14);
+        --danger: #dc2626;
+        --danger-soft: rgba(220,38,38,0.14);
+        --code-bg: #0b1020;
+        --code-fg: #d6e0ff;
+        --ring: rgba(37, 99, 235, 0.22);
+        --primary-soft: rgba(37, 99, 235, 0.12);
+        --primary-soft-border: rgba(37, 99, 235, 0.45);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0b1020;
+          --card: #0f172a;
+          --text: #e5e7eb;
+          --muted: #94a3b8;
+          --border: #22304a;
+          --shadow: 0 14px 40px rgba(0,0,0,0.35);
+          --primary: #60a5fa;
+          --primary-ink: #0b1020;
+          --success: #4ade80;
+          --success-ink: #0b1020;
+          --success-soft: rgba(74,222,128,0.16);
+          --danger: #fb7185;
+          --danger-soft: rgba(251,113,133,0.16);
+          --code-bg: #070b18;
+          --code-fg: #d6e0ff;
+          --ring: rgba(96, 165, 250, 0.26);
+          --primary-soft: rgba(96, 165, 250, 0.14);
+          --primary-soft-border: rgba(96, 165, 250, 0.45);
+        }
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+        background:
+          radial-gradient(1200px circle at 15% 5%, rgba(37,99,235,0.16), transparent 55%),
+          radial-gradient(900px circle at 85% 18%, rgba(220,38,38,0.10), transparent 55%),
+          var(--bg);
+        color: var(--text);
+        line-height: 1.45;
+        min-height: 100vh;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+      }
+      a { color: var(--primary); }
+      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+      .app { max-width: 1440px; margin: 0 auto; padding: clamp(1.25rem, 2vw, 2rem) clamp(1rem, 3vw, 2.25rem) 3rem; }
+      .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+      .header h1 { margin: 0; font-size: 1.65rem; letter-spacing: -0.02em; }
+      .sub { margin: 0.35rem 0 0; color: var(--muted); line-height: 1.4; }
+      .grid { margin-top: 1.25rem; display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 1.15rem; align-items: start; }
+      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+      .card {
+        background: linear-gradient(180deg, rgba(148,163,184,0.06), rgba(148,163,184,0.02)), var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        box-shadow: var(--shadow);
+        padding: 1rem;
+      }
+      .card.full { grid-column: 1 / -1; }
+      .card h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+      .card-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+      .field { margin-bottom: 0.9rem; }
+      label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
+      input, textarea {
+        width: 100%;
+        padding: 0.65rem 0.75rem;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(148,163,184,0.06);
+        color: var(--text);
+        transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+      }
+      textarea { min-height: 160px; resize: vertical; }
+      input::placeholder, textarea::placeholder { color: var(--muted); opacity: 0.75; }
+      input:focus, textarea:focus {
+        outline: none;
+        border-color: var(--primary);
+        box-shadow: 0 0 0 4px var(--ring);
+        background: rgba(148,163,184,0.04);
+      }
+      .help { margin-top: 0.35rem; font-size: 0.85rem; color: var(--muted); }
+      .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+      button {
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        padding: 0.6rem 0.85rem;
+        border-radius: 10px;
+        cursor: pointer;
+        transition: transform 80ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+      }
+      button:hover:not(:disabled) {
+        background: rgba(148,163,184,0.08);
+        transform: translateY(-1px);
+      }
+      button.primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--primary-ink);
+        font-weight: 600;
+      }
+      button.primary:hover:not(:disabled) { filter: brightness(1.03); }
+      button:focus-visible, .tab:focus-visible, input:focus-visible, textarea:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 4px var(--ring);
+      }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+      .status { margin-top: 0.85rem; min-height: 1.25rem; display: flex; align-items: center; gap: 0.5rem; color: var(--muted); }
+      .badge { font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); font-weight: 600; }
+      .badge.ok { border-color: rgba(22,163,74,0.5); background: rgba(22,163,74,0.12); }
+      .badge.warn { border-color: rgba(234,179,8,0.6); background: rgba(234,179,8,0.14); }
+      .badge.bad { border-color: rgba(220,38,38,0.5); background: rgba(220,38,38,0.12); }
+      .badge.info { border-color: var(--primary-soft-border); background: var(--primary-soft); }
+      .muted { color: var(--muted); }
+      .small { font-size: 0.85rem; }
+      pre {
+        margin: 0;
+        background: var(--code-bg);
+        color: var(--code-fg);
+        padding: 1rem;
+        border-radius: 12px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        font-size: 0.9rem;
+        line-height: 1.45;
+      }
+      .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: rgba(148,163,184,0.03); }
+      table { width: 100%; border-collapse: collapse; min-width: 820px; }
+      th, td { text-align: left; padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th {
+        font-size: 0.78rem;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--muted);
+        background: rgba(148,163,184,0.10);
+        position: sticky;
+        top: 0;
+      }
+      tr:last-child td { border-bottom: none; }
+      .nowrap { white-space: nowrap; }
+      .item-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .filter { flex: 1; min-width: 220px; }
+      .tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.25rem 0 0.85rem; }
+      .tab {
+        border: 1px solid var(--border);
+        background: transparent;
+        color: var(--text);
+        padding: 0.45rem 0.7rem;
+        border-radius: 999px;
+        cursor: pointer;
+        font-size: 0.85rem;
+      }
+      .tab[aria-selected="true"] {
+        background: var(--primary-soft);
+        border-color: var(--primary-soft-border);
+      }
+      .tab[aria-current="page"] {
+        background: var(--primary-soft);
+        border-color: var(--primary-soft-border);
+      }
+      a.tab { text-decoration: none; display: inline-flex; align-items: center; }
+      .panel.hidden { display: none; }
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+        align-items: start;
+      }
+      @media (max-width: 900px) { .summary-grid { grid-template-columns: 1fr; } }
+      .summary-block {
+        --dot: var(--primary);
+        --dot-soft: var(--primary-soft);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 0.95rem;
+        background: rgba(148,163,184,0.04);
+        backdrop-filter: blur(10px);
+        align-self: start;
+        height: fit-content;
+        min-width: 0;
+      }
+      .summary-block.span-all { grid-column: 1 / -1; }
+      .summary-block.tone-ok { --dot: var(--success); --dot-soft: var(--success-soft); }
+      .summary-block.tone-bad { --dot: var(--danger); --dot-soft: var(--danger-soft); }
+      .summary-block h3 {
+        margin: 0 0 0.75rem;
+        font-size: 0.95rem;
+        display: flex;
+        align-items: center;
+        gap: 0.55rem;
+        padding-bottom: 0.55rem;
+        border-bottom: 1px solid rgba(148,163,184,0.14);
+      }
+      .summary-block h3::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--dot);
+        box-shadow: 0 0 0 4px var(--dot-soft);
+        opacity: 0.9;
+        flex: 0 0 auto;
+      }
+      .summary-title { font-weight: 700; letter-spacing: -0.01em; }
+      dl.kv { display: block; margin: 0; }
+      dl.kv .kv-row {
+        display: grid;
+        grid-template-columns: minmax(120px, 170px) 1fr;
+        gap: 0.35rem 0.8rem;
+        padding: 0.4rem 0;
+      }
+      dl.kv .kv-row > * { min-width: 0; }
+      dl.kv .kv-row + .kv-row { border-top: 1px solid rgba(148,163,184,0.14); }
+      dl.kv dt {
+        color: var(--muted);
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        padding-top: 0.12rem;
+      }
+      dl.kv dd {
+        margin: 0;
+        min-width: 0;
+        overflow-wrap: anywhere;
+        font-weight: 500;
+        font-variant-numeric: tabular-nums;
+        line-height: 1.35;
+      }
+      @media (max-width: 520px) {
+        dl.kv .kv-row { grid-template-columns: 1fr; gap: 0.2rem; }
+        dl.kv dt { padding-top: 0; }
+      }
+      .value-code {
+        display: inline-block;
+        padding: 0.18rem 0.45rem;
+        border-radius: 10px;
+        border: 1px solid rgba(148,163,184,0.22);
+        background: rgba(148,163,184,0.08);
+        font-size: 0.86rem;
+        line-height: 1.2;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .kv-actions {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        flex-wrap: wrap;
+      }
+      .inline-check {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        color: var(--muted);
+        font-size: 0.85rem;
+        user-select: none;
+      }
+      .inline-check input { width: auto; }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <div>
+          <h1>Azure DevSecOps File Scanner</h1>
+          <p class="sub">Scan uploaded files or pasted payloads with ClamAV. Switch to the <a href="/">URL scanner</a>. Swagger: <a href="/docs">/docs</a>.</p>
+        </div>
+        <div class="actions">
+          <a class="tab" href="/">URL scanner</a>
+          <a class="tab" aria-current="page" href="/file">File scanner</a>
+          <button id="clearHistory" type="button">Clear history</button>
+        </div>
+      </header>
+
+      <div class="grid">
+        <section class="card">
+          <h2>New scan</h2>
+          <div class="field">
+            <label for="apiKey">API key <span class="muted">(header: __API_KEY_HEADER__)</span></label>
+            <input id="apiKey" autocomplete="off" placeholder="Paste API key" />
+            <div class="help">Saved in this browser only (local storage).</div>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="Input type">
+            <button id="tabInputFile" class="tab" role="tab" aria-selected="true" type="button">File</button>
+            <button id="tabInputPayload" class="tab" role="tab" aria-selected="false" type="button">Payload</button>
+          </div>
+
+          <div id="panelInputFile" class="panel">
+            <div class="field">
+              <label for="fileInput">File</label>
+              <input id="fileInput" type="file" />
+              <div id="fileHelp" class="help"></div>
+            </div>
+          </div>
+
+          <div id="panelInputPayload" class="panel hidden">
+            <div class="field">
+              <label for="payload">Payload</label>
+              <textarea id="payload" placeholder="Paste content to scan"></textarea>
+              <div class="help">Tip: For attachments/payloads, paste the raw bytes as base64 and enable base64 decoding.</div>
+            </div>
+            <div class="field">
+              <label class="inline-check">
+                <input id="payloadBase64" type="checkbox" />
+                Payload is base64
+              </label>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="start" class="primary" type="button">Scan</button>
+            <button id="copyJson" type="button" disabled>Copy JSON</button>
+          </div>
+          <div id="status" class="status" aria-live="polite"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <h2>History</h2>
+            <input id="historyFilter" class="filter" placeholder="Filter by filename, sha256, or verdict" />
+          </div>
+          <div class="table-wrap" role="region" aria-label="File scan history">
+            <table>
+              <thead>
+                <tr>
+                  <th class="nowrap">When</th>
+                  <th>Item</th>
+                  <th class="nowrap">SHA-256</th>
+                  <th class="nowrap">Verdict</th>
+                  <th class="nowrap">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="historyBody"></tbody>
+            </table>
+          </div>
+          <p class="muted small">History is stored locally in your browser.</p>
+        </section>
+
+        <section class="card full">
+          <div class="card-head">
+            <h2>Result</h2>
+            <div class="actions">
+              <button id="copyJson2" type="button" disabled>Copy JSON</button>
+            </div>
+          </div>
+          <div class="tabs" role="tablist" aria-label="Response view">
+            <button id="tabSummary" class="tab" role="tab" aria-selected="true" type="button">Summary</button>
+            <button id="tabRaw" class="tab" role="tab" aria-selected="false" type="button">Raw JSON</button>
+          </div>
+          <div id="panelSummary" class="panel">
+            <div id="summaryOut" class="summary-grid"></div>
+          </div>
+          <div id="panelRaw" class="panel hidden">
+            <pre id="out">{}</pre>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const API_KEY_HEADER = __API_KEY_HEADER_JSON__;
+        const FILE_SCAN_MAX_BYTES = Number(__FILE_SCAN_MAX_BYTES__ || 0);
+
+        const LS = {
+          apiKey: 'acaScanner.apiKey',
+          legacyApiKey: 'apiKey',
+          history: 'acaScanner.fileScanHistory.v1',
+        };
+
+        const apiKeyEl = document.getElementById('apiKey');
+        const fileInputEl = document.getElementById('fileInput');
+        const payloadEl = document.getElementById('payload');
+        const payloadBase64El = document.getElementById('payloadBase64');
+        const startEl = document.getElementById('start');
+        const statusEl = document.getElementById('status');
+        const outEl = document.getElementById('out');
+        const summaryOutEl = document.getElementById('summaryOut');
+        const copyJsonEl = document.getElementById('copyJson');
+        const copyJson2El = document.getElementById('copyJson2');
+        const clearHistoryEl = document.getElementById('clearHistory');
+        const historyBodyEl = document.getElementById('historyBody');
+        const historyFilterEl = document.getElementById('historyFilter');
+        const fileHelpEl = document.getElementById('fileHelp');
+
+        const tabInputFileEl = document.getElementById('tabInputFile');
+        const tabInputPayloadEl = document.getElementById('tabInputPayload');
+        const panelInputFileEl = document.getElementById('panelInputFile');
+        const panelInputPayloadEl = document.getElementById('panelInputPayload');
+
+        const tabSummaryEl = document.getElementById('tabSummary');
+        const tabRawEl = document.getElementById('tabRaw');
+        const panelSummaryEl = document.getElementById('panelSummary');
+        const panelRawEl = document.getElementById('panelRaw');
+
+        let activeInput = 'file'; // file | payload
+        let activeTab = 'summary'; // summary | raw
+
+        let history = [];
+        let lastResult = null;
+
+        const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+
+        function formatBytes(n) {
+          const v = Number(n);
+          if (!Number.isFinite(v)) return '';
+          if (v < 1024) return v + ' B';
+          const kb = v / 1024;
+          if (kb < 1024) return kb.toFixed(1) + ' KB';
+          const mb = kb / 1024;
+          return mb.toFixed(2) + ' MB';
+        }
+
+        function formatWhen(iso) {
+          if (!iso) return '';
+          try { return dtf.format(new Date(iso)); } catch (_) { return iso; }
+        }
+
+        function readJson(key, fallback) {
+          try {
+            const raw = localStorage.getItem(key);
+            if (!raw) return fallback;
+            return JSON.parse(raw);
+          } catch (_) {
+            return fallback;
+          }
+        }
+
+        function writeJson(key, value) {
+          localStorage.setItem(key, JSON.stringify(value));
+        }
+
+        function el(tag, attrs) {
+          const node = document.createElement(tag);
+          if (attrs) {
+            for (const [k, v] of Object.entries(attrs)) {
+              if (k === 'class') node.className = v;
+              else if (k === 'text') node.textContent = v;
+              else if (k === 'title') node.title = v;
+              else node.setAttribute(k, v);
+            }
+          }
+          for (let i = 2; i < arguments.length; i++) {
+            const child = arguments[i];
+            if (child == null) continue;
+            if (typeof child === 'string') node.appendChild(document.createTextNode(child));
+            else node.appendChild(child);
+          }
+          return node;
+        }
+
+        function makeBadge(kind, label) {
+          const cls = kind ? ('badge ' + kind) : 'badge';
+          return el('span', { class: cls, text: label });
+        }
+
+        function verdictKind(verdict) {
+          const v = String(verdict || '').toLowerCase();
+          if (v === 'clean' || v === 'benign') return 'ok';
+          if (v === 'suspicious') return 'warn';
+          if (v === 'malicious' || v === 'infected' || v === 'error') return 'bad';
+          return 'info';
+        }
+
+        function setStatus(kind, text) {
+          statusEl.textContent = '';
+          if (!text) return;
+          const label = kind === 'ok' ? 'OK' : (kind === 'bad' ? 'ERROR' : (kind === 'warn' ? 'WARN' : 'INFO'));
+          statusEl.appendChild(makeBadge(kind || 'info', label));
+          statusEl.appendChild(document.createTextNode(' ' + text));
+        }
+
+        async function copyText(text) {
+          try {
+            await navigator.clipboard.writeText(text);
+            setStatus('ok', 'Copied to clipboard');
+          } catch (_) {
+            const ta = el('textarea', { style: 'position:fixed;left:-1000px;top:-1000px;' });
+            ta.value = text;
+            document.body.appendChild(ta);
+            ta.select();
+            document.execCommand('copy');
+            ta.remove();
+            setStatus('ok', 'Copied to clipboard');
+          }
+        }
+
+        function setButtonsEnabled(hasJson) {
+          copyJsonEl.disabled = !hasJson;
+          copyJson2El.disabled = !hasJson;
+        }
+
+        function loadApiKey() {
+          const key = (localStorage.getItem(LS.apiKey) || '').trim() || (localStorage.getItem(LS.legacyApiKey) || '').trim();
+          if (key) apiKeyEl.value = key;
+        }
+
+        function saveApiKey() {
+          const v = apiKeyEl.value.trim();
+          if (v) localStorage.setItem(LS.apiKey, v);
+        }
+
+        function loadHistory() {
+          const items = readJson(LS.history, []);
+          if (!Array.isArray(items)) return [];
+          return items.filter(Boolean).slice(0, 50);
+        }
+
+        function saveHistory() {
+          writeJson(LS.history, history.slice(0, 50));
+        }
+
+        function upsertHistory(entry) {
+          const idx = history.findIndex(x => x && x.scan_id === entry.scan_id);
+          if (idx >= 0) history[idx] = Object.assign({}, history[idx], entry);
+          else history.unshift(entry);
+          history = history.slice(0, 50);
+          saveHistory();
+          renderHistory();
+        }
+
+        function clearHistory() {
+          history = [];
+          saveHistory();
+          renderHistory();
+        }
+
+        function renderHistory() {
+          historyBodyEl.textContent = '';
+          const q = (historyFilterEl.value || '').trim().toLowerCase();
+          const items = history.filter(x => {
+            if (!q) return true;
+            const hay = [
+              x.filename || '',
+              x.sha256 || '',
+              x.verdict || '',
+              x.signature || '',
+            ].join(' ').toLowerCase();
+            return hay.includes(q);
+          });
+
+          if (!items.length) {
+            historyBodyEl.appendChild(
+              el('tr', null,
+                el('td', { class: 'muted', colspan: '5', text: 'No history yet.' })
+              )
+            );
+            return;
+          }
+
+          for (const item of items) {
+            const verdict = String(item.verdict || '');
+            const verdictBadge = makeBadge(verdictKind(verdict), verdict ? verdict.toUpperCase() : '—');
+
+            const viewBtn = el('button', { type: 'button' }, 'View');
+            viewBtn.addEventListener('click', () => showResult(item.result || item));
+
+            const copyShaBtn = el('button', { type: 'button' }, 'Copy SHA');
+            copyShaBtn.addEventListener('click', () => copyText(String(item.sha256 || '')));
+
+            historyBodyEl.appendChild(
+              el('tr', null,
+                el('td', { class: 'nowrap', text: formatWhen(item.scanned_at) }),
+                el('td', { class: 'item-cell', title: item.filename || '', text: item.filename || '' }),
+                el('td', { class: 'nowrap', text: (item.sha256 || '').slice(0, 12) + (item.sha256 ? '…' : '') }),
+                el('td', { class: 'nowrap' }, verdictBadge),
+                el('td', { class: 'nowrap' }, viewBtn, copyShaBtn)
+              )
+            );
+          }
+        }
+
+        function kvRow(k, v) {
+          const valueNode = (v instanceof Node)
+            ? v
+            : el('span', { class: 'value-code', text: String(v == null ? '' : v) });
+          return el('div', { class: 'kv-row' },
+            el('dt', { text: k }),
+            el('dd', null, valueNode)
+          );
+        }
+
+        function block(title, rows, opts) {
+          const cls = 'summary-block' + (opts && opts.tone ? (' tone-' + opts.tone) : '') + (opts && opts.spanAll ? ' span-all' : '');
+          const dl = el('dl', { class: 'kv' });
+          for (const [k, v] of rows) dl.appendChild(kvRow(k, v));
+          return el('section', { class: cls },
+            el('h3', null, el('span', { class: 'summary-title', text: title })),
+            dl
+          );
+        }
+
+        function renderSummary(resp) {
+          summaryOutEl.textContent = '';
+          const r = resp && typeof resp === 'object' ? resp : {};
+          const verdict = String(r.verdict || '');
+          const tone = verdictKind(verdict) === 'ok' ? 'ok' : (verdictKind(verdict) === 'bad' ? 'bad' : 'info');
+
+          const verdictRows = [
+            ['Verdict', makeBadge(verdictKind(verdict), verdict ? verdict.toUpperCase() : 'UNKNOWN')],
+          ];
+          if (r.signature) verdictRows.push(['Signature', String(r.signature)]);
+          if (r.duration_ms != null) verdictRows.push(['Scan time', String(r.duration_ms) + ' ms']);
+          summaryOutEl.appendChild(block('Verdict', verdictRows, { tone }));
+
+          const fileRows = [
+            ['Type', String(r.input_type || '')],
+            ['Name', String(r.filename || '')],
+            ['Size', formatBytes(r.size_bytes)],
+            ['SHA-256', String(r.sha256 || '')],
+          ];
+          summaryOutEl.appendChild(block('Artifact', fileRows, { tone: 'info' }));
+
+          const clam = (r.clamav && typeof r.clamav === 'object') ? r.clamav : {};
+          const engineRows = [
+            ['Host', String(clam.host || '') + (clam.port ? (':' + clam.port) : '')],
+          ];
+          if (clam.version) engineRows.push(['Version', String(clam.version)]);
+          if (clam.response) engineRows.push(['Response', String(clam.response)]);
+          if (clam.error) engineRows.push(['Error', String(clam.error)]);
+          summaryOutEl.appendChild(block('ClamAV', engineRows, { tone: tone === 'bad' ? 'bad' : 'info' }));
+        }
+
+        function renderRaw(resp) {
+          outEl.textContent = JSON.stringify(resp || {}, null, 2);
+        }
+
+        function showResult(obj) {
+          lastResult = obj;
+          renderSummary(obj);
+          if (activeTab === 'raw') renderRaw(obj);
+          setButtonsEnabled(Boolean(lastResult));
+        }
+
+        function setActiveTab(next) {
+          activeTab = next;
+          const isSummary = next === 'summary';
+          tabSummaryEl.setAttribute('aria-selected', isSummary ? 'true' : 'false');
+          tabRawEl.setAttribute('aria-selected', isSummary ? 'false' : 'true');
+          panelSummaryEl.classList.toggle('hidden', !isSummary);
+          panelRawEl.classList.toggle('hidden', isSummary);
+          if (!isSummary) renderRaw(lastResult || {});
+          else renderSummary(lastResult || {});
+        }
+
+        function setActiveInput(next) {
+          activeInput = next;
+          const isFile = next === 'file';
+          tabInputFileEl.setAttribute('aria-selected', isFile ? 'true' : 'false');
+          tabInputPayloadEl.setAttribute('aria-selected', isFile ? 'false' : 'true');
+          panelInputFileEl.classList.toggle('hidden', !isFile);
+          panelInputPayloadEl.classList.toggle('hidden', isFile);
+        }
+
+        async function apiForm(path, formData) {
+          const headers = {};
+          const key = apiKeyEl.value.trim();
+          if (key) headers[API_KEY_HEADER] = key;
+          const res = await fetch(path, { method: 'POST', headers, body: formData });
+          const text = await res.text();
+          let data;
+          try { data = JSON.parse(text); } catch (_) { data = { raw: text }; }
+          if (!res.ok) {
+            const err = new Error('HTTP ' + res.status);
+            err.status = res.status;
+            err.data = data;
+            throw err;
+          }
+          return data;
+        }
+
+        async function startScan() {
+          saveApiKey();
+          setStatus('info', 'Scanning…');
+          startEl.disabled = true;
+
+          try {
+            const fd = new FormData();
+            let label = '';
+            if (activeInput === 'file') {
+              const f = fileInputEl.files && fileInputEl.files[0];
+              if (!f) throw new Error('Select a file to scan');
+              if (FILE_SCAN_MAX_BYTES > 0 && f.size > FILE_SCAN_MAX_BYTES) {
+                throw new Error('File too large (max ' + formatBytes(FILE_SCAN_MAX_BYTES) + ')');
+              }
+              fd.append('file', f, f.name);
+              label = f.name;
+            } else {
+              const payload = String(payloadEl.value || '').trim();
+              if (!payload) throw new Error('Paste a payload to scan');
+              fd.append('payload', payload);
+              fd.append('payload_base64', payloadBase64El.checked ? 'true' : 'false');
+              label = payloadBase64El.checked ? 'payload (base64)' : 'payload (text)';
+            }
+
+            const resp = await apiForm('/file/scan', fd);
+            showResult(resp);
+            upsertHistory({
+              scan_id: resp.scan_id || (Math.random().toString(16).slice(2)),
+              scanned_at: resp.scanned_at,
+              filename: resp.filename || label,
+              sha256: resp.sha256,
+              verdict: resp.verdict,
+              signature: resp.signature,
+              result: resp,
+            });
+            setStatus(verdictKind(resp.verdict), 'Completed: ' + String(resp.verdict || 'unknown'));
+          } catch (e) {
+            const msg = e && e.data && e.data.detail ? e.data.detail : (e && e.message ? e.message : String(e || 'Unknown error'));
+            setStatus('bad', msg);
+          } finally {
+            startEl.disabled = false;
+          }
+        }
+
+        function copyLastJson() {
+          if (!lastResult) return;
+          copyText(JSON.stringify(lastResult, null, 2));
+        }
+
+        function init() {
+          loadApiKey();
+          history = loadHistory();
+          renderHistory();
+          setActiveInput('file');
+          setActiveTab('summary');
+
+          fileHelpEl.textContent = FILE_SCAN_MAX_BYTES ? ('Max size: ' + formatBytes(FILE_SCAN_MAX_BYTES)) : '';
+
+          tabInputFileEl.addEventListener('click', () => setActiveInput('file'));
+          tabInputPayloadEl.addEventListener('click', () => setActiveInput('payload'));
+
+          tabSummaryEl.addEventListener('click', () => setActiveTab('summary'));
+          tabRawEl.addEventListener('click', () => setActiveTab('raw'));
+
+          startEl.addEventListener('click', startScan);
+          clearHistoryEl.addEventListener('click', clearHistory);
+          historyFilterEl.addEventListener('input', renderHistory);
+          copyJsonEl.addEventListener('click', copyLastJson);
+          copyJson2El.addEventListener('click', copyLastJson);
+
+          apiKeyEl.addEventListener('input', () => {
+            const v = apiKeyEl.value.trim();
+            if (!v) return;
+            localStorage.setItem(LS.apiKey, v);
+          });
+
+          setButtonsEnabled(false);
+          renderSummary({});
+          renderRaw({});
+        }
+
+        init();
+      })();
+    </script>
+  </body>
+</html>
+
