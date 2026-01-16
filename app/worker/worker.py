@@ -32,7 +32,9 @@ PREFETCH = int(os.getenv("PREFETCH", "20"))
 MAX_RETRIES = int(
     os.getenv("MAX_RETRIES", "5")
 )  # move to DLQ after this many deliveries
-APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN")  # optional (opencensus)
+APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"
+)  # optional (opencensus)
 RESULT_BACKEND = os.getenv("RESULT_BACKEND", "table").strip().lower()
 RESULT_STORE_CONN = os.getenv("RESULT_STORE_CONN")
 RESULT_TABLE = os.getenv("RESULT_TABLE", "scanresults")

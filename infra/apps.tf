@@ -71,6 +71,10 @@ resource "azurerm_container_app" "api" {
         secret_name = "appi-conn"
       }
       env {
+        name        = "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        secret_name = "appi-conn"
+      }
+      env {
         name        = "RESULT_STORE_CONN"
         secret_name = "results-conn"
       }
@@ -206,6 +210,10 @@ resource "azurerm_container_app" "fetcher" {
       }
       env {
         name        = "APPINSIGHTS_CONN"
+        secret_name = "appi-conn"
+      }
+      env {
+        name        = "APPLICATIONINSIGHTS_CONNECTION_STRING"
         secret_name = "appi-conn"
       }
       env {
@@ -347,6 +355,10 @@ resource "azurerm_container_app" "worker" {
       }
       env {
         name        = "APPINSIGHTS_CONN"
+        secret_name = "appi-conn"
+      }
+      env {
+        name        = "APPLICATIONINSIGHTS_CONNECTION_STRING"
         secret_name = "appi-conn"
       }
       env {

@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import html
 import json
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -41,7 +42,9 @@ SERVICEBUS_FQDN = os.getenv(
     "SERVICEBUS_FQDN"
 )  # e.g. "mynamespace.servicebus.windows.net"
 USE_MI = os.getenv("USE_MANAGED_IDENTITY", "false").lower() in ("1", "true", "yes")
-APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN")  # optional
+APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"
+)  # optional
 RESULT_BACKEND = os.getenv("RESULT_BACKEND", "table").strip().lower()
 RESULT_STORE_CONN = os.getenv("RESULT_STORE_CONN")
 RESULT_TABLE = os.getenv("RESULT_TABLE", "scanresults")
@@ -52,6 +55,8 @@ REDIS_URL = os.getenv("REDIS_URL")
 REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", f"queue:{QUEUE_NAME}")
 REDIS_RESULT_PREFIX = os.getenv("REDIS_RESULT_PREFIX", "scan:")
 REDIS_RESULT_TTL_SECONDS = int(os.getenv("REDIS_RESULT_TTL_SECONDS", "0"))
+
+logger = logging.getLogger("aca.api")
 
 # API hardening
 API_KEY = os.getenv("API_KEY")
@@ -567,6 +572,17 @@ async def lifespan(app: FastAPI):
         await table_service.__aenter__()
         await table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
 
+    # --- Optional App Insights logging (only if packages + conn are present) ---
+    if APPINSIGHTS_CONN:
+        try:
+            from opencensus.ext.azure.log_exporter import AzureLogHandler
+
+            if not any(isinstance(h, AzureLogHandler) for h in logger.handlers):
+                logger.addHandler(AzureLogHandler(connection_string=APPINSIGHTS_CONN))
+                logger.info("App Insights logging enabled.")
+        except Exception as e:
+            logger.warning(f"App Insights logging not enabled: {e}")
+
     # --- Optional OpenTelemetry tracing (only if packages + conn are present) ---
     if APPINSIGHTS_CONN:
         try:
@@ -635,6 +651,9 @@ async def otel_request_spans(request: Request, call_next):
         try:
             response = await call_next(request)
         except Exception as exc:
+            logger.exception(
+                "Unhandled exception in request: %s %s", request.method, request.url.path
+            )
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
             raise
@@ -647,6 +666,35 @@ async def otel_request_spans(request: Request, call_next):
 
         span.set_attribute("http.status_code", response.status_code)
         if response.status_code >= 500:
+            detail = None
+            try:
+                if (
+                    str(response.headers.get("content-type") or "")
+                    .lower()
+                    .startswith("application/json")
+                ):
+                    body = getattr(response, "body", None)
+                    if body:
+                        parsed = json.loads(body.decode("utf-8"))
+                        if isinstance(parsed, dict) and parsed.get("detail") is not None:
+                            detail = parsed.get("detail")
+            except Exception:
+                detail = None
+
+            if detail is not None:
+                span.set_attribute("app.error_detail", str(detail))
+                try:
+                    span.add_event("http.error", {"detail": str(detail)})
+                except Exception:
+                    pass
+
+            logger.error(
+                "HTTP %s %s -> %s: %s",
+                request.method,
+                request.url.path,
+                response.status_code,
+                str(detail) if detail is not None else "",
+            )
             span.set_status(Status(StatusCode.ERROR))
         return response
 
