@@ -45,10 +45,7 @@ def _recv_until_delim(
 ) -> bytes:
     buf = bytearray()
     while len(buf) < max_bytes:
-        try:
-            chunk = sock.recv(4096)
-        except socket.timeout:
-            break
+        chunk = sock.recv(4096)
         if not chunk:
             break
         buf.extend(chunk)
@@ -203,4 +200,3 @@ def clamd_scan_chunks(
         raise
     except OSError as e:
         raise ClamAVConnectionError(f"clamd scan failed: {e}") from e
-

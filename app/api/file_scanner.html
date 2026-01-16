@@ -488,8 +488,11 @@
         function setStatus(kind, text) {
           statusEl.textContent = '';
           if (!text) return;
-          const label = kind === 'ok' ? 'OK' : (kind === 'bad' ? 'ERROR' : (kind === 'warn' ? 'WARN' : 'INFO'));
-          statusEl.appendChild(makeBadge(kind || 'info', label));
+          const effectiveKind = kind === 'pending' ? 'info' : (kind || 'info');
+          const label = kind === 'pending'
+            ? 'PENDING'
+            : (kind === 'ok' ? 'OK' : (kind === 'bad' ? 'ERROR' : (kind === 'warn' ? 'WARN' : 'INFO')));
+          statusEl.appendChild(makeBadge(effectiveKind, label));
           statusEl.appendChild(document.createTextNode(' ' + text));
         }
 
@@ -516,6 +519,16 @@
         function loadApiKey() {
           const key = (localStorage.getItem(LS.apiKey) || '').trim() || (localStorage.getItem(LS.legacyApiKey) || '').trim();
           if (key) apiKeyEl.value = key;
+        }
+
+        function makeLocalId(prefix) {
+          const p = String(prefix || 'local');
+          try {
+            if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+              return p + '-' + window.crypto.randomUUID();
+            }
+          } catch (_) { /* ignore */ }
+          return p + '-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
         }
 
         function saveApiKey() {
@@ -580,6 +593,7 @@
 
             const copyShaBtn = el('button', { type: 'button' }, 'Copy SHA');
             copyShaBtn.addEventListener('click', () => copyText(String(item.sha256 || '')));
+            copyShaBtn.disabled = !item.sha256;
 
             historyBodyEl.appendChild(
               el('tr', null,
@@ -652,7 +666,8 @@
           lastResult = obj;
           renderSummary(obj);
           if (activeTab === 'raw') renderRaw(obj);
-          setButtonsEnabled(Boolean(lastResult));
+          const verdict = lastResult && typeof lastResult === 'object' ? String(lastResult.verdict || '').toLowerCase() : '';
+          setButtonsEnabled(Boolean(lastResult) && verdict !== 'pending');
         }
 
         function setActiveTab(next) {
@@ -694,13 +709,21 @@
 
         async function startScan() {
           saveApiKey();
-          setStatus('info', 'Scanning…');
+          setStatus('pending', 'Analyzing…');
           startEl.disabled = true;
+          setButtonsEnabled(false);
+
+          const startedAt = new Date().toISOString();
+          const inputType = activeInput;
+          const pendingId = makeLocalId('pending');
+          let pendingInserted = false;
+          let label = '';
+          let sizeBytes = null;
+          let contentType = null;
 
           try {
             const fd = new FormData();
-            let label = '';
-            if (activeInput === 'file') {
+            if (inputType === 'file') {
               const f = fileInputEl.files && fileInputEl.files[0];
               if (!f) throw new Error('Select a file to scan');
               if (FILE_SCAN_MAX_BYTES > 0 && f.size > FILE_SCAN_MAX_BYTES) {
@@ -708,16 +731,43 @@
               }
               fd.append('file', f, f.name);
               label = f.name;
+              sizeBytes = f.size;
+              contentType = f.type || 'application/octet-stream';
             } else {
               const payload = String(payloadEl.value || '').trim();
               if (!payload) throw new Error('Paste a payload to scan');
               fd.append('payload', payload);
               fd.append('payload_base64', payloadBase64El.checked ? 'true' : 'false');
               label = payloadBase64El.checked ? 'payload (base64)' : 'payload (text)';
+              contentType = payloadBase64El.checked ? 'application/octet-stream' : 'text/plain; charset=utf-8';
             }
+
+            const pending = {
+              scan_id: pendingId,
+              scanned_at: startedAt,
+              input_type: inputType,
+              filename: label,
+              content_type: contentType,
+              size_bytes: sizeBytes,
+              engine: 'clamav',
+              verdict: 'pending',
+              clamav: {},
+            };
+            showResult(pending);
+            upsertHistory({
+              scan_id: pendingId,
+              scanned_at: startedAt,
+              filename: label,
+              sha256: '',
+              verdict: 'pending',
+              signature: '',
+              result: pending,
+            });
+            pendingInserted = true;
 
             const resp = await apiForm('/file/scan', fd);
             showResult(resp);
+            history = history.filter(x => x && x.scan_id !== pendingId);
             upsertHistory({
               scan_id: resp.scan_id || (Math.random().toString(16).slice(2)),
               scanned_at: resp.scanned_at,
@@ -731,6 +781,27 @@
           } catch (e) {
             const msg = e && e.data && e.data.detail ? e.data.detail : (e && e.message ? e.message : String(e || 'Unknown error'));
             setStatus('bad', msg);
+            if (pendingInserted) {
+              const errObj = {
+                scan_id: pendingId,
+                scanned_at: startedAt,
+                input_type: inputType,
+                filename: label,
+                engine: 'clamav',
+                verdict: 'error',
+                clamav: { error: msg },
+              };
+              showResult(errObj);
+              upsertHistory({
+                scan_id: pendingId,
+                scanned_at: startedAt,
+                filename: errObj.filename || 'scan failed',
+                sha256: '',
+                verdict: 'error',
+                signature: '',
+                result: errObj,
+              });
+            }
           } finally {
             startEl.disabled = false;
           }
@@ -778,4 +849,3 @@
     </script>
   </body>
 </html>
-

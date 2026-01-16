@@ -25,6 +25,8 @@ from pydantic import BaseModel, Field
 from common.clamav_client import (
     ClamAVConnectionError,
     ClamAVError,
+    ClamAVProtocolError,
+    clamd_ping,
     clamd_scan_bytes,
     clamd_version,
 )
@@ -712,14 +714,50 @@ async def scan_file(
             "application/octet-stream" if payload_base64 else "text/plain; charset=utf-8"
         )
 
+    scan_timeout_seconds = float(CLAMAV_TIMEOUT_SECONDS or 0) or 8.0
+    warmup_wait_seconds = min(10.0, max(2.0, scan_timeout_seconds))
+
+    async def _ensure_clamd_ready() -> None:
+        # clamd can be briefly unavailable on cold start or signature reload; wait a bit
+        # so users don't have to click "Scan" twice.
+        deadline = time.monotonic() + warmup_wait_seconds
+        delay = 0.25
+        ping_timeout = min(0.5, scan_timeout_seconds)
+        while True:
+            if await asyncio.to_thread(
+                clamd_ping,
+                host=CLAMAV_HOST,
+                port=CLAMAV_PORT,
+                timeout_seconds=ping_timeout,
+            ):
+                return
+            if time.monotonic() >= deadline:
+                raise ClamAVConnectionError("clamd is not ready yet")
+            await asyncio.sleep(delay)
+            delay = min(delay * 1.5, 1.0)
+
     started = time.monotonic()
     try:
-        result = clamd_scan_bytes(
-            data,
-            host=CLAMAV_HOST,
-            port=CLAMAV_PORT,
-            timeout_seconds=float(CLAMAV_TIMEOUT_SECONDS or 0),
-        )
+        await _ensure_clamd_ready()
+        try:
+            result = await asyncio.to_thread(
+                clamd_scan_bytes,
+                data,
+                host=CLAMAV_HOST,
+                port=CLAMAV_PORT,
+                timeout_seconds=scan_timeout_seconds,
+            )
+        except (ClamAVConnectionError, ClamAVProtocolError):
+            # One retry after a short delay for transient clamd startup/reload issues.
+            await asyncio.sleep(0.5)
+            await _ensure_clamd_ready()
+            result = await asyncio.to_thread(
+                clamd_scan_bytes,
+                data,
+                host=CLAMAV_HOST,
+                port=CLAMAV_PORT,
+                timeout_seconds=scan_timeout_seconds,
+            )
     except ClamAVConnectionError as e:
         raise HTTPException(
             status_code=503,
