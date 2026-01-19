@@ -57,9 +57,16 @@ az monitor log-analytics workspace show -g "${RG}" -n "${LA}" >/dev/null 2>&1 ||
 
 echo "[deploy] Ensuring Terraform state storage exists..."
 
-az storage account create \
-  -g "${RG}" -n "${TFSTATE_SA}" -l "${REGION}" \
-  --sku Standard_LRS --kind StorageV2 >/dev/null
+if az storage account show -g "${RG}" -n "${TFSTATE_SA}" >/dev/null 2>&1; then
+  az storage account update \
+    -g "${RG}" -n "${TFSTATE_SA}" \
+    --min-tls-version TLS1_2 >/dev/null
+else
+  az storage account create \
+    -g "${RG}" -n "${TFSTATE_SA}" -l "${REGION}" \
+    --sku Standard_LRS --kind StorageV2 \
+    --min-tls-version TLS1_2 >/dev/null
+fi
 
 az storage container create \
   --account-name "${TFSTATE_SA}" \
