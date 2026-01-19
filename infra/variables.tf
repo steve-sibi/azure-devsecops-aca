@@ -10,6 +10,18 @@ variable "resource_group_name" {
   description = "Existing resource group to deploy into."
 }
 
+variable "subscription_id" {
+  type        = string
+  default     = null
+  description = "Azure Subscription ID for the AzureRM provider (can also be set via ARM_SUBSCRIPTION_ID)."
+}
+
+variable "terraform_principal_object_id" {
+  type        = string
+  default     = null
+  description = "Object ID of the principal that should be granted Key Vault secret management permissions (defaults to the currently-authenticated principal)."
+}
+
 variable "create_apps" {
   type        = bool
   default     = false

@@ -68,15 +68,16 @@ resource "azurerm_servicebus_queue" "q_scan" {
 
 # Storage for scan results (Table)
 resource "azurerm_storage_account" "results" {
-  name                            = local.results_sa
-  resource_group_name             = data.azurerm_resource_group.rg.name
-  location                        = data.azurerm_resource_group.rg.location
-  account_tier                    = "Standard"
-  account_replication_type        = "GRS"
-  min_tls_version                 = "TLS1_2"
-  allow_nested_items_to_be_public = false
-  enable_https_traffic_only       = true
-  tags                            = var.tags
+  name                             = local.results_sa
+  resource_group_name              = data.azurerm_resource_group.rg.name
+  location                         = data.azurerm_resource_group.rg.location
+  account_tier                     = "Standard"
+  account_replication_type         = "GRS"
+  min_tls_version                  = "TLS1_2"
+  cross_tenant_replication_enabled = true
+  allow_nested_items_to_be_public  = false
+  https_traffic_only_enabled       = true
+  tags                             = var.tags
 
   sas_policy {
     expiration_action = "Log"
@@ -244,7 +245,12 @@ resource "azurerm_monitor_diagnostic_setting" "results_sa_table_diag" {
   }
 
   metric {
-    category = "AllMetrics"
+    category = "Capacity"
+    enabled  = true
+  }
+
+  metric {
+    category = "Transaction"
     enabled  = true
   }
 }
@@ -267,7 +273,12 @@ resource "azurerm_monitor_diagnostic_setting" "results_sa_queue_diag" {
   }
 
   metric {
-    category = "AllMetrics"
+    category = "Capacity"
+    enabled  = true
+  }
+
+  metric {
+    category = "Transaction"
     enabled  = true
   }
 }

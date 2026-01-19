@@ -3,7 +3,7 @@
 resource "azurerm_key_vault_access_policy" "kv_ci" {
   key_vault_id       = data.azurerm_key_vault.kv.id
   tenant_id          = data.azurerm_client_config.current.tenant_id
-  object_id          = data.azurerm_client_config.current.object_id
+  object_id          = coalesce(var.terraform_principal_object_id, data.azurerm_client_config.current.object_id)
   secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
 }
 
@@ -11,7 +11,7 @@ resource "azurerm_key_vault_access_policy" "kv_ci" {
 resource "azurerm_role_assignment" "kv_tf" {
   scope                = data.azurerm_key_vault.kv.id
   role_definition_name = "Key Vault Secrets Officer"
-  principal_id         = data.azurerm_client_config.current.object_id
+  principal_id         = coalesce(var.terraform_principal_object_id, data.azurerm_client_config.current.object_id)
 }
 
 # Generate and store an API key for the public API (KV-backed)
@@ -26,7 +26,12 @@ resource "azurerm_key_vault_secret" "api_key" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "api-key"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 # Store distinct SB connection strings in KV
@@ -36,7 +41,12 @@ resource "azurerm_key_vault_secret" "sb_send" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-send"
   expiration_date = timeadd(timestamp(), "8760h") # ~1 year
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_listen" {
@@ -45,7 +55,12 @@ resource "azurerm_key_vault_secret" "sb_listen" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-listen"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_manage" {
@@ -54,7 +69,12 @@ resource "azurerm_key_vault_secret" "sb_manage" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-manage"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_scan_send" {
@@ -63,7 +83,12 @@ resource "azurerm_key_vault_secret" "sb_scan_send" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-send"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_scan_listen" {
@@ -72,7 +97,12 @@ resource "azurerm_key_vault_secret" "sb_scan_listen" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-listen"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_scan_manage" {
@@ -81,7 +111,12 @@ resource "azurerm_key_vault_secret" "sb_scan_manage" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "servicebus-manage"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "results_conn" {
@@ -90,7 +125,12 @@ resource "azurerm_key_vault_secret" "results_conn" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "table-connection-string"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 # Optional external scan (urlscan.io)
@@ -101,7 +141,12 @@ resource "azurerm_key_vault_secret" "urlscan_api_key" {
   key_vault_id    = data.azurerm_key_vault.kv.id
   content_type    = "urlscan-api-key"
   expiration_date = timeadd(timestamp(), "8760h")
-  depends_on      = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
 # Give the UAMI read on KV so apps can resolve secrets at creation time

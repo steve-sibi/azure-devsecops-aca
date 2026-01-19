@@ -3,7 +3,7 @@ terraform {
   required_providers {
     azurerm = {
       source  = "hashicorp/azurerm"
-      version = "~> 3.116"
+      version = "~> 4.0"
     }
     random = {
       source  = "hashicorp/random"
@@ -14,8 +14,9 @@ terraform {
 
 provider "azurerm" {
   features {}
+  subscription_id = var.subscription_id
   # provider registrations are already handled out-of-band
-  skip_provider_registration = true
+  resource_provider_registrations = "none"
 }
 
 locals {

@@ -5,6 +5,7 @@ resource "azurerm_container_app" "api" {
   resource_group_name          = data.azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
+  max_inactive_revisions       = 100
   tags                         = var.tags
 
   identity {
@@ -139,6 +140,7 @@ resource "azurerm_container_app" "fetcher" {
   resource_group_name          = data.azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
+  max_inactive_revisions       = 100
   tags                         = var.tags
 
   identity {
@@ -293,6 +295,7 @@ resource "azurerm_container_app" "worker" {
   resource_group_name          = data.azurerm_resource_group.rg.name
   container_app_environment_id = azurerm_container_app_environment.env.id
   revision_mode                = "Single"
+  max_inactive_revisions       = 100
   tags                         = var.tags
 
   identity {
