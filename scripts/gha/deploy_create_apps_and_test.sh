@@ -31,6 +31,15 @@ command -v terraform >/dev/null 2>&1 || { echo "terraform not found" >&2; exit 1
 command -v curl >/dev/null 2>&1 || { echo "curl not found" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; exit 1; }
 
+SUB_ID="$(az account show --query id -o tsv)"
+export ARM_SUBSCRIPTION_ID="${SUB_ID}"
+export TF_VAR_subscription_id="${SUB_ID}"
+
+if [[ -n "${AZURE_CLIENT_ID:-}" ]]; then
+  SP_OBJ_ID="$(az ad sp show --id "${AZURE_CLIENT_ID}" --query id -o tsv)"
+  export TF_VAR_terraform_principal_object_id="${SP_OBJ_ID}"
+fi
+
 terraform -chdir="${INFRA_DIR}" init \
   -backend-config="resource_group_name=${RG}" \
   -backend-config="storage_account_name=${TFSTATE_SA}" \
@@ -40,11 +49,10 @@ terraform -chdir="${INFRA_DIR}" init \
 
 echo "[deploy] Importing env + apps if they exist..."
 
-SUB="$(az account show --query id -o tsv)"
-ACA_ENV_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/managedEnvironments/${PREFIX}-acaenv"
-API_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-api"
-FETCHER_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-fetcher"
-WORKER_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-worker"
+ACA_ENV_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.App/managedEnvironments/${PREFIX}-acaenv"
+API_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-api"
+FETCHER_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-fetcher"
+WORKER_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-worker"
 
 exists() { az resource show --ids "$1" >/dev/null 2>&1; }
 instate() { terraform -chdir="${INFRA_DIR}" state show "$1" >/dev/null 2>&1; }

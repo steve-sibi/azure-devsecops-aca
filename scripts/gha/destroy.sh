@@ -29,6 +29,10 @@ SUB_ID="$(az account show --query id -o tsv)"
 SP_OBJ_ID="$(az ad sp show --id "${AZURE_CLIENT_ID}" --query id -o tsv)"
 SCOPE="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${TFSTATE_SA}"
 
+export ARM_SUBSCRIPTION_ID="${SUB_ID}"
+export TF_VAR_subscription_id="${SUB_ID}"
+export TF_VAR_terraform_principal_object_id="${SP_OBJ_ID}"
+
 az role assignment list --assignee-object-id "${SP_OBJ_ID}" --scope "${SCOPE}" \
   --role "Storage Blob Data Contributor" --query "[0].id" -o tsv | grep . >/dev/null || \
   az role assignment create \
@@ -87,4 +91,3 @@ echo "[destroy] Deleting Resource Group (async)..."
 az group delete -n "${RG}" --yes --no-wait || true
 
 echo "[destroy] Destroy complete; RG deletion submitted."
-

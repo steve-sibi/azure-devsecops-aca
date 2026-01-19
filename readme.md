@@ -653,6 +653,8 @@ If you want to inspect or modify:
 
 ```bash
 cd infra
+export ARM_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+export TF_VAR_subscription_id="${ARM_SUBSCRIPTION_ID}"
 terraform init \
   -backend-config="resource_group_name=rg-devsecops-aca" \
   -backend-config="storage_account_name=stdevsecopsacatfstate" \
