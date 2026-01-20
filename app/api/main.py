@@ -19,7 +19,7 @@ from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus.exceptions import ServiceBusError
 from azure.data.tables.aio import TableServiceClient
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Security, UploadFile
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
 
@@ -646,6 +646,11 @@ async def otel_request_spans(request: Request, call_next):
 @app.get("/healthz")
 async def healthz():
     return {"ok": True}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return Response(status_code=204)
 
 
 @app.get("/", response_class=HTMLResponse)

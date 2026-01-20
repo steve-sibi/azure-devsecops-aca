@@ -2,14 +2,33 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import re
 import socket
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from html.parser import HTMLParser
+from functools import lru_cache
+from pathlib import Path
 from typing import Optional
 from urllib.parse import parse_qsl, urljoin, urlparse
+
+from bs4 import BeautifulSoup
+
+try:
+    from adblockparser import AdblockRules
+except Exception:  # pragma: no cover
+    AdblockRules = None  # type: ignore[assignment]
+
+try:
+    import tldextract
+except Exception:  # pragma: no cover
+    tldextract = None  # type: ignore[assignment]
+
+try:
+    import yara
+except Exception:  # pragma: no cover
+    yara = None  # type: ignore[assignment]
 
 
 def _truncate(value: str, *, max_len: int) -> str:
@@ -58,7 +77,16 @@ def classify_internal_external(*, resource_url: str, page_host: str) -> str:
         return "internal"
     if not page_host:
         return "external"
-    return "internal" if host == page_host else "external"
+    if host == page_host:
+        return "internal"
+    try:
+        return (
+            "internal"
+            if registrable_domain(host) == registrable_domain(page_host)
+            else "external"
+        )
+    except Exception:
+        return "external"
 
 
 def _safe_urljoin(base_url: str, maybe_url: str) -> str:
@@ -76,61 +104,116 @@ def _safe_urljoin(base_url: str, maybe_url: str) -> str:
         return ""
 
 
-_TRACKING_HOST_HINTS = (
-    "googletagmanager.com",
-    "google-analytics.com",
-    "doubleclick.net",
-    "facebook.net",
-    "connect.facebook.net",
-    "analytics.twitter.com",
-    "cdn.segment.com",
-    "static.hotjar.com",
-    "script.hotjar.com",
-    "mixpanel.com",
-    "stats.g.doubleclick.net",
-    "snap.licdn.com",
+_API_CALL_HINTS = (
+    "fetch(",
+    "xmlhttprequest",
+    "sendbeacon(",
+    "navigator.sendbeacon",
+    "websocket(",
+    "new websocket(",
+    "eventsource(",
+    "new eventsource(",
 )
 
-_TRACKING_PATH_HINTS = (
-    "gtag/js",
-    "analytics.js",
-    "fbevents.js",
-    "pixel.js",
-    "matomo.js",
-)
+_ABSOLUTE_URL_RE = re.compile(r"(?:https?|wss?)://[^\s\"'<>]+", re.IGNORECASE)
 
-_FINGERPRINTING_HINTS = (
-    "fingerprintjs",
-    "fp.min.js",
-    "audioContext".lower(),
-    "offlineaudiocontext",
-    "webglrenderingcontext",
-    "getimagedata",
-    "todataurl",
-    "navigator.plugins",
-    "navigator.hardwareconcurrency",
-    "navigator.devicememory",
-    "canvas",
-)
+_DEFAULT_TRACKING_FILTERS = Path(__file__).with_name("tracking_filters.txt")
+_DEFAULT_WEB_YARA_RULES = Path(__file__).with_name("web_yara_rules.yar")
 
-_SUSPICIOUS_JS_HINTS = (
-    "activeXObject".lower(),
-    "wscript.",
-    "powershell",
-    "cmd.exe",
-    "mshta",
-    "rundll32",
-    "regsvr32",
-    "document.write(",
-    "unescape(",
-    "fromcharcode",
-    "atob(",
-    "eval(",
-    "new function(",
-)
 
-_EVAL_HINTS = ("eval(", "new function(")
-_INNER_HTML_HINTS = ("innerhtml", "outerhtml")
+@lru_cache(maxsize=1)
+def _tld_extractor():
+    if tldextract is None:  # pragma: no cover
+        return None
+    cache_dir = os.getenv("TLD_EXTRACT_CACHE_DIR", "/tmp/tldextract-cache")
+    try:
+        return tldextract.TLDExtract(
+            cache_dir=cache_dir,
+            suffix_list_urls=None,
+        )
+    except Exception:
+        try:
+            return tldextract.TLDExtract(suffix_list_urls=None)
+        except Exception:
+            return None
+
+
+@lru_cache(maxsize=1)
+def _tracking_rules():
+    if AdblockRules is None:  # pragma: no cover
+        return None
+    rules_path = os.getenv("WEB_TRACKING_FILTERS_PATH", "")
+    path = Path(rules_path) if rules_path.strip() else _DEFAULT_TRACKING_FILTERS
+    try:
+        raw = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        raw = []
+    raw = [line.strip() for line in raw if line and isinstance(line, str)]
+    raw = [line for line in raw if line and not line.lstrip().startswith(("!", "#"))]
+    if not raw:
+        return None
+    try:
+        return AdblockRules(raw, use_re2=False)  # type: ignore[misc]
+    except Exception:
+        return None
+
+
+@lru_cache(maxsize=1)
+def _web_yara_rules():
+    if yara is None:  # pragma: no cover
+        return None
+    rules_path = os.getenv("WEB_YARA_RULES_PATH", "")
+    path = Path(rules_path) if rules_path.strip() else _DEFAULT_WEB_YARA_RULES
+    if not path.exists():
+        return None
+    try:
+        return yara.compile(filepath=str(path))
+    except Exception:
+        return None
+
+
+def _yara_rule_names(text: str) -> set[str]:
+    rules = _web_yara_rules()
+    if rules is None:
+        return set()
+    payload = (text or "").strip()
+    if not payload:
+        return set()
+    try:
+        matches = rules.match(data=payload)
+    except Exception:
+        try:
+            matches = rules.match(data=payload.encode("utf-8", "ignore"))
+        except Exception:
+            return set()
+    names: set[str] = set()
+    for m in matches or []:
+        rule = getattr(m, "rule", None) or getattr(m, "name", None)
+        if rule:
+            names.add(str(rule))
+    return names
+
+
+def _is_tracking_resource(resource_url: str, *, page_host: str, kind: str) -> bool:
+    rules = _tracking_rules()
+    if rules is None:
+        return False
+    host = _url_host(resource_url)
+    third_party = False
+    if host and page_host:
+        third_party = registrable_domain(host) != registrable_domain(page_host)
+    opts: dict[str, object] = {"domain": page_host, "third-party": bool(third_party)}
+    k = (kind or "").strip().lower()
+    if k == "script":
+        opts["script"] = True
+    elif k == "image":
+        opts["image"] = True
+    elif k in ("style", "stylesheet", "css"):
+        opts["stylesheet"] = True
+    try:
+        return bool(rules.should_block(resource_url, opts))
+    except Exception:
+        return False
 
 _OPEN_REDIRECT_PARAM_HINTS = {
     "redirect",
@@ -256,270 +339,18 @@ class ParsedPage:
     inner_html_usage: bool
 
 
-class _PageHTMLParser(HTMLParser):
-    def __init__(
-        self,
-        *,
-        base_url: str,
-        page_host: str,
-        max_items: int,
-        max_inline_script_chars: int,
-    ):
-        super().__init__(convert_charrefs=True)
-        self.base_url = base_url
-        self.page_host = page_host
-        self.max_items = max(1, int(max_items))
-        self.max_inline_script_chars = max(1, int(max_inline_script_chars))
+def _first_srcset_url(srcset: str) -> str:
+    if not isinstance(srcset, str):
+        return ""
+    first = srcset.split(",", 1)[0].strip()
+    if not first:
+        return ""
+    return first.split(" ", 1)[0].strip()
 
-        self._in_a = False
-        self._a_href = ""
-        self._a_text_parts: list[str] = []
 
-        self._in_title = False
-        self._title_parts: list[str] = []
-
-        self._in_script = False
-        self._script_text_parts: list[str] = []
-
-        self._in_form = False
-        self._form_has_password = False
-
-        self.links: list[dict] = []
-        self.images: list[dict] = []
-        self.scripts: list[dict] = []
-        self.styles: list[dict] = []
-        self.form_actions: list[str] = []
-
-        self.password_fields = 0
-        self.login_forms = 0
-        self.csrf_protection = False
-
-        self.external_scripts = 0
-        self.suspicious_scripts = 0
-        self.suspicious_api_calls = False
-        self.mixed_content: list[str] = []
-        self.tracking_scripts = False
-        self.fingerprinting = False
-        self.eval_usage = False
-        self.inner_html_usage = False
-
-    def _maybe_add_mixed(self, url: str) -> None:
-        if url.startswith("http://") and len(self.mixed_content) < 20:
-            self.mixed_content.append(url)
-
-    def handle_starttag(self, tag: str, attrs) -> None:
-        t = (tag or "").lower()
-        a = {k.lower(): v for (k, v) in attrs if k}
-
-        if t == "base":
-            href = a.get("href") or ""
-            resolved = _safe_urljoin(self.base_url, href)
-            if resolved:
-                self.base_url = resolved
-            return
-
-        if t == "title":
-            self._in_title = True
-            return
-
-        if t == "a":
-            href = a.get("href") or ""
-            resolved = _safe_urljoin(self.base_url, href)
-            if resolved and _is_http_url(resolved) and len(self.links) < self.max_items:
-                self._in_a = True
-                self._a_href = resolved
-                self._a_text_parts = []
-            return
-
-        if t == "img":
-            src = a.get("src") or a.get("data-src") or ""
-            if not src and isinstance(a.get("srcset"), str):
-                src = (a.get("srcset") or "").split(",", 1)[0].strip().split(" ", 1)[0]
-            resolved = _safe_urljoin(self.base_url, src)
-            if (
-                resolved
-                and _is_http_url(resolved)
-                and len(self.images) < self.max_items
-            ):
-                self.images.append(
-                    {
-                        "url": resolved,
-                        "type": classify_internal_external(
-                            resource_url=resolved, page_host=self.page_host
-                        ),
-                    }
-                )
-                self._maybe_add_mixed(resolved)
-            return
-
-        if t == "script":
-            src = a.get("src") or ""
-            if src:
-                resolved = _safe_urljoin(self.base_url, src)
-                if (
-                    resolved
-                    and _is_http_url(resolved)
-                    and len(self.scripts) < self.max_items
-                ):
-                    rtype = classify_internal_external(
-                        resource_url=resolved, page_host=self.page_host
-                    )
-                    self.scripts.append({"url": resolved, "type": rtype})
-                    self._maybe_add_mixed(resolved)
-                    if rtype == "external":
-                        self.external_scripts += 1
-
-                    low = resolved.lower()
-                    host = _url_host(resolved)
-                    if host and any(h in host for h in _TRACKING_HOST_HINTS):
-                        self.tracking_scripts = True
-                    if any(p in low for p in _TRACKING_PATH_HINTS):
-                        self.tracking_scripts = True
-                    if any(h in low for h in _FINGERPRINTING_HINTS):
-                        self.fingerprinting = True
-                    if _is_ip_host(host):
-                        self.suspicious_scripts += 1
-                return
-
-            # Inline script
-            self._in_script = True
-            self._script_text_parts = []
-            return
-
-        if t == "link":
-            rel = (a.get("rel") or "").lower()
-            if "stylesheet" in rel:
-                href = a.get("href") or ""
-                resolved = _safe_urljoin(self.base_url, href)
-                if (
-                    resolved
-                    and _is_http_url(resolved)
-                    and len(self.styles) < self.max_items
-                ):
-                    self.styles.append(
-                        {
-                            "url": resolved,
-                            "type": classify_internal_external(
-                                resource_url=resolved, page_host=self.page_host
-                            ),
-                        }
-                    )
-                    self._maybe_add_mixed(resolved)
-            return
-
-        if t == "form":
-            self._in_form = True
-            self._form_has_password = False
-            action = a.get("action") or ""
-            resolved = _safe_urljoin(self.base_url, action) if action else ""
-            if resolved and _is_http_url(resolved) and len(self.form_actions) < 50:
-                self.form_actions.append(resolved)
-            return
-
-        if t == "input":
-            typ = (a.get("type") or "").lower()
-            if typ == "password":
-                self.password_fields += 1
-                if self._in_form:
-                    self._form_has_password = True
-            if typ == "hidden":
-                n = (a.get("name") or a.get("id") or "").lower()
-                if "csrf" in n or "xsrf" in n:
-                    self.csrf_protection = True
-            return
-
-        if t == "meta":
-            n = (a.get("name") or "").lower()
-            if ("csrf" in n or "xsrf" in n) and a.get("content"):
-                self.csrf_protection = True
-            return
-
-    def handle_endtag(self, tag: str) -> None:
-        t = (tag or "").lower()
-        if t == "a" and self._in_a:
-            text = " ".join(p.strip() for p in self._a_text_parts if p.strip())
-            self.links.append(
-                {
-                    "url": self._a_href,
-                    "text": _truncate(text, max_len=120),
-                    "type": classify_internal_external(
-                        resource_url=self._a_href, page_host=self.page_host
-                    ),
-                }
-            )
-            self._in_a = False
-            self._a_href = ""
-            self._a_text_parts = []
-            return
-
-        if t == "title":
-            self._in_title = False
-            return
-
-        if t == "script" and self._in_script:
-            script_text = "".join(self._script_text_parts)
-            low = script_text.lower()
-            if any(h in low for h in _SUSPICIOUS_JS_HINTS):
-                self.suspicious_scripts += 1
-            if any(h in low for h in _SUSPICIOUS_JS_HINTS):
-                self.suspicious_api_calls = True
-            if any(h in low for h in _EVAL_HINTS):
-                self.eval_usage = True
-            if any(h in low for h in _INNER_HTML_HINTS):
-                self.inner_html_usage = True
-            if any(h in low for h in _FINGERPRINTING_HINTS):
-                self.fingerprinting = True
-            if any(h in low for h in ("gtag(", "ga(", "fbq(", "dataLayer".lower())):
-                self.tracking_scripts = True
-            self._in_script = False
-            self._script_text_parts = []
-            return
-
-        if t == "form" and self._in_form:
-            if self._form_has_password:
-                self.login_forms += 1
-            self._in_form = False
-            self._form_has_password = False
-            return
-
-    def handle_data(self, data: str) -> None:
-        if not data:
-            return
-        if self._in_title and len(self._title_parts) < 50:
-            self._title_parts.append(data)
-            return
-        if self._in_a:
-            if len(self._a_text_parts) < 50:
-                self._a_text_parts.append(data)
-            return
-        if self._in_script:
-            current_len = sum(len(p) for p in self._script_text_parts)
-            if current_len < self.max_inline_script_chars:
-                remaining = self.max_inline_script_chars - current_len
-                self._script_text_parts.append(data[:remaining])
-            return
-
-    def parsed(self) -> ParsedPage:
-        title = _truncate(" ".join(p.strip() for p in self._title_parts if p.strip()), max_len=140)
-        return ParsedPage(
-            title=title,
-            links=self.links,
-            images=self.images,
-            scripts=self.scripts,
-            styles=self.styles,
-            form_actions=self.form_actions,
-            password_fields=int(self.password_fields),
-            login_forms=int(self.login_forms),
-            csrf_protection=bool(self.csrf_protection),
-            external_scripts=int(self.external_scripts),
-            suspicious_scripts=int(self.suspicious_scripts),
-            suspicious_api_calls=bool(self.suspicious_api_calls),
-            mixed_content=list(self.mixed_content),
-            tracking_scripts=bool(self.tracking_scripts),
-            fingerprinting=bool(self.fingerprinting),
-            eval_usage=bool(self.eval_usage),
-            inner_html_usage=bool(self.inner_html_usage),
-        )
+def _maybe_add_mixed(mixed_content: list[str], url: str) -> None:
+    if url.startswith("http://") and len(mixed_content) < 20:
+        mixed_content.append(url)
 
 
 def analyze_html(
@@ -530,18 +361,314 @@ def analyze_html(
     max_inline_script_chars: int = 80_000,
 ) -> ParsedPage:
     page_host = _url_host(base_url)
-    parser = _PageHTMLParser(
-        base_url=base_url,
-        page_host=page_host,
-        max_items=max_items,
-        max_inline_script_chars=max_inline_script_chars,
-    )
+    page_domain = registrable_domain(page_host)
+    max_items = max(1, int(max_items))
+    max_inline_script_chars = max(1, int(max_inline_script_chars))
+
     try:
-        parser.feed(html)
+        soup = BeautifulSoup(html or "", "html.parser")
     except Exception:
-        # Best-effort parse; ignore malformed HTML.
-        pass
-    return parser.parsed()
+        return ParsedPage(
+            title="",
+            links=[],
+            images=[],
+            scripts=[],
+            styles=[],
+            form_actions=[],
+            password_fields=0,
+            login_forms=0,
+            csrf_protection=False,
+            external_scripts=0,
+            suspicious_scripts=0,
+            suspicious_api_calls=False,
+            mixed_content=[],
+            tracking_scripts=False,
+            fingerprinting=False,
+            eval_usage=False,
+            inner_html_usage=False,
+        )
+
+    # Honor <base href="..."> for URL resolution (best-effort; first occurrence wins).
+    base_tag = soup.find("base", href=True)
+    if base_tag:
+        resolved = _safe_urljoin(base_url, str(base_tag.get("href") or ""))
+        if resolved:
+            base_url = resolved
+
+    title = ""
+    title_tag = soup.find("title")
+    if title_tag:
+        title = _truncate(title_tag.get_text(" ", strip=True), max_len=140)
+
+    links: list[dict] = []
+    images: list[dict] = []
+    scripts: list[dict] = []
+    styles: list[dict] = []
+    form_actions: list[str] = []
+
+    password_fields = 0
+    login_forms = 0
+    csrf_protection = False
+
+    external_scripts = 0
+    suspicious_scripts = 0
+    suspicious_api_calls = False
+    mixed_content: list[str] = []
+    tracking_scripts = False
+    fingerprinting = False
+    eval_usage = False
+    inner_html_usage = False
+
+    seen_links: set[str] = set()
+    seen_images: set[str] = set()
+    seen_scripts: set[str] = set()
+    seen_styles: set[str] = set()
+
+    # Links
+    for tag in soup.find_all("a", href=True):
+        if len(links) >= max_items:
+            break
+        href = str(tag.get("href") or "")
+        resolved = _safe_urljoin(base_url, href)
+        if not resolved or not _is_http_url(resolved):
+            continue
+        if resolved in seen_links:
+            continue
+        seen_links.add(resolved)
+        text = tag.get_text(" ", strip=True)
+        links.append(
+            {
+                "url": resolved,
+                "text": _truncate(text, max_len=120),
+                "type": classify_internal_external(
+                    resource_url=resolved, page_host=page_host
+                ),
+            }
+        )
+
+    # Images
+    for tag in soup.find_all("img"):
+        if len(images) >= max_items:
+            break
+        src = str(tag.get("src") or tag.get("data-src") or "")
+        if not src:
+            srcset = tag.get("srcset")
+            if isinstance(srcset, str):
+                src = _first_srcset_url(srcset)
+        resolved = _safe_urljoin(base_url, src)
+        if not resolved or not _is_http_url(resolved):
+            continue
+        if resolved in seen_images:
+            continue
+        seen_images.add(resolved)
+        images.append(
+            {
+                "url": resolved,
+                "type": classify_internal_external(
+                    resource_url=resolved, page_host=page_host
+                ),
+            }
+        )
+        _maybe_add_mixed(mixed_content, resolved)
+        if _is_tracking_resource(resolved, page_host=page_host, kind="image"):
+            tracking_scripts = True
+
+    # <picture><source srcset="..."> (common for responsive images)
+    for tag in soup.find_all("source"):
+        if len(images) >= max_items:
+            break
+        if not tag.find_parent("picture"):
+            typ = str(tag.get("type") or "").strip().lower()
+            if not typ.startswith("image/"):
+                continue
+        src = str(tag.get("src") or "")
+        if not src:
+            srcset = tag.get("srcset")
+            if isinstance(srcset, str):
+                src = _first_srcset_url(srcset)
+        resolved = _safe_urljoin(base_url, src)
+        if not resolved or not _is_http_url(resolved):
+            continue
+        if resolved in seen_images:
+            continue
+        seen_images.add(resolved)
+        images.append(
+            {
+                "url": resolved,
+                "type": classify_internal_external(
+                    resource_url=resolved, page_host=page_host
+                ),
+            }
+        )
+        _maybe_add_mixed(mixed_content, resolved)
+        if _is_tracking_resource(resolved, page_host=page_host, kind="image"):
+            tracking_scripts = True
+
+    # Link-tag resources (stylesheets + preloads)
+    for tag in soup.find_all("link", href=True):
+        rel = tag.get("rel")
+        rels: set[str] = set()
+        if isinstance(rel, list):
+            rels = {str(r or "").strip().lower() for r in rel if r}
+        elif isinstance(rel, str):
+            rels = {p.strip().lower() for p in rel.split() if p.strip()}
+        if not rels:
+            continue
+
+        as_attr = str(tag.get("as") or "").strip().lower()
+        href = str(tag.get("href") or "")
+        resolved = _safe_urljoin(base_url, href)
+        if not resolved or not _is_http_url(resolved):
+            continue
+
+        is_stylesheet = "stylesheet" in rels or ("preload" in rels and as_attr == "style")
+        is_script = "modulepreload" in rels or ("preload" in rels and as_attr == "script")
+        is_image = "preload" in rels and as_attr == "image"
+
+        if is_stylesheet and len(styles) < max_items and resolved not in seen_styles:
+            seen_styles.add(resolved)
+            styles.append(
+                {
+                    "url": resolved,
+                    "type": classify_internal_external(
+                        resource_url=resolved, page_host=page_host
+                    ),
+                }
+            )
+            _maybe_add_mixed(mixed_content, resolved)
+            if _is_tracking_resource(resolved, page_host=page_host, kind="style"):
+                tracking_scripts = True
+            continue
+
+        if is_script and len(scripts) < max_items and resolved not in seen_scripts:
+            seen_scripts.add(resolved)
+            rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+            scripts.append({"url": resolved, "type": rtype})
+            _maybe_add_mixed(mixed_content, resolved)
+            if rtype == "external":
+                external_scripts += 1
+            if _is_tracking_resource(resolved, page_host=page_host, kind="script"):
+                tracking_scripts = True
+            yara_names = _yara_rule_names(resolved)
+            if "Web_Fingerprinting_INFO" in yara_names:
+                fingerprinting = True
+            continue
+
+        if is_image and len(images) < max_items and resolved not in seen_images:
+            seen_images.add(resolved)
+            images.append(
+                {
+                    "url": resolved,
+                    "type": classify_internal_external(
+                        resource_url=resolved, page_host=page_host
+                    ),
+                }
+            )
+            _maybe_add_mixed(mixed_content, resolved)
+            if _is_tracking_resource(resolved, page_host=page_host, kind="image"):
+                tracking_scripts = True
+
+    # Scripts (external + inline heuristics)
+    for tag in soup.find_all("script"):
+        src = tag.get("src")
+        if isinstance(src, str) and src.strip():
+            if len(scripts) >= max_items:
+                continue
+            resolved = _safe_urljoin(base_url, src)
+            if not resolved or not _is_http_url(resolved):
+                continue
+            if resolved in seen_scripts:
+                continue
+            seen_scripts.add(resolved)
+            rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+            scripts.append({"url": resolved, "type": rtype})
+            _maybe_add_mixed(mixed_content, resolved)
+            if rtype == "external":
+                external_scripts += 1
+
+            host = _url_host(resolved)
+            if host and _is_tracking_resource(resolved, page_host=page_host, kind="script"):
+                tracking_scripts = True
+            yara_names = _yara_rule_names(resolved)
+            if "Web_Fingerprinting_INFO" in yara_names:
+                fingerprinting = True
+            if _is_ip_host(host):
+                suspicious_scripts += 1
+            continue
+
+        script_text = (tag.get_text() or "")[:max_inline_script_chars]
+        if not script_text:
+            continue
+        low = script_text.lower()
+
+        yara_names = _yara_rule_names(script_text)
+        if "Web_Suspicious_JS_MEDIUM" in yara_names:
+            suspicious_scripts += 1
+        if "Web_Fingerprinting_INFO" in yara_names:
+            fingerprinting = True
+        if "Web_Tracking_Inline_INFO" in yara_names:
+            tracking_scripts = True
+        if "Web_Eval_Usage_INFO" in yara_names:
+            eval_usage = True
+        if "Web_InnerHTML_Usage_INFO" in yara_names:
+            inner_html_usage = True
+
+        if any(h in low for h in _API_CALL_HINTS):
+            for raw_url in _ABSOLUTE_URL_RE.findall(script_text):
+                host = _url_host(raw_url)
+                if not host:
+                    continue
+                if _is_ip_host(host):
+                    suspicious_api_calls = True
+                    break
+                if page_domain and registrable_domain(host) != page_domain:
+                    suspicious_api_calls = True
+                    break
+
+    # Forms and inputs
+    for tag in soup.find_all("input"):
+        typ = str(tag.get("type") or "").strip().lower()
+        if typ == "password":
+            password_fields += 1
+        elif typ == "hidden":
+            n = str(tag.get("name") or tag.get("id") or "").lower()
+            if "csrf" in n or "xsrf" in n:
+                csrf_protection = True
+
+    for tag in soup.find_all("meta"):
+        n = str(tag.get("name") or "").lower()
+        if ("csrf" in n or "xsrf" in n) and tag.get("content"):
+            csrf_protection = True
+
+    for tag in soup.find_all("form"):
+        action = str(tag.get("action") or "").strip()
+        if action:
+            resolved = _safe_urljoin(base_url, action)
+            if resolved and _is_http_url(resolved) and len(form_actions) < 50:
+                form_actions.append(resolved)
+
+        if tag.find("input", attrs={"type": re.compile(r"^password$", re.I)}):
+            login_forms += 1
+
+    return ParsedPage(
+        title=title,
+        links=links,
+        images=images,
+        scripts=scripts,
+        styles=styles,
+        form_actions=form_actions,
+        password_fields=int(password_fields),
+        login_forms=int(login_forms),
+        csrf_protection=bool(csrf_protection),
+        external_scripts=int(external_scripts),
+        suspicious_scripts=int(suspicious_scripts),
+        suspicious_api_calls=bool(suspicious_api_calls),
+        mixed_content=list(mixed_content),
+        tracking_scripts=bool(tracking_scripts),
+        fingerprinting=bool(fingerprinting),
+        eval_usage=bool(eval_usage),
+        inner_html_usage=bool(inner_html_usage),
+    )
 
 
 def find_open_redirects(
@@ -684,8 +811,23 @@ def rdap_whois(domain: str, *, timeout_seconds: float = 3.0) -> Optional[dict]:
 
 
 def registrable_domain(host: str) -> str:
-    # Best-effort eTLD+1 extraction without PSL dependency.
     h = (host or "").strip().lower().rstrip(".")
+    if not h:
+        return ""
+    if _is_ip_host(h):
+        return h
+
+    extractor = _tld_extractor()
+    if extractor is not None:
+        try:
+            extracted = extractor(h)
+            reg = str(getattr(extracted, "registered_domain", "") or "").strip().lower()
+            if reg:
+                return reg.rstrip(".")
+        except Exception:
+            pass
+
+    # Best-effort eTLD+1 extraction without PSL dependency.
     labels = [p for p in h.split(".") if p]
     if len(labels) < 2:
         return h

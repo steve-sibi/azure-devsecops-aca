@@ -224,7 +224,17 @@ def _download(url: str) -> tuple[bytes, int, dict]:
 
                 # Response headers/cookies (sanitized) for UI analysis.
                 response_headers: list[dict] = []
+                response_header_names: list[str] = []
                 try:
+                    seen_names: set[str] = set()
+                    for k in resp.headers.keys():
+                        name = str(k or "").strip().lower()
+                        if not name or name == "set-cookie":
+                            continue
+                        if name in seen_names:
+                            continue
+                        seen_names.add(name)
+                        response_header_names.append(name)
                     for k, v in resp.headers.items():
                         name = str(k or "").strip().lower()
                         if not name or name == "set-cookie":
@@ -237,6 +247,7 @@ def _download(url: str) -> tuple[bytes, int, dict]:
                             break
                 except Exception:
                     response_headers = []
+                    response_header_names = []
 
                 set_cookie_raw: list[str] = []
                 try:
@@ -269,6 +280,8 @@ def _download(url: str) -> tuple[bytes, int, dict]:
                     download_info["content_length"] = content_length
                 if response_headers:
                     download_info["response_headers"] = response_headers
+                if response_header_names:
+                    download_info["response_header_names"] = response_header_names
                 if cookies:
                     download_info["cookies"] = cookies
                 return bytes(buf), len(buf), download_info
@@ -330,6 +343,37 @@ def _headers_map_from_download(download: Optional[dict]) -> dict[str, str]:
     return headers
 
 
+def _header_names_from_download(download: Optional[dict]) -> set[str]:
+    names: set[str] = set()
+    if not isinstance(download, dict):
+        return names
+
+    raw = download.get("response_header_names")
+    if isinstance(raw, list):
+        for item in raw:
+            name = str(item or "").strip().lower()
+            if name:
+                names.add(name)
+
+    # Backward compatibility: older payloads only included the truncated UI list.
+    raw = download.get("response_headers")
+    if isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").strip().lower()
+            if name:
+                names.add(name)
+    elif isinstance(raw, dict):
+        for k in raw.keys():
+            name = str(k or "").strip().lower()
+            if name:
+                names.add(name)
+
+    names.discard("set-cookie")
+    return names
+
+
 def _web_scan(
     content: bytes, *, url: str, download: Optional[dict] = None
 ) -> tuple[dict, list[Signal]]:
@@ -347,12 +391,15 @@ def _web_scan(
         if isinstance(ck, list):
             cookies = [x for x in ck if isinstance(x, dict)]
 
-    headers = _headers_map_from_download(download)
+    header_names = _header_names_from_download(download)
     page_host = (urlparse(final_url).hostname or "").strip().lower().rstrip(".")
 
-    csp_present = "content-security-policy" in headers
-    xfo_present = "x-frame-options" in headers
-    x_xss_present = "x-xss-protection" in headers
+    csp_enforced = "content-security-policy" in header_names
+    csp_report_only = "content-security-policy-report-only" in header_names
+    csp_present = csp_enforced or csp_report_only
+    xfo_present = "x-frame-options" in header_names
+    x_xss_present = "x-xss-protection" in header_names
+    hsts_present = "strict-transport-security" in header_names
 
     is_html = "html" in (content_type or "").lower()
     if not is_html:
@@ -407,9 +454,14 @@ def _web_scan(
             },
         },
         "security_headers": {
-            "content_security_policy": {"present": bool(csp_present)},
+            "content_security_policy": {
+                "present": bool(csp_present),
+                "enforced": bool(csp_enforced),
+                "report_only": bool(csp_report_only),
+            },
             "x_frame_options": {"present": bool(xfo_present)},
             "x_xss_protection": {"present": bool(x_xss_present)},
+            "strict_transport_security": {"present": bool(hsts_present)},
         },
         "forms_and_input": {
             "login_forms": int(login_forms),
@@ -467,14 +519,21 @@ def _web_scan(
     }
 
     signals: list[Signal] = []
-    if not csp_present:
+    if not csp_enforced:
         signals.append(
             signal(
                 source="web.headers.csp_missing",
-                verdict="suspicious",
-                severity="medium",
-                weight=45,
-                evidence={"reason": "Missing Content-Security-Policy header", "url": final_url},
+                verdict="benign",
+                severity="low",
+                weight=15,
+                evidence={
+                    "reason": (
+                        "Content-Security-Policy header is missing"
+                        if not csp_report_only
+                        else "Content-Security-Policy is report-only (not enforced)"
+                    ),
+                    "url": final_url,
+                },
             )
         )
     if mixed_content:
@@ -492,19 +551,82 @@ def _web_scan(
             )
         )
     if insecure_cookies:
-        signals.append(
-            signal(
-                source="web.cookies.insecure",
-                verdict="suspicious",
-                severity="low",
-                weight=30,
-                evidence={
-                    "reason": "Insecure cookies detected (missing Secure attribute)",
-                    "count": int(len(insecure_cookies)),
-                    "url": final_url,
-                },
+        likely_sensitive = []
+        samesite_none_without_secure = []
+        for c in insecure_cookies:
+            name = str(c.get("name") or "").strip().lower()
+            issues = c.get("issues") if isinstance(c.get("issues"), list) else []
+            issues_l = [str(i).lower() for i in issues if i]
+            if any("samesite=none without secure" in i for i in issues_l):
+                samesite_none_without_secure.append(c)
+            if any(
+                hint in name
+                for hint in (
+                    "session",
+                    "sess",
+                    "sid",
+                    "auth",
+                    "token",
+                    "jwt",
+                    "bearer",
+                    "access",
+                    "refresh",
+                    "login",
+                    "csrftoken",
+                    "xsrf",
+                    "csrf",
+                )
+            ):
+                likely_sensitive.append(c)
+            elif c.get("httponly") is True and not c.get("expires") and not c.get("max_age"):
+                likely_sensitive.append(c)
+
+        if samesite_none_without_secure:
+            signals.append(
+                signal(
+                    source="web.cookies.samesite_none_without_secure",
+                    verdict="suspicious",
+                    severity="medium",
+                    weight=55,
+                    evidence={
+                        "reason": "Cookies set SameSite=None without Secure",
+                        "count": int(len(samesite_none_without_secure)),
+                        "url": final_url,
+                    },
+                )
             )
-        )
+        elif likely_sensitive or not hsts_present:
+            signals.append(
+                signal(
+                    source="web.cookies.insecure",
+                    verdict="suspicious",
+                    severity="low",
+                    weight=30,
+                    evidence={
+                        "reason": (
+                            "Insecure cookies detected (missing Secure attribute)"
+                            if not likely_sensitive
+                            else "Insecure cookies detected (missing Secure on likely session/auth cookies)"
+                        ),
+                        "count": int(len(insecure_cookies)),
+                        "url": final_url,
+                    },
+                )
+            )
+        else:
+            signals.append(
+                signal(
+                    source="web.cookies.insecure",
+                    verdict="benign",
+                    severity="low",
+                    weight=10,
+                    evidence={
+                        "reason": "Cookies missing Secure attribute (HSTS present)",
+                        "count": int(len(insecure_cookies)),
+                        "url": final_url,
+                    },
+                )
+            )
     if login_forms > 0 and not csrf_protection:
         signals.append(
             signal(

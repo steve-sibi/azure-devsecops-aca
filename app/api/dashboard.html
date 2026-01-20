@@ -329,39 +329,6 @@
         background: rgba(148,163,184,0.14);
         transform: none;
       }
-      details.disclosure {
-        border: 1px solid rgba(148,163,184,0.22);
-        border-radius: 12px;
-        padding: 0.35rem 0.55rem;
-        background: rgba(148,163,184,0.06);
-        width: 100%;
-        max-width: 100%;
-      }
-      details.disclosure summary {
-        cursor: pointer;
-        user-select: none;
-        list-style: none;
-        color: var(--muted);
-        font-size: 0.85rem;
-      }
-      details.disclosure summary::-webkit-details-marker { display: none; }
-      details.disclosure summary::before {
-        content: "▸";
-        display: inline-block;
-        margin-right: 0.35rem;
-        color: var(--muted);
-      }
-      details.disclosure[open] summary { color: var(--text); }
-      details.disclosure[open] summary::before { content: "▾"; }
-      details.disclosure pre {
-        margin-top: 0.6rem;
-        padding: 0.75rem;
-        border-radius: 12px;
-        font-size: 0.82rem;
-        max-width: 100%;
-        max-height: 320px;
-        min-width: 0;
-      }
 
       /* --- Web analysis UI (Security Analysis / Page / Network / Resources) --- */
       .section {
@@ -928,6 +895,22 @@
             try { return new URL(String(url || '')).hostname || ''; } catch (_) { return ''; }
           }
 
+          function registrableDomain(host) {
+            const h = String(host || '').trim().toLowerCase().replace(/\.+$/, '');
+            const labels = h.split('.').filter(Boolean);
+            if (labels.length < 2) return h;
+
+            const publicSuffix2 = new Set([
+              'co.uk', 'org.uk', 'gov.uk', 'ac.uk',
+              'com.au', 'net.au', 'org.au',
+              'co.jp', 'co.in',
+              'com.br', 'com.mx', 'co.nz', 'com.sg',
+            ]);
+            const last2 = labels.slice(-2).join('.');
+            if (labels.length >= 3 && publicSuffix2.has(last2)) return labels.slice(-3).join('.');
+            return last2;
+          }
+
           function vtUrlId(url) {
             const u = String(url || '').trim();
             if (!u) return '';
@@ -1099,7 +1082,10 @@
             );
 
             const urlscanQ = urlscanQuery(finalUrl);
-            const urlscanHref = urlscanQ ? ('https://urlscan.io/search/#' + encodeURIComponent(urlscanQ)) : 'https://urlscan.io/';
+            const urlscanDomain = registrableDomain(hostnameFromUrl(finalUrl));
+            const urlscanHref = urlscanDomain
+              ? ('https://urlscan.io/domain/' + encodeURIComponent(urlscanDomain))
+              : (urlscanQ ? ('https://urlscan.io/search/#' + encodeURIComponent(urlscanQ)) : 'https://urlscan.io/');
             const vtId = vtUrlId(finalUrl);
             const vtHost = hostnameFromUrl(finalUrl);
             const vtHref = vtId
@@ -1251,28 +1237,6 @@
             section('Resources', el('div', null, tabs, el('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Resources table' }, table)));
           }
 
-          const technical = {
-            job_id: data.job_id || undefined,
-            status: status || undefined,
-            verdict: data.verdict || undefined,
-            submitted_at: data.submitted_at || undefined,
-            scanned_at: data.scanned_at || undefined,
-            duration_ms: data.duration_ms != null ? data.duration_ms : undefined,
-            size_bytes: data.size_bytes != null ? data.size_bytes : (s.size_bytes != null ? s.size_bytes : undefined),
-            engines: Array.isArray(s.engines) ? s.engines : undefined,
-            sha256: s.sha256 || undefined,
-            correlation_id: data.correlation_id || s.correlation_id || undefined,
-            decision: (s.decision && typeof s.decision === 'object' && Object.keys(s.decision).length) ? s.decision : undefined,
-            download: dl || undefined,
-            web: web || undefined,
-          };
-
-          const adv = el('details', { class: 'disclosure' },
-            el('summary', { text: 'Advanced (technical details)' }),
-            el('pre', { text: JSON.stringify(technical, null, 2) })
-          );
-          block('Advanced', [['Details', adv]], { tone: 'info', spanAll: true, kvClass: 'kv-wide' });
-
           if (blocks.length === 0) {
             summaryOutEl.appendChild(el('div', { class: 'muted', text: 'No data yet.' }));
             return;
@@ -1381,14 +1345,12 @@
           return 'info';
         }
 
-        function verdictKind(verdict) {
-          if (!verdict) return 'info';
-          const v = String(verdict).toLowerCase();
-          if (v === 'benign' || v === 'clean') return 'ok';
-          if (v === 'suspicious') return 'warn';
-          if (v === 'malicious') return 'bad';
-          if (v === 'error') return 'warn';
-          return 'info';
+        function historyStatus(status) {
+          const s = String(status || '').toLowerCase();
+          if (s === 'completed') return { label: 'completed', kind: 'ok', title: 'completed' };
+          if (s === 'error') return { label: 'error', kind: 'warn', title: 'error' };
+          const title = s ? s : 'pending';
+          return { label: 'pending', kind: 'info', title };
         }
 
         function renderHistory() {
@@ -1414,7 +1376,8 @@
             const when = formatWhen(item.submitted_at || item.last_checked_at);
             const job = item.job_id || '';
             const shortJob = job ? (job.slice(0, 8) + '…') : '';
-            const s = String(item.status || 'unknown');
+            const rawStatus = String(item.status || '');
+            const hs = historyStatus(rawStatus);
 
             const whenTd = el('td', { class: 'nowrap', text: when });
 
@@ -1425,11 +1388,9 @@
             const jobTd = el('td', { class: 'nowrap' }, jobCode);
 
             const statusTd = el('td', { class: 'nowrap' });
-            statusTd.appendChild(makeBadge(statusKind(s), s));
-            if (item.verdict) {
-              statusTd.appendChild(document.createTextNode(' '));
-              statusTd.appendChild(makeBadge(verdictKind(item.verdict), String(item.verdict)));
-            }
+            const badge = makeBadge(hs.kind, hs.label);
+            badge.title = hs.title;
+            statusTd.appendChild(badge);
 
             const actionsTd = el('td', { class: 'nowrap' });
             const useBtn = el('button', { type: 'button', text: 'Use URL' });
@@ -1476,7 +1437,6 @@
             const now = new Date().toISOString();
             patchHistory(jobId, {
               status: s.status,
-              verdict: s.verdict || null,
               error: s.error || null,
               submitted_at: s.submitted_at || undefined,
               scanned_at: s.scanned_at || null,
@@ -1550,7 +1510,6 @@
           setStatus('info', 'Submitting scan...');
           showSummary({
             status: 'submitting',
-            verdict: null,
             error: null,
             submitted_at: new Date().toISOString(),
             scanned_at: null,
@@ -1575,7 +1534,6 @@
                 job_id: currentJobId,
                 url: target,
                 status: submit.status || 'queued',
-                verdict: null,
                 error: null,
                 submitted_at: now,
                 scanned_at: null,
