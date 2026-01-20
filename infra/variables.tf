@@ -90,3 +90,26 @@ variable "artifacts_share_quota_gb" {
   default     = 2
   description = "Azure Files share quota (GB) for persisting fetched artifacts between fetcher and worker."
 }
+
+variable "capture_screenshots" {
+  type        = bool
+  default     = true
+  description = "If true, the worker captures website screenshots via Playwright (served by the API at /scan/{job_id}/screenshot)."
+}
+
+variable "screenshot_container" {
+  type        = string
+  default     = "screenshots"
+  description = "Blob container name used to store screenshots when RESULT_BACKEND=table."
+}
+
+variable "screenshot_format" {
+  type        = string
+  default     = "jpeg"
+  description = "Screenshot format ('jpeg' or 'png'). Must match between worker and API."
+
+  validation {
+    condition     = contains(["jpeg", "png"], lower(var.screenshot_format))
+    error_message = "screenshot_format must be 'jpeg' or 'png'."
+  }
+}

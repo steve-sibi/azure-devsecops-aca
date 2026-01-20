@@ -84,6 +84,14 @@ resource "azurerm_container_app" "api" {
         value = local.results_table
       }
       env {
+        name  = "SCREENSHOT_CONTAINER"
+        value = var.screenshot_container
+      }
+      env {
+        name  = "SCREENSHOT_FORMAT"
+        value = var.screenshot_format
+      }
+      env {
         name        = "API_KEY"
         secret_name = "api-key"
       }
@@ -365,6 +373,18 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "BLOCK_PRIVATE_NETWORKS"
         value = "true"
+      }
+      env {
+        name  = "CAPTURE_SCREENSHOTS"
+        value = tostring(var.capture_screenshots)
+      }
+      env {
+        name  = "SCREENSHOT_CONTAINER"
+        value = var.screenshot_container
+      }
+      env {
+        name  = "SCREENSHOT_FORMAT"
+        value = var.screenshot_format
       }
       env {
         name  = "MAX_REDIRECTS"

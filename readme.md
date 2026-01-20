@@ -50,6 +50,8 @@ curl -i -sS -X POST http://localhost:8000/scan \
 ```
 
 > Note: URL scanning runs built-in web analysis only. The dashboard provides external links to URLScan.io and VirusTotal for optional follow-up checks.
+>
+> Optional: set `CAPTURE_SCREENSHOTS=true` to have the worker capture a first-party browser screenshot and show it in the dashboard (served from `GET /scan/{job_id}/screenshot` with the same API key auth).
 
 ## 1) Architecture
 
