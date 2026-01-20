@@ -16,6 +16,11 @@ from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 from azure.data.tables import TableClient, TableServiceClient
 
 from common.result_store import upsert_result_sync
+from common.screenshot_store import (
+    redis_screenshot_key,
+    store_screenshot_blob_sync,
+    store_screenshot_redis_sync,
+)
 from common.signals import Signal, aggregate_signals, signal
 from common.url_canonicalization import canonicalize_url
 from common.url_validation import UrlValidationError, validate_public_https_url
@@ -27,6 +32,8 @@ from common.web_analysis import (
     registrable_domain,
     resolve_dns_addresses,
 )
+
+from screenshot_capture import capture_website_screenshot
 
 # ---- Config via env ----
 QUEUE_BACKEND = os.getenv("QUEUE_BACKEND", "servicebus").strip().lower()
@@ -76,6 +83,23 @@ WEB_MAX_RESOURCES = int(os.getenv("WEB_MAX_RESOURCES", "25"))
 WEB_MAX_INLINE_SCRIPT_CHARS = int(os.getenv("WEB_MAX_INLINE_SCRIPT_CHARS", "80000"))
 WEB_MAX_HTML_BYTES = int(os.getenv("WEB_MAX_HTML_BYTES", str(300_000)))
 WEB_WHOIS_TIMEOUT_SECONDS = float(os.getenv("WEB_WHOIS_TIMEOUT_SECONDS", "3.0"))
+
+# Screenshot capture (optional)
+SCREENSHOT_REDIS_PREFIX = os.getenv("SCREENSHOT_REDIS_PREFIX", "screenshot:")
+SCREENSHOT_CONTAINER = os.getenv("SCREENSHOT_CONTAINER", "screenshots")
+SCREENSHOT_FORMAT = os.getenv("SCREENSHOT_FORMAT", "jpeg")
+SCREENSHOT_TIMEOUT_SECONDS = float(os.getenv("SCREENSHOT_TIMEOUT_SECONDS", "12"))
+SCREENSHOT_VIEWPORT_WIDTH = int(os.getenv("SCREENSHOT_VIEWPORT_WIDTH", "1280"))
+SCREENSHOT_VIEWPORT_HEIGHT = int(os.getenv("SCREENSHOT_VIEWPORT_HEIGHT", "720"))
+SCREENSHOT_FULL_PAGE = os.getenv("SCREENSHOT_FULL_PAGE", "false").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+SCREENSHOT_JPEG_QUALITY = int(os.getenv("SCREENSHOT_JPEG_QUALITY", "60"))
+SCREENSHOT_TTL_SECONDS = int(
+    os.getenv("SCREENSHOT_TTL_SECONDS", str(REDIS_RESULT_TTL_SECONDS))
+)
 
 # ---- Logging (console + optional App Insights) ----
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -149,6 +173,22 @@ def process(task: dict):
         content, size_bytes, download = _download(url)
 
     verdict, details = _scan_bytes(content, url, download=download)
+
+    screenshot = _maybe_capture_and_store_screenshot(
+        job_id=job_id, url=url, download=download
+    )
+    try:
+        page_info = details["results"]["web"]["page_information"]
+        if isinstance(screenshot, dict) and screenshot:
+            url_val = screenshot.get("url")
+            if isinstance(url_val, str) and url_val.strip():
+                page_info["screenshot_url"] = url_val.strip()
+            page_info["screenshot"] = {
+                k: v for k, v in screenshot.items() if k != "url" and v is not None
+            }
+    except Exception:
+        pass
+
     duration_ms = int((time.time() - start) * 1000)
     if not _save_result(
         job_id=job_id,
@@ -178,6 +218,78 @@ def process(task: dict):
         duration_ms,
     )
     return verdict, details
+
+
+def _screenshot_blob_name(job_id: str) -> str:
+    fmt = (SCREENSHOT_FORMAT or "jpeg").strip().lower()
+    ext = "png" if fmt == "png" else "jpg"
+    return f"{job_id}.{ext}"
+
+
+def _maybe_capture_and_store_screenshot(
+    *, job_id: str, url: str, download: Optional[dict]
+) -> dict:
+    target_url = url
+    if isinstance(download, dict):
+        final_url = download.get("final_url")
+        if isinstance(final_url, str) and final_url.strip():
+            target_url = final_url.strip()
+
+    capture, capture_error = capture_website_screenshot(
+        target_url,
+        block_private_networks=BLOCK_PRIVATE_NETWORKS,
+        timeout_seconds=SCREENSHOT_TIMEOUT_SECONDS,
+        viewport_width=SCREENSHOT_VIEWPORT_WIDTH,
+        viewport_height=SCREENSHOT_VIEWPORT_HEIGHT,
+        full_page=SCREENSHOT_FULL_PAGE,
+        image_format=SCREENSHOT_FORMAT,
+        jpeg_quality=SCREENSHOT_JPEG_QUALITY,
+    )
+    if not capture:
+        status = "disabled" if capture_error == "disabled" else "failed"
+        out = {"status": status}
+        if isinstance(capture_error, str) and capture_error and capture_error != "disabled":
+            out["error"] = capture_error
+        return out
+
+    try:
+        if RESULT_BACKEND == "redis":
+            if not redis_client:
+                return {"status": "store_failed", "error": "redis_not_initialized"}
+            key = redis_screenshot_key(SCREENSHOT_REDIS_PREFIX, str(job_id))
+            store_screenshot_redis_sync(
+                redis_client=redis_client,
+                key=key,
+                image_bytes=capture.image_bytes,
+                content_type=capture.content_type,
+                ttl_seconds=SCREENSHOT_TTL_SECONDS,
+            )
+            return {
+                "status": "stored",
+                "url": f"/scan/{job_id}/screenshot",
+                "metrics": capture.metrics,
+            }
+
+        if RESULT_BACKEND == "table":
+            if not RESULT_STORE_CONN:
+                return {"status": "store_failed", "error": "RESULT_STORE_CONN_not_set"}
+            store_screenshot_blob_sync(
+                conn_str=RESULT_STORE_CONN,
+                container=SCREENSHOT_CONTAINER,
+                blob_name=_screenshot_blob_name(str(job_id)),
+                image_bytes=capture.image_bytes,
+                content_type=capture.content_type,
+            )
+            return {
+                "status": "stored",
+                "url": f"/scan/{job_id}/screenshot",
+                "metrics": capture.metrics,
+            }
+    except Exception:
+        logging.info("[worker] screenshot store failed (job_id=%s)", job_id)
+        return {"status": "store_failed"}
+
+    return {"status": "skipped"}
 
 
 def _download(url: str) -> tuple[bytes, int, dict]:

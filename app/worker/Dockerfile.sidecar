@@ -3,7 +3,8 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONFAULTHANDLER=1
+    PYTHONFAULTHANDLER=1 \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 
@@ -17,7 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY worker/requirements.txt ./requirements.txt
 # hadolint ignore=DL3013,DL3042
 RUN python -m pip install --upgrade pip setuptools wheel \
-    && pip install --no-cache-dir --prefer-binary -r requirements.txt
+    && pip install --no-cache-dir --prefer-binary -r requirements.txt \
+    && python -m playwright install --with-deps chromium
 
 COPY common/ ./common/
 COPY worker/ .
@@ -29,7 +31,7 @@ RUN chmod +x /entrypoint.sh \
     && useradd -m appuser \
     && mkdir -p /artifacts \
     && chmod 777 /artifacts \
-    && chown -R appuser:appuser /app
+    && chown -R appuser:appuser /app /ms-playwright
 USER appuser
 
 ENTRYPOINT ["/usr/bin/tini","--"]

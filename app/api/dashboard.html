@@ -676,6 +676,9 @@
 	        let lastSummaryJobId = null;
         let lastFullJobId = null;
 
+        const screenshotCache = new Map(); // screenshotUrl -> objectUrl
+        const screenshotPending = new Map(); // screenshotUrl -> Promise<objectUrl>
+
         const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
         const HTTPS_PREFIX = 'https://';
 
@@ -738,6 +741,15 @@
           history = [];
           saveHistory();
           renderHistory();
+          clearScreenshotCache();
+        }
+
+        function clearScreenshotCache() {
+          for (const objectUrl of screenshotCache.values()) {
+            try { URL.revokeObjectURL(objectUrl); } catch (_) {}
+          }
+          screenshotCache.clear();
+          screenshotPending.clear();
         }
 
         function el(tag, attrs) {
@@ -1142,10 +1154,24 @@
           // --- Page Information ---
           const headerPairs = Array.isArray(dl && dl.response_headers) ? dl.response_headers : [];
           const screenshotUrl = pageInfo && pageInfo.screenshot_url ? String(pageInfo.screenshot_url) : '';
+          const screenshotMeta = (pageInfo && typeof pageInfo.screenshot === 'object' && pageInfo.screenshot) ? pageInfo.screenshot : null;
           const title = pageInfo && pageInfo.title ? String(pageInfo.title) : '';
           const description = pageInfo && pageInfo.description ? String(pageInfo.description) : '';
 
-	          if (isTerminal && (headerPairs.length || screenshotUrl || title || description)) {
+          function screenshotPlaceholder(meta) {
+            const m = (meta && typeof meta === 'object') ? meta : null;
+            const status = (m && m.status) ? String(m.status) : '';
+            const errRaw = (m && m.error) ? String(m.error) : '';
+            const err = errRaw.replace(/\s+/g, ' ').trim();
+            const shortErr = err.length > 140 ? (err.slice(0, 137) + '...') : err;
+
+            if (status === 'disabled') return 'Screenshot capture is disabled (set CAPTURE_SCREENSHOTS=true)';
+            if (status === 'failed') return shortErr ? ('Screenshot capture failed: ' + shortErr) : 'Screenshot capture failed';
+            if (status === 'store_failed') return shortErr ? ('Screenshot store failed: ' + shortErr) : 'Screenshot store failed';
+            return 'Screenshot not available';
+          }
+
+	          if (isTerminal && (headerPairs.length || screenshotUrl || title || description || screenshotMeta)) {
 	            const headerList = el('div', { class: 'headers-list' });
 	            for (const h of headerPairs.slice(0, 60)) {
 	              if (!h || typeof h !== 'object') continue;
@@ -1176,11 +1202,27 @@
               el('div', { class: 'muted small', text: 'Page Screenshot (Desktop View)' }),
               screenshotUrl
                 ? (() => {
-                    const img = el('img', { src: screenshotUrl, alt: 'Page screenshot' });
-                    img.addEventListener('click', () => openImageModal(screenshotUrl));
-                    return img;
+                    const holder = el('div', { class: 'placeholder', text: 'Loading screenshot…' });
+                    const img = el('img', { alt: 'Page screenshot', style: 'display:none' });
+
+                    getScreenshotObjectUrl(screenshotUrl).then(objectUrl => {
+                      if (!objectUrl) throw new Error('no object url');
+                      if (!img.isConnected) return;
+                      img.src = objectUrl;
+                      img.style.display = '';
+                      if (holder.isConnected) holder.remove();
+                    }).catch(() => {
+                      if (!holder.isConnected) return;
+                      holder.textContent = 'Screenshot not available';
+                    });
+
+                    img.addEventListener('click', () => {
+                      if (img.src) openImageModal(img.src);
+                    });
+
+                    return el('div', null, holder, img);
                   })()
-                : el('div', { class: 'placeholder', text: 'Screenshot not available' })
+                : el('div', { class: 'placeholder', text: screenshotPlaceholder(screenshotMeta) })
             );
 
             section('Page Information', el('div', { class: 'split' }, left, right));
@@ -1310,6 +1352,52 @@
             throw err;
           }
           return data;
+        }
+
+        async function apiBlob(path) {
+          const headers = {};
+          const key = apiKeyEl.value.trim();
+          if (key) headers[API_KEY_HEADER] = key;
+          const res = await fetch(path, { method: 'GET', headers });
+          if (!res.ok) {
+            const err = new Error('HTTP ' + res.status);
+            err.status = res.status;
+            throw err;
+          }
+          return await res.blob();
+        }
+
+        async function getScreenshotObjectUrl(screenshotUrl) {
+          const url = String(screenshotUrl || '').trim();
+          if (!url) return '';
+
+          if (screenshotCache.has(url)) return screenshotCache.get(url);
+          if (screenshotPending.has(url)) return await screenshotPending.get(url);
+
+          const promise = (async () => {
+            try {
+              const blob = await apiBlob(url);
+              const objectUrl = URL.createObjectURL(blob);
+              screenshotCache.set(url, objectUrl);
+
+              // Keep memory bounded.
+              while (screenshotCache.size > 25) {
+                const oldestKey = screenshotCache.keys().next().value;
+                const oldestUrl = screenshotCache.get(oldestKey);
+                if (oldestUrl) {
+                  try { URL.revokeObjectURL(oldestUrl); } catch (_) {}
+                }
+                screenshotCache.delete(oldestKey);
+              }
+
+              return objectUrl;
+            } finally {
+              screenshotPending.delete(url);
+            }
+          })();
+
+          screenshotPending.set(url, promise);
+          return await promise;
         }
 
         function formatWhen(iso) {

@@ -32,6 +32,11 @@ from common.clamav_client import (
     clamd_version,
 )
 from common.result_store import get_result_async, upsert_result_async
+from common.screenshot_store import (
+    get_screenshot_blob_async,
+    get_screenshot_redis_async,
+    redis_screenshot_key,
+)
 from common.url_validation import UrlValidationError, validate_public_https_url_async
 
 # ---------- Settings ----------
@@ -55,6 +60,11 @@ REDIS_URL = os.getenv("REDIS_URL")
 REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", f"queue:{QUEUE_NAME}")
 REDIS_RESULT_PREFIX = os.getenv("REDIS_RESULT_PREFIX", "scan:")
 REDIS_RESULT_TTL_SECONDS = int(os.getenv("REDIS_RESULT_TTL_SECONDS", "0"))
+
+# Screenshots (optional)
+SCREENSHOT_REDIS_PREFIX = os.getenv("SCREENSHOT_REDIS_PREFIX", "screenshot:")
+SCREENSHOT_CONTAINER = os.getenv("SCREENSHOT_CONTAINER", "screenshots")
+SCREENSHOT_FORMAT = os.getenv("SCREENSHOT_FORMAT", "jpeg")
 
 logger = logging.getLogger("aca.api")
 
@@ -96,6 +106,7 @@ sb_sender: Optional[ServiceBusSender] = None
 table_service: Optional[TableServiceClient] = None
 table_client = None
 redis_client = None
+blob_service = None
 
 api_key_scheme = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
 
@@ -457,7 +468,7 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global sb_client, sb_sender, table_service, table_client, redis_client
+    global sb_client, sb_sender, table_service, table_client, redis_client, blob_service
 
     cred = None  # will hold DefaultAzureCredential if MI is used
     if QUEUE_BACKEND not in ("servicebus", "redis"):
@@ -516,6 +527,16 @@ async def lifespan(app: FastAPI):
         await table_service.__aenter__()
         await table_service.create_table_if_not_exists(table_name=RESULT_TABLE)
 
+        # Screenshots are stored in Blob Storage when using Table results.
+        try:
+            from azure.storage.blob.aio import BlobServiceClient as AioBlobServiceClient
+
+            blob_service = AioBlobServiceClient.from_connection_string(RESULT_STORE_CONN)
+            await blob_service.__aenter__()
+        except Exception as e:
+            blob_service = None
+            logger.warning("Blob client not initialized (screenshots disabled): %s", e)
+
     # --- Optional App Insights logging (only if packages + conn are present) ---
     if APPINSIGHTS_CONN:
         try:
@@ -568,6 +589,8 @@ async def lifespan(app: FastAPI):
                 maybe = disconnect()
                 if asyncio.iscoroutine(maybe):
                     await maybe
+    if blob_service:
+        await blob_service.__aexit__(None, None, None)
     if cred:
         # Properly close the async credential if used
         await cred.close()
@@ -900,3 +923,35 @@ async def get_scan_status(
     if view == "full":
         response["details"] = details
     return response
+
+
+def _screenshot_blob_name(job_id: str) -> str:
+    fmt = (SCREENSHOT_FORMAT or "jpeg").strip().lower()
+    ext = "png" if fmt == "png" else "jpg"
+    return f"{job_id}.{ext}"
+
+
+@app.get("/scan/{job_id}/screenshot")
+async def get_scan_screenshot(job_id: str, _: None = Security(require_api_key)):
+    if RESULT_BACKEND == "redis":
+        if not redis_client:
+            raise HTTPException(status_code=503, detail="Result store not initialized")
+        key = redis_screenshot_key(SCREENSHOT_REDIS_PREFIX, job_id)
+        data = await get_screenshot_redis_async(redis_client=redis_client, key=key)
+        if not data or not data.bytes:
+            raise HTTPException(status_code=404, detail="Screenshot not found")
+        return Response(content=data.bytes, media_type=data.content_type)
+
+    if RESULT_BACKEND == "table":
+        if not blob_service:
+            raise HTTPException(status_code=503, detail="Screenshot store not initialized")
+        data = await get_screenshot_blob_async(
+            blob_service_client=blob_service,
+            container=SCREENSHOT_CONTAINER,
+            blob_name=_screenshot_blob_name(job_id),
+        )
+        if not data or not data.bytes:
+            raise HTTPException(status_code=404, detail="Screenshot not found")
+        return Response(content=data.bytes, media_type=data.content_type)
+
+    raise HTTPException(status_code=500, detail=f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")

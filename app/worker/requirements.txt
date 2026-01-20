@@ -2,9 +2,11 @@ azure-identity>=1.16.0
 azure-servicebus~=7.12
 opencensus-ext-azure==1.1.13
 azure-data-tables>=12.6.0
+azure-storage-blob>=12.19.0
 requests>=2.32.3
 redis>=5.0.0
 beautifulsoup4>=4.12.3
 adblockparser>=0.7
 tldextract>=5.1.2
 yara-python>=4.5.1
+playwright>=1.41.0
