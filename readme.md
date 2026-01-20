@@ -1,16 +1,17 @@
-# URL Scanner Pipeline on Azure (ACA)
+# URL + File Scanner Pipeline on Azure (ACA)
 
-End-to-end, cloud-native **URL scanning pipeline** on **Azure Container Apps (ACA)** using **Terraform** and **GitHub Actions (OIDC)**.
+End-to-end, cloud-native **URL scanning pipeline** (two-stage fetch + analyze) plus optional **file scanning** on **Azure Container Apps (ACA)** using **Terraform** and **GitHub Actions (OIDC)**.
 
 What this project demonstrates:
 
-- **DevSecOps Approach**: Focused on implementing infrastructure in an automated, shift-left manner
+- **DevSecOps approach**: Focused on implementing infrastructure in an automated, shift-left manner
 - **Secure API surface**: `X-API-Key` auth + per-key rate limiting + SSRF protections
-- **Async job processing**: API enqueues scan jobs to **Service Bus** (or Redis locally), worker processes jobs (KEDA autoscaling on Azure)
-- **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`) (or Redis locally)
-- **DevSecOps CI/CD**: Checkov + Trivy in CI; Deploy workflow includes health + end-to-end smoke tests
+- **Async job processing**: API enqueues scan jobs to **Service Bus** (or Redis locally), fetcher downloads artifacts, worker analyzes (KEDA autoscaling on Azure)
+- **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`) (or Redis locally); optional screenshots served at `GET /scan/{job_id}/screenshot`
+- **File scanning**: `/file/scan` scans an uploaded file/payload via **ClamAV** (sidecar in ACA; service in Docker Compose)
+- **DevSecOps CI/CD**: Ruff/pytest + Terraform validate + Hadolint + Checkov + Trivy (SARIF uploads)
 - **Cloud-native secrets**: **Key Vault** stores secrets, resolved by **UAMI** at deploy/runtime
-- **Built-in UI**: minimal dashboard at `/` plus Swagger at `/docs`
+- **Built-in UI**: dashboard at `/`, file scanner UI at `/file`, Swagger at `/docs`
 
 > Shareable, reproducible, “nuke-and-recreate” project or starter for lightweight production.
 
@@ -51,7 +52,7 @@ curl -i -sS -X POST http://localhost:8000/scan \
 
 > Note: URL scanning runs built-in web analysis only. The dashboard provides external links to URLScan.io and VirusTotal for optional follow-up checks.
 >
-> Optional: set `CAPTURE_SCREENSHOTS=true` to have the worker capture a first-party browser screenshot and show it in the dashboard (served from `GET /scan/{job_id}/screenshot` with the same API key auth).
+> Optional: screenshots are disabled by default in `docker-compose.yml` (`CAPTURE_SCREENSHOTS=false`). Set `CAPTURE_SCREENSHOTS=true` (and restart) to have the worker capture a first-party browser screenshot and show it in the dashboard (served from `GET /scan/{job_id}/screenshot` with the same API key auth). In Azure, this is controlled by the Terraform var `capture_screenshots` (default `true`).
 
 ## 1) Architecture
 
@@ -194,6 +195,8 @@ sequenceDiagram
     - Account: `<prefix>scan`
         
     - Table: `scanresults` (default)
+
+    - Blob container: `screenshots` (default; configurable via Terraform var `screenshot_container`) for optional screenshots when `capture_screenshots=true`
         
     - KV secret: `ScanResultsConn` (table connection string for API/worker)
         
@@ -203,13 +206,15 @@ sequenceDiagram
     
 - **Container Apps**:
     
-    - `<prefix>-api` (FastAPI; ingress on `:8000`)
+    - `<prefix>-api` (FastAPI; ingress on `:8000`; includes a `clamav` sidecar container for `/file/scan`)
         
-    - `<prefix>-fetcher` (KEDA scale rule on the fetch queue; min=0, max=5; downloads + writes artifacts)
+    - `<prefix>-fetcher` (KEDA scale rule on the fetch queue; min=0, max=5; downloads + writes artifacts; `WORKER_MODE=fetcher`)
 
-    - `<prefix>-worker` (KEDA scale rule on the scan queue; min=0, max=5; analyzes artifact bytes)
+    - `<prefix>-worker` (KEDA scale rule on the scan queue; min=0, max=5; analyzes artifact bytes; `WORKER_MODE=analyzer`)
 
     - Azure Files share: `<prefix>-artifacts` (fetched artifacts for scan handoff)
+
+> The fetcher and worker run the same Docker image (`app/worker/Dockerfile.sidecar`); the entrypoint selects the mode via `WORKER_MODE`.
 
 **Secrets (via Key Vault references, resolved by ACA):**
 
@@ -261,19 +266,30 @@ sequenceDiagram
 ## 4) Repository layout
 ```
 azure-devsecops-aca/
-├─ .github/workflows/
-│  ├─ ci.yml              # security CI (Checkov + Trivy)
-│  ├─ deploy.yml          # infra bootstrap + build/push + deploy
-│  └─ destroy.yml         # terraform destroy (+ RG delete)
-├─ scripts/gha/           # workflow bash logic (for readability)
-│  ├─ deploy_infra_bootstrap.sh
-│  ├─ deploy_create_apps_and_test.sh
-│  └─ destroy.sh
+├─ .github/
+│  ├─ workflows/
+│  │  ├─ ci.yml              # lint/test + security scans
+│  │  ├─ deploy.yml          # infra bootstrap + build/push + deploy
+│  │  ├─ destroy.yml         # terraform destroy (+ RG delete)
+│  │  └─ keda-scale-test.yml # validate KEDA scale-out
+│  └─ scripts/
+│     └─ format_aca_logs.py
+├─ scripts/
+│  ├─ gha/                # workflow bash logic (for readability)
+│  │  ├─ deploy_infra_bootstrap.sh
+│  │  ├─ deploy_create_apps_and_test.sh
+│  │  └─ destroy.sh
+│  ├─ docker_cleanup.sh
+│  ├─ keda_scale_test.sh
+│  └─ send_servicebus_messages.py
 ├─ app/
 │  ├─ common/             # shared helpers (validation + result storage)
+│  │  ├─ tracking_filters.txt
+│  │  └─ web_yara_rules.yar
 │  ├─ api/                # FastAPI producer
 │  │  ├─ Dockerfile
 │  │  ├─ dashboard.html
+│  │  ├─ file_scanner.html
 │  │  ├─ main.py
 │  │  └─ requirements.txt
 │  ├─ clamav/             # ClamAV container config (used by the file scanner)
@@ -283,8 +299,11 @@ azure-devsecops-aca/
 │  │  ├─ freshclam.conf
 │  │  ├─ freshclam-updater.sh
 │  │  └─ healthcheck.sh
-│  └─ worker/             # queue consumer
+│  └─ worker/             # fetcher + analyzer (same image, different WORKER_MODE)
 │     ├─ Dockerfile.sidecar
+│     ├─ entrypoint.sidecar.sh
+│     ├─ fetcher.py
+│     ├─ screenshot_capture.py
 │     ├─ worker.py
 │     ├─ requirements.txt
 │     └─ yara-rules/      # reserved (not used by URL scanner)
@@ -298,6 +317,7 @@ azure-devsecops-aca/
 │  ├─ outputs.tf
 │  └─ variables.tf
 ├─ docs/
+├─ tests/
 ├─ checkov.yml
 └─ README.md
 ```
@@ -305,11 +325,9 @@ azure-devsecops-aca/
 ## 5) CI/CD workflow
 ### CI (`.github/workflows/ci.yml`)
 
-- Build API and Worker (Docker Buildx, with cache)
-    
-- Trivy image scan (HIGH/CRITICAL)
-    
-- Checkov Terraform scan
+- Python: Ruff (syntax) + `python -m compileall` + pytest
+- Terraform: `terraform fmt` + `terraform validate` + Checkov (SARIF upload)
+- Containers: Hadolint + build images (api/worker/clamav) + Trivy scan (SARIF upload)
     
 
 ### Deploy (`.github/workflows/deploy.yml`)
@@ -320,7 +338,7 @@ azure-devsecops-aca/
     
 - Terraform **apply** core infra (SB, KV secrets, ACA env, UAMI, etc.)
     
-- Build & push images to ACR (tagged with commit SHA)
+- Build & push images to ACR (API, worker/fetcher, ClamAV; tagged with commit SHA)
     
 - Terraform **apply** apps (pull from ACR; KV secret refs; UAMI-backed)
     
@@ -342,7 +360,7 @@ Manual workflow (`workflow_dispatch`) to validate **KEDA scale-out**:
 You can run the same check locally:
 
 ```bash
-python3 -m pip install -r app/worker/requirements.txt
+python3 -m pip install "azure-servicebus~=7.12"
 az login
 bash scripts/keda_scale_test.sh --resource-group <rg> --prefix <prefix>
 ```
@@ -481,14 +499,18 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 
 - `GET /` (no auth; dashboard UI)
 - `GET /healthz` (no auth)
+- `GET /file` (no auth; file scanner UI)
 - `POST /tasks` (requires API key)
 - `POST /scan` (requires API key)
 - `GET /scan/{job_id}?view=summary|full` (requires API key; `summary` is default)
+- `GET /scan/{job_id}/screenshot` (requires API key; only if a screenshot was captured)
+- `POST /file/scan` (requires API key; ClamAV scan)
 
 ### Scan status lifecycle
 
-`GET /scan/{job_id}` returns a `status` that progresses monotonically (out-of-order writes are ignored so status won’t go “backwards”).
+`GET /scan/{job_id}` returns a `status`. When a job exists, statuses progress monotonically (out-of-order writes are ignored so status won’t go “backwards”).
 
+- `pending`: no record found (unknown `job_id`)
 - `queued`: job accepted and enqueued by the API
 - `fetching`: fetcher is downloading (SSRF-protected) and preparing an artifact
 - `queued_scan`: artifact is ready and the scan stage has been queued
@@ -517,13 +539,37 @@ curl -sS "${API_URL}/scan/${JOB_ID}?view=summary" -H "X-API-Key: ${API_KEY}" | p
 curl -sS "${API_URL}/scan/${JOB_ID}?view=full" -H "X-API-Key: ${API_KEY}" | python3 -m json.tool
 ```
 
+### File scanning (ClamAV)
+
+- UI: `GET /file` (no auth)
+- API: `POST /file/scan` (requires API key; accepts `file=@...` or a `payload` form field)
+
+Example (scan a file):
+
+```bash
+curl -sS -X POST "${API_URL}/file/scan" \
+  -H "X-API-Key: ${API_KEY}" \
+  -F "file=@./README.md" | python3 -m json.tool
+```
+
+Example (scan a text payload):
+
+```bash
+curl -sS -X POST "${API_URL}/file/scan" \
+  -H "X-API-Key: ${API_KEY}" \
+  -F "payload=hello world" | python3 -m json.tool
+```
+
 ### Where are scan results stored?
 
 - **Primary**: `GET /scan/{job_id}` (reads from the configured result backend: Azure Table Storage by default; Redis in `docker-compose.yml`)
 - **Note**: Azure Table has a ~64KB per-property limit; large `details` payloads are compacted/truncated (look for `_truncated` in `view=full`). Tune with `RESULT_DETAILS_MAX_BYTES`. A `status_rank` field may also be stored to prevent status regression.
+- **Screenshots (optional)**: `GET /scan/{job_id}/screenshot` (stored in the results storage account when using Table; stored in Redis when using Redis)
 - **Local (optional)**: `docker compose exec redis redis-cli HGETALL "scan:<job_id>"`
 - **GitHub Actions**: open the Deploy run and find the `job_id=...` line under “End-to-end scan test” (you can query it via the API afterwards)
 - **Azure Portal (optional)**: Storage account `<prefix>scan` → Table service → `scanresults` (PartitionKey `scan`)
+
+## 9) Observability & troubleshooting
 
 ### Logs (CLI)
 
@@ -531,6 +577,10 @@ curl -sS "${API_URL}/scan/${JOB_ID}?view=full" -H "X-API-Key: ${API_KEY}" | pyth
     
     `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type console --follow --container api`
     
+- **Fetcher (console)**
+    
+    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-fetcher --type console --follow --container fetcher`
+
 - **Worker (console)**
     
     `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-worker --type console --follow --container worker`
@@ -538,7 +588,6 @@ curl -sS "${API_URL}/scan/${JOB_ID}?view=full" -H "X-API-Key: ${API_KEY}" | pyth
 - **System logs**
     
     `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type system --follow`
-    
 
 ### KEDA scaling
 
@@ -546,7 +595,7 @@ Fetcher and worker are configured:
 
 - `min_replicas = 0`, `max_replicas = 5`
     
-- 1 replica per **20 messages**:
+- 1 replica per **20 messages** (worker example):
 ```hcl
 custom_scale_rule {
   name             = "sb-scaler"
@@ -618,34 +667,24 @@ curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}"
     
     - `messageCount` is the target used in the scaling formula (`desiredReplicas = ceil(queueLength/messageCount)`); if queue length stays > 0 and replicas stay at 0, the scaler/auth is misconfigured.
 
-- **Scan stays `queued`**
-    - The worker likely isn’t processing messages. Check worker logs:
-      `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-worker --type console --follow --container worker`
+- **Scan stays `queued` / `queued_scan`**
+    - If it stays `queued`: the fetcher likely isn’t processing messages (check fetcher logs).
+    - If it stays `queued_scan`: the worker likely isn’t processing messages (check worker logs).
         
 - **Max delivery count / DLQ**  
-    Your worker must `complete_message()` (or `abandon/dead_letter` appropriately) and auto-renew locks for long work. See the “max delivery” notes in the discussion above.
+    - Both fetcher/worker retry up to `MAX_RETRIES`; after that the message is dead-lettered (Service Bus) or moved to a DLQ list (Redis).
+    - Check queue dead-letter count and logs for the `job_id`/`correlation_id`.
 
 - **401/403 from the API**
-    - Include `X-API-Key` on `/tasks`, `/scan`, and `/scan/{job_id}`.
+    - Include `X-API-Key` on `/tasks`, `/scan`, `/scan/{job_id}`, `/scan/{job_id}/screenshot`, and `/file/scan`.
     - Retrieve the key from Key Vault secret `ApiKey`.
+
+- **503 from `/file/scan`**
+    - ClamAV may still be starting (or downloading signatures). Check the `clamav` container logs in the API Container App (or the `clamav` service in Docker Compose):  
+      `az containerapp logs show -g <rg> -n <prefix>-api --type console --follow --container clamav`
 
 - **400 “URL resolves to a non-public IP address”**
     - SSRF protections block private/link-local/loopback destinations (intended).
-
-## 9) Observability & troubleshooting
-### Logs (CLI)
-
-- **API (console)**
-    
-    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type console --follow --container api`
-    
-- **Worker (console)**
-    
-    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-worker --type console --follow --container worker`
-    
-- **System logs**
-    
-    `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type system --follow`
 
 ## 10) Working with Terraform locally
 If you want to inspect or modify:
@@ -720,21 +759,27 @@ To restart later, just re-run the **Deploy** workflow.
     
 - `GET /scan/{job_id}` -> reads the configured result backend and returns the current status/verdict.
 
+- `GET /scan/{job_id}/screenshot` -> serves an optional worker-captured screenshot (stored in Blob Storage when `RESULT_BACKEND=table`, or Redis when `RESULT_BACKEND=redis`).
+
 - `POST /file/scan` -> requires `X-API-Key`, scans an uploaded file or pasted payload with ClamAV, and returns an immediate verdict (UI at `/file`).
     
 - `GET /healthz` -> basic health.
     
 
-**Worker (`app/worker/worker.py`)**
-- Receives messages from the configured queue backend (Azure Service Bus by default; Redis locally).
-    
-- For scan jobs: runs URL/domain reputation checks (`reputation`) and lightweight response-body heuristics (`content`) over the fetched bytes, then writes status/verdicts to the configured result backend. Retries up to `MAX_RETRIES`.
+**Fetcher (`app/worker/fetcher.py`)**
+- Receives `scan-v1` jobs from the **fetch queue** (`tasks` by default).
+- Downloads bytes with SSRF protections, writes an artifact into `ARTIFACT_DIR` (Azure Files on ACA; a Docker volume locally), updates status (`fetching` → `queued_scan`), and forwards a `scan-artifact-v1` message to the **scan queue** (`<queue>-scan`).
+
+**Analyzer/Worker (`app/worker/worker.py`)**
+- Receives `scan-artifact-v1` jobs from the **scan queue** and reads the artifact bytes.
+- Runs lightweight web analysis (HTML/resources/cookies/security headers/tracking/YARA rules) and writes the final `completed/error` result to the configured result backend; optionally captures a Playwright screenshot and stores it for `/scan/{job_id}/screenshot`.
+- Web analysis rules live in `app/common/tracking_filters.txt` and `app/common/web_yara_rules.yar` (override via `WEB_TRACKING_FILTERS_PATH` / `WEB_YARA_RULES_PATH`).
 
 ## 14) Extending this project (future work)
 
 - **Per-user API keys**: store *hashed* keys in Table Storage, add admin endpoints to mint/revoke keys, and attach per-key quotas.
 - **Deepen scanning**: add more external reputation sources (Safe Browsing/VirusTotal), enrich redirect analysis, and add more HTML/JS heuristics.
-- **File scanning (separate track)**: add a dedicated pipeline for file artifacts and run heavier engines (e.g., ClamAV/YARA) in a separate worker.
+- **Async file scanning pipeline**: move `/file/scan` into a queued workflow for larger inputs (store payloads in Blob/Azure Files) and run ClamAV/YARA in a dedicated worker.
 - **Front the API**: add API Management / Front Door + WAF, request validation, and centralized auth.
 - **DAST in CI**: run OWASP ZAP against the deployed `/scan` endpoint using a non-prod API key.
 - **Supply-chain hardening**: SBOM generation (Syft), vulnerability gating (Grype), image signing (Cosign), and provenance.
