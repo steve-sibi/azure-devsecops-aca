@@ -78,6 +78,7 @@ def _truncate_details_for_table(details: dict, *, max_bytes: int) -> dict:
         for key in (
             "requested_url",
             "final_url",
+            "status_code",
             "content_type",
             "content_length",
             "blocked",
@@ -91,6 +92,26 @@ def _truncate_details_for_table(details: dict, *, max_bytes: int) -> dict:
         redirects = download.get("redirects")
         if isinstance(redirects, list):
             dl_out["redirect_count"] = len(redirects)
+        response_headers = download.get("response_headers")
+        if isinstance(response_headers, list):
+            trimmed_headers: list[dict[str, Any]] = []
+            for item in response_headers:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                value = item.get("value")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                if value is None:
+                    continue
+                v = str(value)
+                if len(v) > 320:
+                    v = v[:317] + "..."
+                trimmed_headers.append({"name": name.strip().lower(), "value": v})
+                if len(trimmed_headers) >= 25:
+                    break
+            if trimmed_headers:
+                dl_out["response_headers"] = trimmed_headers
         if dl_out:
             out["download"] = dl_out
 

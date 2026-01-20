@@ -183,7 +183,7 @@ def process(task: dict):
     if not url or not job_id:
         raise ValueError("missing url/job_id in task")
 
-    engines = scan_worker._get_scan_engines()
+    engines = ["web"]
     start = time.time()
     if not _save_result(
         job_id=job_id,
@@ -196,43 +196,7 @@ def process(task: dict):
     ):
         raise RuntimeError("failed to persist fetcher status")
 
-    try:
-        (
-            content,
-            size_bytes,
-            download,
-            url_evaluations,
-            url_signals,
-            reputation_summary,
-        ) = scan_worker._download(url, engines=engines)
-    except scan_worker.DownloadBlockedError as e:
-        duration_ms = int((time.time() - start) * 1000)
-        verdict = str(e.decision.get("final_verdict") or "malicious").lower()
-        details = dict(e.details or {})
-        details.setdefault("engine", engines[0] if len(engines) == 1 else "multi")
-        details.setdefault("engines", engines)
-        details.setdefault("download_blocked", True)
-        details.setdefault("url", url)
-        if not _save_result(
-            job_id=job_id,
-            status="completed",
-            verdict=verdict,
-            details=details,
-            size_bytes=0,
-            correlation_id=correlation_id,
-            duration_ms=duration_ms,
-            submitted_at=submitted_at,
-            error=None,
-            url=url,
-        ):
-            raise RuntimeError("failed to persist blocked scan result")
-        logging.info(
-            "[fetcher] job_id=%s verdict=%s size=0B duration_ms=%s (blocked)",
-            job_id,
-            verdict,
-            duration_ms,
-        )
-        return
+    content, size_bytes, download = scan_worker._download(url)
 
     artifact_dir = _ensure_artifact_dir()
     artifact_name = f"{job_id}.bin"
@@ -254,9 +218,6 @@ def process(task: dict):
         "artifact_sha256": sha256,
         "artifact_size_bytes": size_bytes,
         "download": download,
-        "url_evaluations": url_evaluations,
-        "url_signals": [s.as_dict() for s in url_signals],
-        "reputation_summary": reputation_summary,
     }
 
     if not _save_result(

@@ -409,104 +409,48 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
     if isinstance(details, dict) and isinstance(details.get("download"), dict):
         d = details["download"]
         download: dict = {}
-        for key in ("requested_url", "final_url", "content_type"):
+        for key in ("requested_url", "final_url", "content_type", "content_length"):
             val = d.get(key)
             if isinstance(val, str) and val:
                 download[key] = val
+        status_code = _safe_int(d.get("status_code"))
+        if status_code is not None:
+            download["status_code"] = status_code
         redirects = d.get("redirects")
         if isinstance(redirects, list):
             download["redirect_count"] = len(redirects)
         blocked = d.get("blocked")
         if isinstance(blocked, bool):
             download["blocked"] = blocked
+        rh = d.get("response_headers")
+        if isinstance(rh, list):
+            trimmed: list[dict] = []
+            for item in rh:
+                if not isinstance(item, dict):
+                    continue
+                name = item.get("name")
+                value = item.get("value")
+                if not isinstance(name, str) or not name.strip():
+                    continue
+                if value is None:
+                    continue
+                val_s = str(value)
+                if len(val_s) > 320:
+                    val_s = val_s[:317] + "..."
+                trimmed.append({"name": name.strip().lower(), "value": val_s})
+                if len(trimmed) >= 25:
+                    break
+            if trimmed:
+                download["response_headers"] = trimmed
         if download:
             summary["download"] = download
 
     # Engine summaries
     results = details.get("results") if isinstance(details, dict) else None
     if isinstance(results, dict):
-        rep = results.get("reputation")
-        if isinstance(rep, dict):
-            rep_out: dict = {}
-            for key in (
-                "verdict",
-                "score",
-                "threshold",
-                "suspicious_threshold",
-                "malicious_threshold",
-                "matched_allowlist",
-                "matched_blocklist",
-            ):
-                val = rep.get(key)
-                if val is None or val == "":
-                    continue
-                rep_out[key] = val
-            reasons = rep.get("reasons")
-            if isinstance(reasons, list):
-                rep_out["reasons"] = [str(r) for r in reasons if r][:10]
-            matched_rules = rep.get("matched_rules")
-            if isinstance(matched_rules, list):
-                rep_out["matched_rules"] = [str(r) for r in matched_rules if r][:10]
-            if rep_out:
-                summary["reputation"] = rep_out
-
-        urlscan = results.get("urlscan")
-        if isinstance(urlscan, dict):
-            urlscan_out: dict = {}
-            for key in ("status", "verdict", "result_url", "uuid"):
-                val = urlscan.get(key)
-                if isinstance(val, str) and val:
-                    urlscan_out[key] = val
-            score = urlscan.get("score")
-            score_int = _safe_int(score)
-            if score_int is not None:
-                urlscan_out["score"] = score_int
-            categories = urlscan.get("categories")
-            if isinstance(categories, list):
-                urlscan_out["categories"] = [str(c) for c in categories if c][:10]
-            err = urlscan.get("error")
-            if isinstance(err, str) and err:
-                urlscan_out["error"] = err
-            if urlscan_out:
-                summary["urlscan"] = urlscan_out
-
-        urlhaus = results.get("urlhaus")
-        if isinstance(urlhaus, dict):
-            urlhaus_out: dict = {}
-            for key in ("status", "query_status", "verdict", "reference", "threat", "url_status"):
-                val = urlhaus.get(key)
-                if isinstance(val, str) and val:
-                    urlhaus_out[key] = val
-            tags = urlhaus.get("tags")
-            if isinstance(tags, list):
-                urlhaus_out["tags"] = [str(t) for t in tags if t][:10]
-            err = urlhaus.get("error")
-            if isinstance(err, str) and err:
-                urlhaus_out["error"] = err
-            if urlhaus_out:
-                summary["urlhaus"] = urlhaus_out
-
-        content = results.get("content")
-        if isinstance(content, dict):
-            content_out: dict = {}
-            ct = content.get("content_type")
-            if isinstance(ct, str) and ct:
-                content_out["content_type"] = ct
-            scanned = _safe_int(content.get("text_bytes_scanned"))
-            if scanned is not None:
-                content_out["text_bytes_scanned"] = scanned
-            for key in ("has_form", "has_password_field", "has_meta_refresh"):
-                val = content.get(key)
-                if isinstance(val, bool):
-                    content_out[key] = val
-            base64_max = _safe_int(content.get("base64_blob_max_len"))
-            if base64_max is not None:
-                content_out["base64_blob_max_len"] = base64_max
-            prim = content.get("js_obfuscation_primitives")
-            if isinstance(prim, list):
-                content_out["js_obfuscation_primitives"] = [str(x) for x in prim if x][:10]
-            if content_out:
-                summary["content"] = content_out
+        web = results.get("web")
+        if isinstance(web, dict) and web:
+            summary["web"] = web
 
     return summary
 

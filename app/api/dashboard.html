@@ -242,6 +242,7 @@
       }
       .summary-block.span-all { grid-column: 1 / -1; }
       .summary-block.tone-ok { --dot: var(--success); --dot-soft: var(--success-soft); }
+      .summary-block.tone-warn { --dot: rgba(234,179,8,1); --dot-soft: rgba(234,179,8,0.14); }
       .summary-block.tone-bad { --dot: var(--danger); --dot-soft: var(--danger-soft); }
       .summary-block h3 {
         margin: 0 0 0.75rem;
@@ -361,6 +362,212 @@
         max-height: 320px;
         min-width: 0;
       }
+
+      /* --- Web analysis UI (Security Analysis / Page / Network / Resources) --- */
+      .section {
+        grid-column: 1 / -1;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 1rem;
+        background: rgba(148,163,184,0.04);
+        backdrop-filter: blur(10px);
+        min-width: 0;
+      }
+      .section-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.85rem;
+      }
+      .section-title {
+        margin: 0;
+        font-size: 1.05rem;
+        letter-spacing: -0.01em;
+        font-weight: 800;
+      }
+      .analysis-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 1rem;
+        align-items: start;
+      }
+      @media (max-width: 1100px) { .analysis-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+      @media (max-width: 720px) { .analysis-grid { grid-template-columns: 1fr; } }
+      .analysis-card {
+        border: 1px solid rgba(148,163,184,0.22);
+        border-radius: 14px;
+        padding: 0.95rem;
+        background: linear-gradient(180deg, rgba(148,163,184,0.06), rgba(148,163,184,0.02));
+        min-width: 0;
+      }
+      .analysis-card.tone-ok { border-color: rgba(22,163,74,0.5); }
+      .analysis-card.tone-warn { border-color: rgba(234,179,8,0.6); }
+      .analysis-card.tone-bad { border-color: rgba(220,38,38,0.5); }
+      .analysis-card h4 {
+        margin: 0 0 0.75rem;
+        font-size: 0.95rem;
+        font-weight: 800;
+        letter-spacing: -0.01em;
+      }
+      .checklist { display: flex; flex-direction: column; gap: 0.55rem; }
+      .checkline {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+        min-width: 0;
+        padding: 0.1rem 0;
+      }
+      .checkleft { display: inline-flex; align-items: center; gap: 0.55rem; min-width: 0; }
+      .checkdot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--primary);
+        box-shadow: 0 0 0 4px var(--primary-soft);
+        flex: 0 0 auto;
+        opacity: 0.95;
+      }
+      .checkline.ok .checkdot { background: var(--success); box-shadow: 0 0 0 4px var(--success-soft); }
+      .checkline.bad .checkdot { background: var(--danger); box-shadow: 0 0 0 4px var(--danger-soft); }
+      .checkline.warn .checkdot { background: rgba(234,179,8,1); box-shadow: 0 0 0 4px rgba(234,179,8,0.14); }
+      .checklabel { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .checkvalue { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); flex: 0 0 auto; }
+      .analysis-actions { display: flex; justify-content: center; gap: 0.7rem; flex-wrap: wrap; margin-top: 1rem; }
+      a.btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.65rem 0.9rem;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        text-decoration: none;
+        color: var(--text);
+        background: rgba(148,163,184,0.06);
+        font-weight: 700;
+      }
+      a.btn:hover { background: rgba(148,163,184,0.10); }
+      a.btn.primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: var(--primary-ink);
+      }
+      a.btn.success {
+        background: var(--success);
+        border-color: var(--success);
+        color: var(--success-ink);
+      }
+      .split {
+        display: grid;
+        grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.65fr);
+        gap: 1rem;
+        align-items: start;
+      }
+      @media (max-width: 980px) { .split { grid-template-columns: 1fr; } }
+      .mini-toggle {
+        border: 1px solid rgba(148,163,184,0.22);
+        border-radius: 12px;
+        background: rgba(148,163,184,0.06);
+        padding: 0.35rem 0.55rem;
+      }
+      .mini-toggle summary {
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .mini-toggle summary::-webkit-details-marker { display: none; }
+      .headers-list {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(148,163,184,0.03);
+        overflow: auto;
+        max-height: 280px;
+        min-width: 0;
+      }
+      .header-row {
+        display: grid;
+        grid-template-columns: minmax(140px, 180px) 1fr;
+        gap: 0.6rem;
+        padding: 0.5rem 0.65rem;
+        border-bottom: 1px solid rgba(148,163,184,0.14);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 0.86rem;
+      }
+      .header-row:last-child { border-bottom: none; }
+      .header-name { color: var(--success); font-weight: 800; }
+      .header-value { overflow-wrap: anywhere; color: var(--text); }
+      .screenshot {
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(148,163,184,0.03);
+        padding: 0.75rem;
+        min-width: 0;
+      }
+      .screenshot img {
+        width: 100%;
+        height: auto;
+        border-radius: 10px;
+        display: block;
+        background: rgba(148,163,184,0.06);
+        cursor: zoom-in;
+      }
+      .screenshot .placeholder {
+        border: 1px dashed rgba(148,163,184,0.4);
+        border-radius: 12px;
+        padding: 1rem;
+        text-align: center;
+        color: var(--muted);
+        font-weight: 700;
+      }
+      .dns-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.65rem;
+      }
+      @media (max-width: 720px) { .dns-grid { grid-template-columns: 1fr; } }
+      .dns-item {
+        border: 1px solid rgba(148,163,184,0.22);
+        border-radius: 12px;
+        padding: 0.55rem 0.65rem;
+        background: rgba(148,163,184,0.06);
+        font-variant-numeric: tabular-nums;
+        overflow-wrap: anywhere;
+        font-weight: 700;
+        color: var(--success);
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 0.2rem 0.55rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 800;
+        border: 1px solid rgba(148,163,184,0.22);
+      }
+      .pill.internal { background: var(--success-soft); border-color: rgba(22,163,74,0.5); color: var(--success); }
+      .pill.external { background: rgba(234,179,8,0.14); border-color: rgba(234,179,8,0.6); color: rgba(234,179,8,1); }
+      .modal {
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.25rem;
+        z-index: 1000;
+      }
+      .modal img {
+        max-width: min(1100px, 96vw);
+        max-height: 86vh;
+        border-radius: 14px;
+        border: 1px solid rgba(148,163,184,0.35);
+        background: rgba(15, 23, 42, 0.95);
+      }
     </style>
   </head>
   <body>
@@ -476,6 +683,7 @@
         let currentJobId = null;
         let isPolling = false;
         let activeTab = 'summary'; // 'summary' | 'raw'
+        let resourcesTab = 'links'; // 'links' | 'images' | 'scripts' | 'styles'
 
         let lastSummary = null; // most recent response for summary view
         let lastFull = null; // most recent response for full view (raw JSON)
@@ -672,160 +880,375 @@
             blocks.push(el('div', { class: cls }, header, dl));
           }
 
-          const status = data.status || 'unknown';
-          const url = s.url || '';
-          const decision = pick(s, 'decision') || {};
-          const rep = pick(s, 'reputation');
-          const urlscan = pick(s, 'urlscan');
-          const urlhaus = pick(s, 'urlhaus');
-          const content = pick(s, 'content');
-          const dl = pick(s, 'download');
-
-          const finalVerdict = String(
-            decision.final_verdict || data.verdict || (rep && rep.verdict) || ''
-          ).toLowerCase();
-          const verdictTone = finalVerdict ? verdictKind(finalVerdict) : statusKind(status);
-
-          function riskLabel(v) {
-            const vv = String(v || '').toLowerCase();
-            if (vv === 'benign') return 'Low risk';
-            if (vv === 'suspicious') return 'Needs review';
-            if (vv === 'malicious') return 'High risk';
-            if (vv === 'error') return 'Scan error';
-            return '';
+          function checkLine(label, value, kind) {
+            const k = kind || 'info';
+            return el('div', { class: 'checkline ' + k },
+              el('span', { class: 'checkleft' },
+                el('span', { class: 'checkdot' }),
+                el('span', { class: 'checklabel', text: String(label || '') })
+              ),
+              el('span', { class: 'checkvalue', text: String(value || '') })
+            );
           }
 
-          function recommendationLabel(action, verdict) {
-            const a = String(action || '').toLowerCase();
-            if (a === 'allow_download') return 'Proceed';
-            if (a === 'reputation_only') return 'Proceed with caution';
-            if (a === 'block_download') return 'Avoid / block';
-            const vv = String(verdict || '').toLowerCase();
-            if (vv === 'benign') return 'Proceed';
-            if (vv === 'suspicious') return 'Proceed with caution';
-            if (vv === 'malicious') return 'Avoid / block';
-            if (vv === 'error') return 'Treat as unsafe';
-            return '';
+          function analysisCard(title, lines, opts) {
+            const nodes = Array.isArray(lines) ? lines.filter(Boolean) : [];
+            const body = el('div', { class: 'checklist' }, ...nodes);
+            const tone = (opts && opts.tone) ? String(opts.tone) : '';
+            const cls = 'analysis-card' + (tone ? (' tone-' + tone) : '');
+            return el('div', { class: cls }, el('h4', { text: String(title || '') }), body, (opts && opts.extra) ? opts.extra : null);
           }
 
-          const reasons = Array.isArray(decision.reasons) ? decision.reasons : [];
-          let why = '';
-          if (data.error) {
-            why = 'Scan failed.';
-          } else if (status !== 'completed' && status !== 'error') {
-            why = 'Scan in progress…';
-          } else if (reasons.length) {
-            why = reasons.slice(0, 3).join(' • ');
-          } else if (finalVerdict === 'benign') {
-            why = 'No suspicious indicators found.';
+          function section(title, body, opts) {
+            const meta = (opts && opts.meta) ? opts.meta : null;
+            const head = el('div', { class: 'section-head' },
+              el('h3', { class: 'section-title', text: String(title || '') }),
+              meta
+            );
+            const node = el('div', { class: 'section' }, head, body);
+            blocks.push(node);
           }
+
+          function typePill(kind) {
+            const k = String(kind || '').toLowerCase() === 'external' ? 'external' : 'internal';
+            return el('span', { class: 'pill ' + k, text: k === 'external' ? 'External' : 'Internal' });
+          }
+
+          function openImageModal(src) {
+            const url = String(src || '');
+            if (!url) return;
+            const overlay = el('div', { class: 'modal', role: 'dialog', 'aria-label': 'Screenshot' });
+            const img = el('img', { src: url, alt: 'Page screenshot' });
+            overlay.appendChild(img);
+            overlay.addEventListener('click', () => overlay.remove());
+            document.body.appendChild(overlay);
+          }
+
+          function hostnameFromUrl(url) {
+            try { return new URL(String(url || '')).hostname || ''; } catch (_) { return ''; }
+          }
+
+          function vtUrlId(url) {
+            const u = String(url || '').trim();
+            if (!u) return '';
+
+            function toBase64(bytes) {
+              let bin = '';
+              for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+              return btoa(bin);
+            }
+
+            try {
+              const bytes = new TextEncoder().encode(u);
+              return toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+            } catch (_) {
+              try {
+                // Fallback for older browsers.
+                const b64 = btoa(unescape(encodeURIComponent(u)));
+                return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+              } catch (_) {
+                return '';
+              }
+            }
+          }
+
+          function urlscanQuery(url) {
+            const u = String(url || '').trim();
+            if (!u) return '';
+            const escaped = u.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            return 'page.url:"' + escaped + '"';
+          }
+
+          const status = String(data.status || 'unknown');
+          const dl = (pick(s, 'download') && typeof pick(s, 'download') === 'object') ? pick(s, 'download') : {};
+          const web = (pick(s, 'web') && typeof pick(s, 'web') === 'object') ? pick(s, 'web') : {};
+          const sec = (web && typeof web.security_analysis === 'object') ? web.security_analysis : {};
+          const pageInfo = (web && typeof web.page_information === 'object') ? web.page_information : {};
+          const netInfo = (web && typeof web.network_information === 'object') ? web.network_information : {};
+          const resInfo = (web && typeof web.resources === 'object') ? web.resources : {};
+          const hasWeb = Boolean(web && typeof web === 'object' && Object.keys(web).length);
+
+          const baseUrl = (dl && dl.final_url) ? String(dl.final_url) : (s.url ? String(s.url) : '');
+          const requestedUrl = (dl && dl.requested_url) ? String(dl.requested_url) : (s.url ? String(s.url) : '');
+          const finalUrl = baseUrl || requestedUrl;
 
           const statusBadge = badgeValue(statusKind(status), status);
-          const verdictBadge = finalVerdict ? badgeValue(verdictKind(finalVerdict), finalVerdict) : null;
-
-          block('Result', [
-            ['Outcome', finalVerdict ? badgeValue(verdictKind(finalVerdict), riskLabel(finalVerdict) || finalVerdict) : ''],
-            ['Recommendation', recommendationLabel(decision.action, finalVerdict)],
-            ['Why', why],
+          block('Scan', [
+            ['Status', statusBadge],
+            ['Job id', data.job_id ? codeValue(String(data.job_id), { copy: true, copyLabel: 'Copy job id' }) : ''],
+            ['Submitted', data.submitted_at || ''],
+            ['Scanned', data.scanned_at || ''],
+            ['Duration', data.duration_ms != null ? formatMs(data.duration_ms) : ''],
             ['Error', data.error || ''],
-          ], {
-            tone: verdictTone,
-            meta: [statusBadge, verdictBadge],
-          });
-
-          const requestedUrl = (dl && dl.requested_url) ? String(dl.requested_url) : url;
-          const finalUrl = (dl && dl.final_url) ? String(dl.final_url) : url;
-          const redirects = (dl && dl.redirect_count != null) ? dl.redirect_count : null;
-          const contentType = (dl && dl.content_type) ? dl.content_type : (content && content.content_type ? content.content_type : '');
-          const blocked = (s.download_blocked === true) || (dl && dl.blocked === true);
+          ].filter(Boolean), { tone: statusKind(status) });
 
           block('Destination', [
             ['Destination', finalUrl ? linkValue(finalUrl, { copy: true, copyLabel: 'Copy destination url' }) : ''],
             (requestedUrl && finalUrl && requestedUrl !== finalUrl)
               ? ['Original URL', linkValue(requestedUrl, { copy: true, copyLabel: 'Copy original url' })]
               : null,
-            ['Redirects', redirects != null ? codeValue(String(redirects)) : ''],
-            ['Content type', contentType ? codeValue(String(contentType)) : ''],
-            ['Fetch blocked', blocked === true ? 'yes' : (blocked === false ? 'no' : '')],
-          ].filter(Boolean), { tone: blocked ? 'bad' : 'info' });
+            ['HTTP status', (dl && dl.status_code != null) ? codeValue(String(dl.status_code)) : ''],
+            ['Content type', (dl && dl.content_type) ? codeValue(String(dl.content_type)) : ''],
+            ['Redirects', (dl && dl.redirect_count != null) ? codeValue(String(dl.redirect_count)) : ''],
+          ].filter(Boolean), { tone: 'info' });
 
-          if (rep || content || urlscan || urlhaus) {
-            function checkLabel(v) {
-              const vv = String(v || '').toLowerCase();
-              if (vv === 'benign') return 'OK';
-              if (vv === 'suspicious') return 'Review';
-              if (vv === 'malicious') return 'High risk';
-              if (vv === 'error') return 'Error';
-              return '';
-            }
+          // --- Security Analysis (cards) ---
+          if (sec && Object.keys(sec).length) {
+            const conn = (sec.connection_security && typeof sec.connection_security === 'object') ? sec.connection_security : {};
+            const mixed = (conn.mixed_content && typeof conn.mixed_content === 'object') ? conn.mixed_content : {};
+            const mixedDetected = mixed.detected === true;
+            const proto = conn.protocol ? String(conn.protocol) : 'HTTPS';
 
-            const urlCheckVerdict = rep && rep.verdict ? String(rep.verdict).toLowerCase() : '';
-            const urlCheck = urlCheckVerdict ? badgeValue(verdictKind(urlCheckVerdict), checkLabel(urlCheckVerdict) || urlCheckVerdict) : '';
+            const headers = (sec.security_headers && typeof sec.security_headers === 'object') ? sec.security_headers : {};
+            const cspPresent = headers.content_security_policy && headers.content_security_policy.present === true;
+            const xfoPresent = headers.x_frame_options && headers.x_frame_options.present === true;
+            const xssPresent = headers.x_xss_protection && headers.x_xss_protection.present === true;
 
-            const urlscanStatus = urlscan && urlscan.status ? String(urlscan.status).toLowerCase() : '';
-            const urlscanVerdict = urlscan && urlscan.verdict ? String(urlscan.verdict).toLowerCase() : '';
-            let urlscanCheck = '';
-            if (urlscan) {
-              const badge = urlscanVerdict
-                ? badgeValue(verdictKind(urlscanVerdict), checkLabel(urlscanVerdict) || urlscanVerdict)
-                : (urlscanStatus === 'error'
-                  ? badgeValue('warn', 'error')
-                  : (urlscanStatus === 'skipped'
-                    ? badgeValue('info', 'skipped')
-                    : (urlscanStatus ? badgeValue('info', urlscanStatus) : '')));
-              const reportUrl = urlscan.result_url ? String(urlscan.result_url) : '';
-              if (reportUrl) {
-                urlscanCheck = el('span', { class: 'value-row' }, badge, linkValue(reportUrl, { copy: true, copyLabel: 'Copy urlscan.io report URL' }));
-              } else {
-                urlscanCheck = badge;
+            const forms = (sec.forms_and_input && typeof sec.forms_and_input === 'object') ? sec.forms_and_input : {};
+            const loginForms = Number(forms.login_forms || 0);
+            const passwordFields = Number(forms.password_fields || 0);
+            const csrfOk = forms.csrf_protection === true;
+
+            const scripts = (sec.suspicious_scripts && typeof sec.suspicious_scripts === 'object') ? sec.suspicious_scripts : {};
+            const suspiciousScripts = Number(scripts.suspicious_scripts || 0);
+            const externalScripts = Number(scripts.external_scripts || 0);
+            const apiSuspicious = scripts.suspicious_api_calls === true;
+
+            const cookies = (sec.cookies && typeof sec.cookies === 'object') ? sec.cookies : {};
+            const insecureCookies = Number(cookies.insecure_cookies || 0);
+            const cookieDetails = Array.isArray(cookies.details) ? cookies.details : [];
+            let cookieExtra = null;
+            if (cookieDetails.length) {
+              const details = el('details', { class: 'mini-toggle' });
+              const summary = el('summary', { text: 'Details' });
+              details.appendChild(summary);
+              const list = el('div', { class: 'headers-list' });
+              for (const c of cookieDetails.slice(0, 20)) {
+                if (!c || typeof c !== 'object') continue;
+                const name = c.name ? String(c.name) : '';
+                const issues = Array.isArray(c.issues) ? c.issues.map(x => String(x)).filter(Boolean) : [];
+                if (!name) continue;
+                list.appendChild(el('div', { class: 'header-row' },
+                  el('div', { class: 'header-name', text: name }),
+                  el('div', { class: 'header-value', text: issues.length ? issues.join(' • ') : '' })
+                ));
               }
+              details.appendChild(list);
+              cookieExtra = details;
             }
 
-            const urlhausStatus = urlhaus && urlhaus.status ? String(urlhaus.status).toLowerCase() : '';
-            const urlhausVerdict = urlhaus && urlhaus.verdict ? String(urlhaus.verdict).toLowerCase() : '';
-            const urlhausQuery = urlhaus && urlhaus.query_status ? String(urlhaus.query_status).toLowerCase() : '';
-            let urlhausCheck = '';
-            if (urlhaus) {
-              const label = (urlhausQuery === 'no_results') ? 'no match' : (checkLabel(urlhausVerdict) || urlhausVerdict || urlhausStatus || 'unknown');
-              const kind = urlhausVerdict
-                ? verdictKind(urlhausVerdict)
-                : (urlhausStatus === 'error' ? 'warn' : 'info');
-              const badge = badgeValue(kind, label);
-              const refUrl = urlhaus.reference ? String(urlhaus.reference) : '';
-              if (refUrl) {
-                urlhausCheck = el('span', { class: 'value-row' }, badge, linkValue(refUrl, { copy: true, copyLabel: 'Copy URLhaus reference URL' }));
-              } else {
-                urlhausCheck = badge;
+            const vulns = (sec.detectable_vulnerabilities && typeof sec.detectable_vulnerabilities === 'object') ? sec.detectable_vulnerabilities : {};
+            const openRedirects = vulns.open_redirects === true;
+            const innerHtml = vulns.inner_html_usage === true;
+            const evalUsage = vulns.eval_usage === true;
+            const openRedirectExamples = Array.isArray(vulns.open_redirect_examples) ? vulns.open_redirect_examples : [];
+            let openRedirectExtra = null;
+            if (openRedirectExamples.length) {
+              const details = el('details', { class: 'mini-toggle' });
+              const summary = el('summary', { text: 'Examples' });
+              details.appendChild(summary);
+              const list = el('div', { class: 'headers-list' });
+              for (const ex of openRedirectExamples.slice(0, 10)) {
+                const u = String(ex || '');
+                if (!u) continue;
+                list.appendChild(el('div', { class: 'header-row' },
+                  el('div', { class: 'header-name', text: 'url' }),
+                  el('div', { class: 'header-value', text: u })
+                ));
               }
+              details.appendChild(list);
+              openRedirectExtra = details;
             }
 
-            const hasForm = content && content.has_form === true;
-            const hasPassword = content && content.has_password_field === true;
-            const hasMeta = content && content.has_meta_refresh === true;
-            const prim = content && Array.isArray(content.js_obfuscation_primitives) ? content.js_obfuscation_primitives : [];
-            const b64 = content ? Number(content.base64_blob_max_len) : NaN;
-            const contentFlagged = (hasForm && hasPassword) || hasMeta || (prim.length >= 2) || (Number.isFinite(b64) && b64 >= 5000);
-            const contentCheck = content ? badgeValue(contentFlagged ? 'warn' : 'ok', contentFlagged ? 'Review' : 'OK') : '';
+            const tracking = (sec.tracking_features && typeof sec.tracking_features === 'object') ? sec.tracking_features : {};
+            const trackingScripts = tracking.tracking_scripts === true;
+            const fingerprinting = tracking.fingerprinting === true;
 
-            const highlights = [];
-            if (blocked) highlights.push('Fetch blocked by safety policy');
-            if (contentFlagged) {
-              if (hasPassword) highlights.push('Password field detected');
-              if (hasMeta) highlights.push('Meta refresh redirect');
-              if (prim.length >= 2) highlights.push('Possible obfuscated JavaScript');
-              if (Number.isFinite(b64) && b64 >= 5000) highlights.push('Large base64 blob');
+            const cards = el('div', { class: 'analysis-grid' },
+              analysisCard('Connection Security', [
+                checkLine('Protocol', proto, (String(proto || '').toLowerCase() === 'https') ? 'ok' : 'warn'),
+                checkLine('Mixed Content', mixedDetected ? 'Detected' : 'Not detected', mixedDetected ? 'bad' : 'ok'),
+              ], { tone: mixedDetected ? 'bad' : 'ok' }),
+              analysisCard('Security Headers', [
+                checkLine('Content Security Policy', cspPresent ? 'Present' : 'Missing', cspPresent ? 'ok' : 'bad'),
+                checkLine('X Frame Options', xfoPresent ? 'Present' : 'Missing', xfoPresent ? 'ok' : 'warn'),
+                checkLine('Xss Protection', xssPresent ? 'Present' : 'Missing', xssPresent ? 'ok' : 'warn'),
+              ], { tone: cspPresent ? 'ok' : 'warn' }),
+              analysisCard('Forms and Input', [
+                checkLine('Login Forms', String(loginForms), loginForms > 0 ? 'warn' : 'ok'),
+                checkLine('Password Fields', String(passwordFields), passwordFields > 0 ? 'warn' : 'ok'),
+                checkLine('Csrf Protection', csrfOk ? 'Yes' : 'No', (loginForms > 0 && !csrfOk) ? 'warn' : (csrfOk ? 'ok' : 'info')),
+              ], { tone: (loginForms > 0 && !csrfOk) ? 'warn' : 'info' }),
+              analysisCard('Suspicious Scripts', [
+                checkLine('Suspicious Scripts', String(suspiciousScripts), suspiciousScripts > 0 ? 'warn' : 'ok'),
+                checkLine('External Scripts', String(externalScripts), externalScripts > 0 ? 'info' : 'ok'),
+                checkLine('Suspicious Api Calls', apiSuspicious ? 'true' : 'false', apiSuspicious ? 'warn' : 'ok'),
+              ], { tone: (suspiciousScripts > 0 || apiSuspicious) ? 'warn' : 'ok' }),
+              analysisCard('Cookies', [
+                checkLine('Insecure Cookies', String(insecureCookies), insecureCookies > 0 ? 'bad' : 'ok'),
+              ], { tone: insecureCookies > 0 ? 'warn' : 'ok', extra: cookieExtra }),
+              analysisCard('Detectable Vulnerabilities', [
+                checkLine('Open Redirects', openRedirects ? 'Possible' : 'None detected', openRedirects ? 'warn' : 'ok'),
+                checkLine('Inner Html Usage', innerHtml ? 'Detected' : 'None detected', innerHtml ? 'warn' : 'ok'),
+                checkLine('Eval Usage', evalUsage ? 'Detected' : 'None detected', evalUsage ? 'warn' : 'ok'),
+              ], { tone: (openRedirects || innerHtml || evalUsage) ? 'warn' : 'ok', extra: openRedirectExtra }),
+              analysisCard('Tracking Features', [
+                checkLine('Tracking Scripts', trackingScripts ? 'Detected' : 'None detected', trackingScripts ? 'warn' : 'ok'),
+                checkLine('Fingerprinting', fingerprinting ? 'Detected' : 'None detected', fingerprinting ? 'warn' : 'ok'),
+              ], { tone: (trackingScripts || fingerprinting) ? 'warn' : 'ok' }),
+            );
+
+            const urlscanQ = urlscanQuery(finalUrl);
+            const urlscanHref = urlscanQ ? ('https://urlscan.io/search/#' + encodeURIComponent(urlscanQ)) : 'https://urlscan.io/';
+            const vtId = vtUrlId(finalUrl);
+            const vtHost = hostnameFromUrl(finalUrl);
+            const vtHref = vtId
+              ? ('https://www.virustotal.com/gui/url/' + vtId)
+              : (vtHost ? ('https://www.virustotal.com/gui/domain/' + encodeURIComponent(vtHost)) : 'https://www.virustotal.com/');
+            const actions = el('div', { class: 'analysis-actions' },
+              el('a', { class: 'btn primary', href: urlscanHref, target: '_blank', rel: 'noreferrer', text: 'Check on URLScan.io' }),
+              el('a', { class: 'btn success', href: vtHref, target: '_blank', rel: 'noreferrer', text: 'Check on VirusTotal' }),
+            );
+
+            section('Security Analysis', el('div', null, cards, actions));
+          }
+
+          // --- Page Information ---
+          const headerPairs = Array.isArray(dl && dl.response_headers) ? dl.response_headers : [];
+          const screenshotUrl = pageInfo && pageInfo.screenshot_url ? String(pageInfo.screenshot_url) : '';
+          const title = pageInfo && pageInfo.title ? String(pageInfo.title) : '';
+
+          if (headerPairs.length || screenshotUrl || title) {
+            const headerList = el('div', { class: 'headers-list' });
+            for (const h of headerPairs.slice(0, 60)) {
+              if (!h || typeof h !== 'object') continue;
+              const name = h.name ? String(h.name) : '';
+              const value = h.value != null ? String(h.value) : '';
+              if (!name) continue;
+              headerList.appendChild(el('div', { class: 'header-row' },
+                el('div', { class: 'header-name', text: name + ':' }),
+                el('div', { class: 'header-value', text: value })
+              ));
             }
-            if (urlhausVerdict === 'malicious') highlights.push('Listed on URLhaus');
-            if (rep && rep.matched_blocklist) highlights.push('Matched blocklist');
-            if (rep && rep.matched_allowlist) highlights.push('Matched allowlist');
 
-            block('Checks', [
-              ['URL patterns', urlCheck],
-              ['External scan (urlscan.io)', urlscanCheck],
-              ['Known-bad (URLhaus)', urlhausCheck],
-              ['Page content', contentCheck],
-              ['Highlights', highlights.length ? highlights.slice(0, 4).join(' • ') : (status === 'completed' ? 'No notable indicators.' : '')],
-            ], { tone: 'info', spanAll: true });
+            const headersToggle = el('details', { class: 'mini-toggle', open: true });
+            const headersSummary = el('summary', { text: 'Hide Details' });
+            headersToggle.addEventListener('toggle', () => {
+              headersSummary.textContent = headersToggle.open ? 'Hide Details' : 'Show Details';
+            });
+            headersToggle.appendChild(headersSummary);
+            headersToggle.appendChild(headerList);
+
+            const left = el('div', null,
+              title ? el('div', { class: 'muted small', text: 'Title: ' + title }) : null,
+              headersToggle
+            );
+
+            const right = el('div', { class: 'screenshot' },
+              el('div', { class: 'muted small', text: 'Page Screenshot (Desktop View)' }),
+              screenshotUrl
+                ? (() => {
+                    const img = el('img', { src: screenshotUrl, alt: 'Page screenshot' });
+                    img.addEventListener('click', () => openImageModal(screenshotUrl));
+                    return img;
+                  })()
+                : el('div', { class: 'placeholder', text: 'Screenshot not available' })
+            );
+
+            section('Page Information', el('div', { class: 'split' }, left, right));
+          }
+
+          // --- Network Information ---
+          const dns = Array.isArray(netInfo && netInfo.dns_addresses) ? netInfo.dns_addresses : [];
+          const whois = (netInfo && typeof netInfo.whois === 'object' && netInfo.whois) ? netInfo.whois : null;
+          if (dns.length || whois) {
+            const dnsGrid = el('div', { class: 'dns-grid' }, ...dns.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) })));
+
+            const whoisRows = [];
+            if (whois) {
+              if (whois.registrar) whoisRows.push(['Registrar', String(whois.registrar)]);
+              if (whois.creation_date) whoisRows.push(['Creation Date', String(whois.creation_date)]);
+              if (whois.expiration_date) whoisRows.push(['Expiration Date', String(whois.expiration_date)]);
+              if (whois.error) whoisRows.push(['WHOIS Error', String(whois.error)]);
+            }
+
+            const whoisDl = el('dl', { class: 'kv' });
+            for (const [k, v] of whoisRows) {
+              const row = el('div', { class: 'kv-row' });
+              row.appendChild(el('dt', { text: k }));
+              row.appendChild(el('dd', { text: v }));
+              whoisDl.appendChild(row);
+            }
+
+            const body = el('div', null,
+              dns.length ? el('div', null, el('div', { class: 'muted small', text: 'DNS Addresses' }), dnsGrid) : null,
+              whoisRows.length ? el('div', { style: 'margin-top:0.85rem' }, el('div', { class: 'muted small', text: 'WHOIS Information' }), whoisDl) : null
+            );
+            section('Network Information', body);
+          }
+
+          // --- Resources ---
+          const links = Array.isArray(resInfo && resInfo.links) ? resInfo.links : [];
+          const images = Array.isArray(resInfo && resInfo.images) ? resInfo.images : [];
+          const scripts = Array.isArray(resInfo && resInfo.scripts) ? resInfo.scripts : [];
+          const styles = Array.isArray(resInfo && resInfo.styles) ? resInfo.styles : [];
+
+          const resourceTabs = [
+            { key: 'links', label: 'Links', items: links },
+            { key: 'images', label: 'Images', items: images },
+            { key: 'scripts', label: 'Scripts', items: scripts },
+            { key: 'styles', label: 'CSS Styles', items: styles },
+          ];
+
+          if (hasWeb) {
+            const tabs = el('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Resources' });
+            for (const t of resourceTabs) {
+              const btn = el('button', {
+                type: 'button',
+                class: 'tab',
+                role: 'tab',
+                'aria-selected': (resourcesTab === t.key) ? 'true' : 'false',
+                text: t.label + ' ' + String(t.items.length),
+              });
+              btn.addEventListener('click', () => {
+                resourcesTab = t.key;
+                renderSummary(lastSummary || lastFull || {});
+              });
+              tabs.appendChild(btn);
+            }
+
+            const active = resourceTabs.find(x => x.key === resourcesTab) || resourceTabs[0];
+            const rows = Array.isArray(active.items) ? active.items : [];
+
+            const tbody = el('tbody', null);
+            for (const item of rows.slice(0, 250)) {
+              if (!item || typeof item !== 'object') continue;
+              const url = item.url ? String(item.url) : '';
+              const text = item.text ? String(item.text) : '';
+              const kind = item.type ? String(item.type) : '';
+              if (!url) continue;
+              tbody.appendChild(el('tr', null,
+                el('td', { class: 'url-cell' }, linkValue(url)),
+                el('td', { text: (resourcesTab === 'links') ? text : '' }),
+                el('td', null, typePill(kind))
+              ));
+            }
+            if (!tbody.children.length) {
+              tbody.appendChild(el('tr', null, el('td', { colspan: '3', class: 'muted', text: 'No resources detected.' })));
+            }
+
+            const table = el('table', null,
+              el('thead', null,
+                el('tr', null,
+                  el('th', { text: 'URL' }),
+                  el('th', { text: 'TEXT' }),
+                  el('th', { text: 'TYPE' })
+                )
+              ),
+              tbody
+            );
+
+            section('Resources', el('div', null, tabs, el('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Resources table' }, table)));
           }
 
           const technical = {
@@ -839,12 +1262,9 @@
             engines: Array.isArray(s.engines) ? s.engines : undefined,
             sha256: s.sha256 || undefined,
             correlation_id: data.correlation_id || s.correlation_id || undefined,
-            decision: (decision && Object.keys(decision).length) ? decision : undefined,
+            decision: (s.decision && typeof s.decision === 'object' && Object.keys(s.decision).length) ? s.decision : undefined,
             download: dl || undefined,
-            reputation: rep || undefined,
-            urlscan: urlscan || undefined,
-            urlhaus: urlhaus || undefined,
-            content: content || undefined,
+            web: web || undefined,
           };
 
           const adv = el('details', { class: 'disclosure' },
@@ -957,7 +1377,7 @@
 
         function statusKind(status) {
           if (status === 'completed') return 'ok';
-          if (status === 'error') return 'bad';
+          if (status === 'error') return 'warn';
           return 'info';
         }
 
@@ -966,7 +1386,8 @@
           const v = String(verdict).toLowerCase();
           if (v === 'benign' || v === 'clean') return 'ok';
           if (v === 'suspicious') return 'warn';
-          if (v === 'malicious' || v === 'error') return 'bad';
+          if (v === 'malicious') return 'bad';
+          if (v === 'error') return 'warn';
           return 'info';
         }
 
