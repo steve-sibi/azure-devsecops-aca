@@ -49,7 +49,7 @@ curl -i -sS -X POST http://localhost:8000/scan \
   -d '{"url":"https://127.0.0.1","type":"url"}'
 ```
 
-> Note: default `SCAN_ENGINE=reputation,content`. If you only want URL reputation heuristics (no body inspection), set `SCAN_ENGINE=reputation` in `.env`.
+> Note: URL scanning runs built-in web analysis only. The dashboard provides external links to URLScan.io and VirusTotal for optional follow-up checks.
 
 ## 1) Architecture
 
@@ -426,10 +426,7 @@ docker compose up --build
 
 Default API key: `local-dev-key` (change via `.env`).
 
-> Note: default `SCAN_ENGINE=reputation,content`. To disable body heuristics, set `SCAN_ENGINE=reputation` in `.env`.
-> Optional external checks: set `SCAN_ENGINE=reputation,urlhaus,urlscan,content` to include URLhaus (known-bad, no API key) and urlscan.io (requires `URLSCAN_API_KEY`; free tier is typically public). On Azure, set Terraform vars `scan_engine` and `urlscan_api_key`.
-> If you want to block downloads for known-bad domains, set `REPUTATION_BLOCK_ON_MALICIOUS=true`.
-> Demo marker: set `ENABLE_DEMO_MARKERS=true` to treat URLs containing the substring `test-malicious` as malicious (off by default).
+> Note: URL scanning runs built-in web analysis only. The dashboard provides external links to URLScan.io and VirusTotal for optional follow-up checks.
 
 #### Docker “\<none\>” images (dangling)
 
