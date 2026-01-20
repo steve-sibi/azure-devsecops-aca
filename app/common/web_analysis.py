@@ -321,6 +321,7 @@ def _parse_set_cookie(header_value: str) -> Optional[dict]:
 @dataclass
 class ParsedPage:
     title: str
+    description: str
     links: list[dict]
     images: list[dict]
     scripts: list[dict]
@@ -370,6 +371,7 @@ def analyze_html(
     except Exception:
         return ParsedPage(
             title="",
+            description="",
             links=[],
             images=[],
             scripts=[],
@@ -399,6 +401,9 @@ def analyze_html(
     title_tag = soup.find("title")
     if title_tag:
         title = _truncate(title_tag.get_text(" ", strip=True), max_len=140)
+
+    desc_by_key: dict[str, str] = {}
+    description = ""
 
     links: list[dict] = []
     images: list[dict] = []
@@ -636,9 +641,14 @@ def analyze_html(
                 csrf_protection = True
 
     for tag in soup.find_all("meta"):
-        n = str(tag.get("name") or "").lower()
+        n = str(tag.get("name") or tag.get("property") or "").lower()
+        if n in ("description", "og:description", "twitter:description"):
+            content = str(tag.get("content") or "").strip()
+            if content and n not in desc_by_key:
+                desc_by_key[n] = _truncate(re.sub(r"\s+", " ", content), max_len=300)
         if ("csrf" in n or "xsrf" in n) and tag.get("content"):
             csrf_protection = True
+    description = desc_by_key.get("description") or desc_by_key.get("og:description") or desc_by_key.get("twitter:description") or ""
 
     for tag in soup.find_all("form"):
         action = str(tag.get("action") or "").strip()
@@ -652,6 +662,7 @@ def analyze_html(
 
     return ParsedPage(
         title=title,
+        description=description,
         links=links,
         images=images,
         scripts=scripts,

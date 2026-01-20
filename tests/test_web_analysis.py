@@ -63,6 +63,14 @@ def test_analyze_html_suspicious_api_calls_for_external_websocket_url():
     assert parsed.suspicious_api_calls is True
 
 
+def test_analyze_html_extracts_meta_description():
+    parsed = analyze_html(
+        "<html><head><meta name='description' content='Example site description'></head></html>",
+        base_url="https://example.com/",
+    )
+    assert parsed.description == "Example site description"
+
+
 def test_classify_internal_external_treats_subdomain_as_internal():
     assert (
         classify_internal_external(

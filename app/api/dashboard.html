@@ -330,7 +330,7 @@
         transform: none;
       }
 
-      /* --- Web analysis UI (Security Analysis / Page / Network / Resources) --- */
+      /* --- Web analysis UI (Security Analysis / Page / Network) --- */
       .section {
         grid-column: 1 / -1;
         border: 1px solid var(--border);
@@ -380,12 +380,24 @@
       }
       .checklist { display: flex; flex-direction: column; gap: 0.55rem; }
       .checkline {
+        border-radius: 12px;
+      }
+      .checkline summary {
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 0.6rem;
         min-width: 0;
         padding: 0.1rem 0;
+        cursor: pointer;
+        user-select: none;
+        list-style: none;
+      }
+      .checkline summary::-webkit-details-marker { display: none; }
+      .checkline summary:focus-visible {
+        outline: none;
+        box-shadow: 0 0 0 4px var(--ring);
+        border-radius: 10px;
       }
       .checkleft { display: inline-flex; align-items: center; gap: 0.55rem; min-width: 0; }
       .checkdot {
@@ -402,6 +414,25 @@
       .checkline.warn .checkdot { background: rgba(234,179,8,1); box-shadow: 0 0 0 4px rgba(234,179,8,0.14); }
       .checklabel { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .checkvalue { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); flex: 0 0 auto; }
+      .checkhint {
+        margin-left: 0.35rem;
+        font-size: 0.72rem;
+        font-weight: 900;
+        color: var(--muted);
+        border: 1px solid rgba(148,163,184,0.28);
+        background: rgba(148,163,184,0.08);
+        padding: 0.08rem 0.35rem;
+        border-radius: 999px;
+        line-height: 1.2;
+        flex: 0 0 auto;
+      }
+      .checkhelp {
+        margin: 0.35rem 0 0.1rem;
+        padding-left: 1.65rem;
+        color: var(--muted);
+        font-size: 0.82rem;
+        line-height: 1.35;
+      }
       .analysis-actions { display: flex; justify-content: center; gap: 0.7rem; flex-wrap: wrap; margin-top: 1rem; }
       a.btn {
         display: inline-flex;
@@ -507,17 +538,6 @@
         font-weight: 700;
         color: var(--success);
       }
-      .pill {
-        display: inline-flex;
-        align-items: center;
-        padding: 0.2rem 0.55rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: 800;
-        border: 1px solid rgba(148,163,184,0.22);
-      }
-      .pill.internal { background: var(--success-soft); border-color: rgba(22,163,74,0.5); color: var(--success); }
-      .pill.external { background: rgba(234,179,8,0.14); border-color: rgba(234,179,8,0.6); color: rgba(234,179,8,1); }
       .modal {
         position: fixed;
         inset: 0;
@@ -646,15 +666,14 @@
         const panelSummaryEl = document.getElementById('panelSummary');
         const panelRawEl = document.getElementById('panelRaw');
 
-        let history = [];
-        let currentJobId = null;
-        let isPolling = false;
-        let activeTab = 'summary'; // 'summary' | 'raw'
-        let resourcesTab = 'links'; // 'links' | 'images' | 'scripts' | 'styles'
+	        let history = [];
+	        let currentJobId = null;
+	        let isPolling = false;
+	        let activeTab = 'summary'; // 'summary' | 'raw'
 
-        let lastSummary = null; // most recent response for summary view
-        let lastFull = null; // most recent response for full view (raw JSON)
-        let lastSummaryJobId = null;
+	        let lastSummary = null; // most recent response for summary view
+	        let lastFull = null; // most recent response for full view (raw JSON)
+	        let lastSummaryJobId = null;
         let lastFullJobId = null;
 
         const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
@@ -823,10 +842,10 @@
             return node;
           }
 
-          function block(title, rows, opts) {
-            const kvClass = (opts && opts.kvClass) ? String(opts.kvClass) : '';
-            const dl = el('dl', { class: 'kv' + (kvClass ? (' ' + kvClass) : '') });
-            for (const [k, v] of rows) {
+	          function block(title, rows, opts) {
+	            const kvClass = (opts && opts.kvClass) ? String(opts.kvClass) : '';
+	            const dl = el('dl', { class: 'kv' + (kvClass ? (' ' + kvClass) : '') });
+	            for (const [k, v] of rows) {
               if (v == null || v === '') continue;
               const row = el('div', { class: 'kv-row' });
               row.appendChild(el('dt', { text: k }));
@@ -844,19 +863,46 @@
             const cls = 'summary-block'
               + (tone ? (' tone-' + tone) : '')
               + (spanAll ? ' span-all' : '');
-            blocks.push(el('div', { class: cls }, header, dl));
-          }
+	            blocks.push(el('div', { class: cls }, header, dl));
+	          }
 
-          function checkLine(label, value, kind) {
-            const k = kind || 'info';
-            return el('div', { class: 'checkline ' + k },
-              el('span', { class: 'checkleft' },
-                el('span', { class: 'checkdot' }),
-                el('span', { class: 'checklabel', text: String(label || '') })
-              ),
-              el('span', { class: 'checkvalue', text: String(value || '') })
-            );
-          }
+	          const SECURITY_FIELD_HELP = {
+	            'Protocol': 'The connection scheme for the final URL. HTTPS encrypts data in transit.',
+	            'Mixed Content': 'An HTTPS page that loads any HTTP (non-encrypted) resources. This can weaken security.',
+	            'Content Security Policy': 'Rules that tell the browser which scripts/resources are allowed. Helps block injected scripts.',
+	            'X Frame Options': 'Controls whether the page can be shown inside an iframe. Helps prevent clickjacking.',
+	            'Xss Protection': 'Older XSS filter header. Modern browsers may ignore it, but it can still help in some cases.',
+	            'Login Forms': 'Number of forms that look like logins (usually forms with password fields).',
+	            'Password Fields': 'Number of password inputs found in the page HTML.',
+	            'Csrf Protection': "Looks for CSRF tokens/fields. Without them, a malicious site may trigger actions while you're logged in.",
+	            'Suspicious Scripts': 'Scripts that match suspicious patterns (obfuscation, risky APIs). Higher counts can be a red flag.',
+	            'External Scripts': "Scripts loaded from outside the site's domain. Third-party scripts increase risk.",
+	            'Suspicious Api Calls': 'JavaScript making network calls to external or unusual endpoints (fetch/XHR/WebSocket).',
+	            'Insecure Cookies': 'Cookies missing Secure (and similar risky settings). This is especially risky for session/auth cookies.',
+	            'Open Redirects': 'Links/parameters that may redirect to another site. Often abused in phishing.',
+	            'Inner Html Usage': 'Use of `innerHTML` to insert HTML. Unsafe with untrusted data and can lead to XSS.',
+	            'Eval Usage': 'Use of `eval()` to run dynamic code. Risky and often used by obfuscated scripts.',
+	            'Tracking Scripts': 'Known tracking/analytics resources detected. Can impact privacy.',
+	            'Fingerprinting': 'Scripts that try to uniquely identify a browser/device (fingerprinting).',
+	          };
+
+	          function checkLine(label, value, kind) {
+	            const k = kind || 'info';
+	            const labelText = String(label || '');
+	            const helpText = SECURITY_FIELD_HELP[labelText] || '';
+	            const details = el('details', { class: 'checkline ' + k });
+	            const summary = el('summary', null,
+	              el('span', { class: 'checkleft' },
+	                el('span', { class: 'checkdot' }),
+	                el('span', { class: 'checklabel', text: labelText }),
+	                el('span', { class: 'checkhint', text: '?' })
+	              ),
+	              el('span', { class: 'checkvalue', text: String(value || '') })
+	            );
+	            details.appendChild(summary);
+	            if (helpText) details.appendChild(el('div', { class: 'checkhelp', text: helpText }));
+	            return details;
+	          }
 
           function analysisCard(title, lines, opts) {
             const nodes = Array.isArray(lines) ? lines.filter(Boolean) : [];
@@ -876,15 +922,10 @@
             blocks.push(node);
           }
 
-          function typePill(kind) {
-            const k = String(kind || '').toLowerCase() === 'external' ? 'external' : 'internal';
-            return el('span', { class: 'pill ' + k, text: k === 'external' ? 'External' : 'Internal' });
-          }
-
-          function openImageModal(src) {
-            const url = String(src || '');
-            if (!url) return;
-            const overlay = el('div', { class: 'modal', role: 'dialog', 'aria-label': 'Screenshot' });
+	          function openImageModal(src) {
+	            const url = String(src || '');
+	            if (!url) return;
+	            const overlay = el('div', { class: 'modal', role: 'dialog', 'aria-label': 'Screenshot' });
             const img = el('img', { src: url, alt: 'Page screenshot' });
             overlay.appendChild(img);
             overlay.addEventListener('click', () => overlay.remove());
@@ -942,14 +983,13 @@
             return 'page.url:"' + escaped + '"';
           }
 
-          const status = String(data.status || 'unknown');
-          const dl = (pick(s, 'download') && typeof pick(s, 'download') === 'object') ? pick(s, 'download') : {};
-          const web = (pick(s, 'web') && typeof pick(s, 'web') === 'object') ? pick(s, 'web') : {};
-          const sec = (web && typeof web.security_analysis === 'object') ? web.security_analysis : {};
-          const pageInfo = (web && typeof web.page_information === 'object') ? web.page_information : {};
-          const netInfo = (web && typeof web.network_information === 'object') ? web.network_information : {};
-          const resInfo = (web && typeof web.resources === 'object') ? web.resources : {};
-          const hasWeb = Boolean(web && typeof web === 'object' && Object.keys(web).length);
+	          const status = String(data.status || 'unknown');
+	          const isTerminal = status === 'completed' || status === 'error';
+	          const dl = (pick(s, 'download') && typeof pick(s, 'download') === 'object') ? pick(s, 'download') : {};
+	          const web = (pick(s, 'web') && typeof pick(s, 'web') === 'object') ? pick(s, 'web') : {};
+	          const sec = (web && typeof web.security_analysis === 'object') ? web.security_analysis : {};
+	          const pageInfo = (web && typeof web.page_information === 'object') ? web.page_information : {};
+	          const netInfo = (web && typeof web.network_information === 'object') ? web.network_information : {};
 
           const baseUrl = (dl && dl.final_url) ? String(dl.final_url) : (s.url ? String(s.url) : '');
           const requestedUrl = (dl && dl.requested_url) ? String(dl.requested_url) : (s.url ? String(s.url) : '');
@@ -976,11 +1016,11 @@
           ].filter(Boolean), { tone: 'info' });
 
           // --- Security Analysis (cards) ---
-          if (sec && Object.keys(sec).length) {
-            const conn = (sec.connection_security && typeof sec.connection_security === 'object') ? sec.connection_security : {};
-            const mixed = (conn.mixed_content && typeof conn.mixed_content === 'object') ? conn.mixed_content : {};
-            const mixedDetected = mixed.detected === true;
-            const proto = conn.protocol ? String(conn.protocol) : 'HTTPS';
+	          if (isTerminal && sec && Object.keys(sec).length) {
+	            const conn = (sec.connection_security && typeof sec.connection_security === 'object') ? sec.connection_security : {};
+	            const mixed = (conn.mixed_content && typeof conn.mixed_content === 'object') ? conn.mixed_content : {};
+	            const mixedDetected = mixed.detected === true;
+	            const proto = conn.protocol ? String(conn.protocol) : 'HTTPS';
 
             const headers = (sec.security_headers && typeof sec.security_headers === 'object') ? sec.security_headers : {};
             const cspPresent = headers.content_security_policy && headers.content_security_policy.present === true;
@@ -1103,12 +1143,13 @@
           const headerPairs = Array.isArray(dl && dl.response_headers) ? dl.response_headers : [];
           const screenshotUrl = pageInfo && pageInfo.screenshot_url ? String(pageInfo.screenshot_url) : '';
           const title = pageInfo && pageInfo.title ? String(pageInfo.title) : '';
+          const description = pageInfo && pageInfo.description ? String(pageInfo.description) : '';
 
-          if (headerPairs.length || screenshotUrl || title) {
-            const headerList = el('div', { class: 'headers-list' });
-            for (const h of headerPairs.slice(0, 60)) {
-              if (!h || typeof h !== 'object') continue;
-              const name = h.name ? String(h.name) : '';
+	          if (isTerminal && (headerPairs.length || screenshotUrl || title || description)) {
+	            const headerList = el('div', { class: 'headers-list' });
+	            for (const h of headerPairs.slice(0, 60)) {
+	              if (!h || typeof h !== 'object') continue;
+	              const name = h.name ? String(h.name) : '';
               const value = h.value != null ? String(h.value) : '';
               if (!name) continue;
               headerList.appendChild(el('div', { class: 'header-row' },
@@ -1127,6 +1168,7 @@
 
             const left = el('div', null,
               title ? el('div', { class: 'muted small', text: 'Title: ' + title }) : null,
+              description ? el('div', { class: 'muted small', text: 'Description: ' + description }) : null,
               headersToggle
             );
 
@@ -1147,11 +1189,11 @@
           // --- Network Information ---
           const dns = Array.isArray(netInfo && netInfo.dns_addresses) ? netInfo.dns_addresses : [];
           const whois = (netInfo && typeof netInfo.whois === 'object' && netInfo.whois) ? netInfo.whois : null;
-          if (dns.length || whois) {
-            const dnsGrid = el('div', { class: 'dns-grid' }, ...dns.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) })));
+	          if (isTerminal && (dns.length || whois)) {
+	            const dnsGrid = el('div', { class: 'dns-grid' }, ...dns.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) })));
 
-            const whoisRows = [];
-            if (whois) {
+	            const whoisRows = [];
+	            if (whois) {
               if (whois.registrar) whoisRows.push(['Registrar', String(whois.registrar)]);
               if (whois.creation_date) whoisRows.push(['Creation Date', String(whois.creation_date)]);
               if (whois.expiration_date) whoisRows.push(['Expiration Date', String(whois.expiration_date)]);
@@ -1173,74 +1215,10 @@
             section('Network Information', body);
           }
 
-          // --- Resources ---
-          const links = Array.isArray(resInfo && resInfo.links) ? resInfo.links : [];
-          const images = Array.isArray(resInfo && resInfo.images) ? resInfo.images : [];
-          const scripts = Array.isArray(resInfo && resInfo.scripts) ? resInfo.scripts : [];
-          const styles = Array.isArray(resInfo && resInfo.styles) ? resInfo.styles : [];
-
-          const resourceTabs = [
-            { key: 'links', label: 'Links', items: links },
-            { key: 'images', label: 'Images', items: images },
-            { key: 'scripts', label: 'Scripts', items: scripts },
-            { key: 'styles', label: 'CSS Styles', items: styles },
-          ];
-
-          if (hasWeb) {
-            const tabs = el('div', { class: 'tabs', role: 'tablist', 'aria-label': 'Resources' });
-            for (const t of resourceTabs) {
-              const btn = el('button', {
-                type: 'button',
-                class: 'tab',
-                role: 'tab',
-                'aria-selected': (resourcesTab === t.key) ? 'true' : 'false',
-                text: t.label + ' ' + String(t.items.length),
-              });
-              btn.addEventListener('click', () => {
-                resourcesTab = t.key;
-                renderSummary(lastSummary || lastFull || {});
-              });
-              tabs.appendChild(btn);
-            }
-
-            const active = resourceTabs.find(x => x.key === resourcesTab) || resourceTabs[0];
-            const rows = Array.isArray(active.items) ? active.items : [];
-
-            const tbody = el('tbody', null);
-            for (const item of rows.slice(0, 250)) {
-              if (!item || typeof item !== 'object') continue;
-              const url = item.url ? String(item.url) : '';
-              const text = item.text ? String(item.text) : '';
-              const kind = item.type ? String(item.type) : '';
-              if (!url) continue;
-              tbody.appendChild(el('tr', null,
-                el('td', { class: 'url-cell' }, linkValue(url)),
-                el('td', { text: (resourcesTab === 'links') ? text : '' }),
-                el('td', null, typePill(kind))
-              ));
-            }
-            if (!tbody.children.length) {
-              tbody.appendChild(el('tr', null, el('td', { colspan: '3', class: 'muted', text: 'No resources detected.' })));
-            }
-
-            const table = el('table', null,
-              el('thead', null,
-                el('tr', null,
-                  el('th', { text: 'URL' }),
-                  el('th', { text: 'TEXT' }),
-                  el('th', { text: 'TYPE' })
-                )
-              ),
-              tbody
-            );
-
-            section('Resources', el('div', null, tabs, el('div', { class: 'table-wrap', role: 'region', 'aria-label': 'Resources table' }, table)));
-          }
-
-          if (blocks.length === 0) {
-            summaryOutEl.appendChild(el('div', { class: 'muted', text: 'No data yet.' }));
-            return;
-          }
+	          if (blocks.length === 0) {
+	            summaryOutEl.appendChild(el('div', { class: 'muted', text: 'No data yet.' }));
+	            return;
+	          }
           for (const b of blocks) summaryOutEl.appendChild(b);
         }
 

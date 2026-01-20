@@ -499,15 +499,9 @@ def _web_scan(
             whois_domain, timeout_seconds=WEB_WHOIS_TIMEOUT_SECONDS
         )
 
-    resources = {
-        "links": parsed.links[:WEB_MAX_RESOURCES] if parsed else [],
-        "images": parsed.images[:WEB_MAX_RESOURCES] if parsed else [],
-        "scripts": parsed.scripts[:WEB_MAX_RESOURCES] if parsed else [],
-        "styles": parsed.styles[:WEB_MAX_RESOURCES] if parsed else [],
-    }
-
     page = {
         "title": parsed.title if parsed else "",
+        "description": parsed.description if parsed else "",
         "screenshot_url": None,
     }
 
@@ -515,7 +509,6 @@ def _web_scan(
         "security_analysis": analysis,
         "page_information": page,
         "network_information": network,
-        "resources": resources,
     }
 
     signals: list[Signal] = []
