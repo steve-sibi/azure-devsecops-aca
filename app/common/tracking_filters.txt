@@ -1,0 +1,27 @@
+! Minimal tracking filter rules (project-maintained).
+! Format: Adblock Plus filter syntax (for adblockparser).
+!
+! Notes:
+! - These are intentionally small and conservative to avoid false positives.
+! - For broader coverage, set `WEB_TRACKING_FILTERS_PATH` to a larger list you manage.
+!
+||googletagmanager.com^
+||google-analytics.com^
+||doubleclick.net^
+||stats.g.doubleclick.net^
+||googlesyndication.com^
+||googleadservices.com^
+||adservice.google.com^
+||facebook.net^
+||connect.facebook.net^
+||pixel.facebook.com^
+||analytics.twitter.com^
+||cdn.segment.com^
+||static.hotjar.com^
+||script.hotjar.com^
+||mixpanel.com^
+||snap.licdn.com^
+||bat.bing.com^
+||cdn.amplitude.com^
+||cdn.heapanalytics.com^
+

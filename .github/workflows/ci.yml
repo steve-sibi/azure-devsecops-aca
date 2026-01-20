@@ -27,7 +27,7 @@ jobs:
       - name: Install ruff + pytest
         run: |
           python -m pip install --upgrade pip
-          python -m pip install ruff pytest
+          python -m pip install ruff pytest beautifulsoup4 adblockparser tldextract yara-python
 
       - name: Ruff (syntax/undefined names)
         run: ruff check . --select E9,F63,F7,F82

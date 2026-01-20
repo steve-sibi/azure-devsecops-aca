@@ -114,3 +114,4 @@ rule Large_Base64_Blob_INFO
   condition:
     $b64
 }
+
