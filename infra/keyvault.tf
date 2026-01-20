@@ -133,22 +133,6 @@ resource "azurerm_key_vault_secret" "results_conn" {
   depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
 }
 
-# Optional external scan (urlscan.io)
-resource "azurerm_key_vault_secret" "urlscan_api_key" {
-  count           = nonsensitive(var.urlscan_api_key) != "" ? 1 : 0
-  name            = "UrlscanApiKey"
-  value           = var.urlscan_api_key
-  key_vault_id    = data.azurerm_key_vault.kv.id
-  content_type    = "urlscan-api-key"
-  expiration_date = timeadd(timestamp(), "8760h")
-
-  lifecycle {
-    ignore_changes = [expiration_date]
-  }
-
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
-}
-
 # Give the UAMI read on KV so apps can resolve secrets at creation time
 resource "azurerm_key_vault_access_policy" "kv_uami" {
   key_vault_id       = data.azurerm_key_vault.kv.id

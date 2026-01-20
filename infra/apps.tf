@@ -238,19 +238,6 @@ resource "azurerm_container_app" "fetcher" {
         name  = "MAX_REDIRECTS"
         value = "5"
       }
-      env {
-        name  = "SCAN_ENGINE"
-        value = var.scan_engine
-      }
-      env {
-        name  = "CONTENT_MAX_TEXT_BYTES"
-        value = "200000"
-      }
-      env {
-        name  = "CONTENT_MAX_BASE64_MATCH"
-        value = "50000"
-      }
-
       volume_mounts {
         name = "artifacts"
         path = "/artifacts"
@@ -332,15 +319,6 @@ resource "azurerm_container_app" "worker" {
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
-  dynamic "secret" {
-    for_each = nonsensitive(var.urlscan_api_key) != "" ? [1] : []
-    content {
-      name                = "urlscan-api-key"
-      key_vault_secret_id = azurerm_key_vault_secret.urlscan_api_key[0].id
-      identity            = azurerm_user_assigned_identity.uami.id
-    }
-  }
-
   template {
     container {
       name   = "worker"
@@ -392,30 +370,6 @@ resource "azurerm_container_app" "worker" {
         name  = "MAX_REDIRECTS"
         value = "5"
       }
-      env {
-        name  = "SCAN_ENGINE"
-        value = var.scan_engine
-      }
-      env {
-        name  = "URLSCAN_VISIBILITY"
-        value = var.urlscan_visibility
-      }
-      dynamic "env" {
-        for_each = nonsensitive(var.urlscan_api_key) != "" ? [1] : []
-        content {
-          name        = "URLSCAN_API_KEY"
-          secret_name = "urlscan-api-key"
-        }
-      }
-      env {
-        name  = "CONTENT_MAX_TEXT_BYTES"
-        value = "200000"
-      }
-      env {
-        name  = "CONTENT_MAX_BASE64_MATCH"
-        value = "50000"
-      }
-
       volume_mounts {
         name = "artifacts"
         path = "/artifacts"
