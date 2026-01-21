@@ -1,0 +1,193 @@
+from __future__ import annotations
+
+import json
+import logging
+import signal as os_signal
+import time
+from dataclasses import dataclass
+from typing import Any, Callable, Optional, Tuple
+
+from azure.servicebus import ServiceBusClient
+from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
+
+
+@dataclass
+class ShutdownFlag:
+    shutdown: bool = False
+
+
+def install_signal_handlers(flag: ShutdownFlag) -> None:
+    def _signal_handler(*_):
+        flag.shutdown = True
+
+    os_signal.signal(os_signal.SIGTERM, _signal_handler)
+    os_signal.signal(os_signal.SIGINT, _signal_handler)
+
+
+def decode_servicebus_body(msg) -> dict:
+    body_bytes = b"".join(bytes(b) if isinstance(b, memoryview) else b for b in msg.body)
+    return json.loads(body_bytes.decode("utf-8"))
+
+
+def decode_redis_body(
+    raw: str,
+) -> Tuple[Optional[dict], Optional[dict], int, Optional[Exception]]:
+    task: Optional[dict] = None
+    envelope: Optional[dict] = None
+    delivery_count = 1
+    try:
+        decoded = json.loads(raw)
+        if isinstance(decoded, dict) and isinstance(decoded.get("payload"), dict):
+            envelope = decoded
+            task = decoded["payload"]
+            try:
+                delivery_count = int(decoded.get("delivery_count") or 1)
+            except Exception as e:
+                return task, envelope, 1, e
+            return task, envelope, delivery_count, None
+        if isinstance(decoded, dict):
+            task = decoded
+            envelope = {"schema": "unknown", "delivery_count": 1, "payload": decoded}
+            return task, envelope, 1, None
+        return None, None, 1, ValueError("invalid message payload (expected JSON object)")
+    except Exception as e:
+        return None, None, 1, e
+
+
+def run_consumer(
+    *,
+    component: str,
+    shutdown_flag: ShutdownFlag,
+    queue_backend: str,
+    queue_name: str,
+    batch_size: int,
+    max_wait: int,
+    prefetch: int,
+    max_retries: int,
+    process: Callable[[dict], Any],
+    on_exception: Optional[Callable[[Optional[dict], Exception, int, int], None]] = None,
+    servicebus_conn: Optional[str] = None,
+    redis_client: Any = None,
+    redis_queue_key: Optional[str] = None,
+    redis_dlq_key: Optional[str] = None,
+) -> None:
+    if queue_backend == "redis":
+        if not redis_client:
+            raise RuntimeError("Redis client not initialized")
+        if not redis_queue_key or not redis_dlq_key:
+            raise RuntimeError("Redis queue keys not configured")
+
+        while not shutdown_flag.shutdown:
+            item = redis_client.blpop(redis_queue_key, timeout=max_wait)
+            if not item:
+                continue
+
+            _queue, raw = item
+            started_at = time.time()
+            task: Optional[dict] = None
+            envelope: Optional[dict] = None
+            delivery_count = 1
+            try:
+                task, envelope, delivery_count, decode_error = decode_redis_body(raw)
+                if decode_error:
+                    raise decode_error
+                if not isinstance(task, dict):
+                    raise ValueError("invalid message payload (expected JSON object)")
+                process(task)
+            except Exception as e:
+                duration_ms = int((time.time() - started_at) * 1000)
+                if on_exception:
+                    on_exception(task, e, delivery_count, duration_ms)
+
+                retrying = delivery_count < max_retries
+                if retrying:
+                    next_envelope = envelope or {
+                        "delivery_count": delivery_count,
+                        "payload": task or {},
+                    }
+                    next_envelope["delivery_count"] = delivery_count + 1
+                    redis_client.rpush(redis_queue_key, json.dumps(next_envelope))
+                    logging.warning(
+                        "[%s] Requeued message (delivery_count=%s): %s",
+                        component,
+                        delivery_count,
+                        e,
+                    )
+                else:
+                    dlq_envelope = envelope or {
+                        "delivery_count": delivery_count,
+                        "payload": task or {},
+                    }
+                    dlq_envelope["last_error"] = str(e)
+                    redis_client.rpush(redis_dlq_key, json.dumps(dlq_envelope))
+                    logging.error(
+                        "[%s] DLQ'd message (delivery_count=%s): %s",
+                        component,
+                        delivery_count,
+                        e,
+                    )
+        return
+
+    if queue_backend == "servicebus":
+        if not servicebus_conn:
+            raise RuntimeError("SERVICEBUS_CONN env var is required when QUEUE_BACKEND=servicebus")
+
+        client = ServiceBusClient.from_connection_string(
+            servicebus_conn, logging_enable=True
+        )
+        with client:
+            receiver = client.get_queue_receiver(
+                queue_name=queue_name,
+                max_wait_time=max_wait,
+                prefetch_count=prefetch,
+            )
+            with receiver:
+                while not shutdown_flag.shutdown:
+                    try:
+                        messages = receiver.receive_messages(
+                            max_message_count=batch_size,
+                            max_wait_time=max_wait,
+                        )
+                        if not messages:
+                            continue
+
+                        for msg in messages:
+                            task = None
+                            started_at = time.time()
+                            try:
+                                task = decode_servicebus_body(msg)
+                                process(task)
+                                receiver.complete_message(msg)
+                            except Exception as e:
+                                duration_ms = int((time.time() - started_at) * 1000)
+                                if on_exception:
+                                    on_exception(task, e, msg.delivery_count, duration_ms)
+
+                                if msg.delivery_count >= max_retries:
+                                    receiver.dead_letter_message(
+                                        msg,
+                                        reason="max-retries-exceeded",
+                                        error_description=str(e),
+                                    )
+                                    logging.error(
+                                        "[%s] DLQ'd message (delivery_count=%s): %s",
+                                        component,
+                                        msg.delivery_count,
+                                        e,
+                                    )
+                                else:
+                                    receiver.abandon_message(msg)
+                                    logging.warning(
+                                        "[%s] Abandoned message (delivery_count=%s): %s",
+                                        component,
+                                        msg.delivery_count,
+                                        e,
+                                    )
+                    except OperationTimeoutError:
+                        continue
+                    except ServiceBusError as e:
+                        logging.error("[%s] ServiceBusError: %s", component, e)
+                        time.sleep(2)
+        return
+
+    raise RuntimeError(f"Unsupported QUEUE_BACKEND: {queue_backend}")
