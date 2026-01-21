@@ -19,9 +19,13 @@ from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus.exceptions import ServiceBusError
 from azure.data.tables.aio import TableServiceClient
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Security, UploadFile
-from fastapi.responses import HTMLResponse, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+from http import HTTPStatus
 
 from common.clamav_client import (
     ClamAVConnectionError,
@@ -608,6 +612,123 @@ app = FastAPI(title="Azure DevSecOps URL Scanner", lifespan=lifespan)
 
 
 @app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    request_id = str(uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-Id"] = request_id
+    return response
+
+
+def _problem_type(code: str | None) -> str:
+    if not code:
+        return "about:blank"
+    safe = "".join(ch if ch.isalnum() or ch in ("-", "_", ".") else "-" for ch in code)
+    return f"urn:aca:problem:{safe}"
+
+
+def _problem_title(status_code: int) -> str:
+    try:
+        return HTTPStatus(status_code).phrase
+    except Exception:
+        return "Error"
+
+
+def _problem_response(
+    *,
+    request: Request,
+    status_code: int,
+    title: str,
+    detail: str | None,
+    code: str | None = None,
+    extra: dict | None = None,
+    headers: dict | None = None,
+):
+    body: dict = {
+        "type": _problem_type(code),
+        "title": title,
+        "status": int(status_code),
+    }
+    if detail is not None:
+        body["detail"] = str(detail)
+
+    request_id = getattr(getattr(request, "state", None), "request_id", None)
+    if isinstance(request_id, str) and request_id.strip():
+        body["instance"] = f"urn:uuid:{request_id.strip()}"
+
+    if code:
+        body["code"] = str(code)
+    if isinstance(extra, dict) and extra:
+        body.update(extra)
+
+    return JSONResponse(
+        content=body,
+        status_code=int(status_code),
+        headers=headers,
+        media_type="application/problem+json",
+    )
+
+
+_STATUS_CODE_TO_CODE: dict[int, str] = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    413: "payload_too_large",
+    415: "unsupported_media_type",
+    422: "validation_error",
+    429: "rate_limited",
+    500: "internal_error",
+    502: "bad_gateway",
+    503: "service_unavailable",
+}
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    status = int(getattr(exc, "status_code", 500) or 500)
+    code = _STATUS_CODE_TO_CODE.get(status, f"http_{status}")
+    detail = getattr(exc, "detail", None)
+    if detail is None or detail == "":
+        detail = _problem_title(status)
+    return _problem_response(
+        request=request,
+        status_code=status,
+        title=_problem_title(status),
+        detail=str(detail),
+        code=code,
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_handler(request: Request, exc: RequestValidationError):
+    return _problem_response(
+        request=request,
+        status_code=422,
+        title=_problem_title(422),
+        detail="Request validation failed",
+        code=_STATUS_CODE_TO_CODE.get(422, "validation_error"),
+        extra={"errors": exc.errors()},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    request_id = getattr(getattr(request, "state", None), "request_id", None)
+    logger.exception("Unhandled exception (request_id=%s)", request_id)
+    return _problem_response(
+        request=request,
+        status_code=500,
+        title=_problem_title(500),
+        detail="Internal server error",
+        code=_STATUS_CODE_TO_CODE.get(500, "internal_error"),
+    )
+
+
+@app.middleware("http")
 async def otel_request_spans(request: Request, call_next):
     if not APPINSIGHTS_CONN or request.url.path == "/healthz":
         return await call_next(request)
@@ -646,7 +767,7 @@ async def otel_request_spans(request: Request, call_next):
                 if (
                     str(response.headers.get("content-type") or "")
                     .lower()
-                    .startswith("application/json")
+                    .startswith(("application/json", "application/problem+json"))
                 ):
                     body = getattr(response, "body", None)
                     if body:
@@ -787,12 +908,11 @@ async def scan_file(
                 timeout_seconds=scan_timeout_seconds,
             )
     except ClamAVConnectionError as e:
-        raise HTTPException(
-            status_code=503,
-            detail=f"ClamAV is unavailable ({CLAMAV_HOST}:{CLAMAV_PORT}): {e}",
-        )
+        logger.warning("ClamAV is unavailable: %s", e)
+        raise HTTPException(status_code=503, detail="ClamAV is unavailable")
     except ClamAVError as e:
-        raise HTTPException(status_code=502, detail=f"ClamAV scan failed: {e}")
+        logger.warning("ClamAV scan failed: %s", e)
+        raise HTTPException(status_code=502, detail="ClamAV scan failed")
 
     duration_ms = int((time.monotonic() - started) * 1000)
 

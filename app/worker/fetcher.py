@@ -10,6 +10,7 @@ from azure.data.tables import TableClient
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
 
 from common.config import ConsumerConfig, ResultPersister, init_redis_client, init_table_client
+from common.errors import classify_exception
 from common.message_consumer import ShutdownFlag, install_signal_handlers, run_consumer
 from common.scan_messages import validate_scan_artifact_v1, validate_scan_task_v1
 
@@ -217,13 +218,14 @@ def main() -> None:
     def _on_exception(
         task: Optional[dict], exc: Exception, delivery_count: int, duration_ms: int
     ) -> None:
+        info = classify_exception(exc)
         job_id = task.get("job_id") if isinstance(task, dict) else None
         if not job_id:
             return
         correlation_id = task.get("correlation_id") if isinstance(task, dict) else None
         submitted_at = task.get("submitted_at") if isinstance(task, dict) else None
 
-        retrying = delivery_count < MAX_RETRIES
+        retrying = info.retryable and delivery_count < MAX_RETRIES
         status = "retrying" if retrying else "error"
 
         if not result_persister:
@@ -232,9 +234,11 @@ def main() -> None:
             job_id=job_id,
             status=status,
             verdict="" if retrying else "error",
-            error=str(exc),
+            error=info.message,
             details={
-                "reason": str(exc),
+                "reason": info.message,
+                "error_code": info.code,
+                "retryable": bool(info.retryable),
                 "delivery_count": delivery_count,
                 "max_retries": MAX_RETRIES,
                 "stage": "fetcher",

@@ -10,6 +10,8 @@ from typing import Any, Callable, Optional, Tuple
 from azure.servicebus import ServiceBusClient
 from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 
+from common.errors import classify_exception
+
 
 @dataclass
 class ShutdownFlag:
@@ -99,7 +101,11 @@ def run_consumer(
                 if on_exception:
                     on_exception(task, e, delivery_count, duration_ms)
 
-                retrying = delivery_count < max_retries
+                info = classify_exception(e)
+                retrying = info.retryable and delivery_count < max_retries
+                job_id = task.get("job_id") if isinstance(task, dict) else None
+                correlation_id = task.get("correlation_id") if isinstance(task, dict) else None
+
                 if retrying:
                     next_envelope = envelope or {
                         "delivery_count": delivery_count,
@@ -107,25 +113,60 @@ def run_consumer(
                     }
                     next_envelope["delivery_count"] = delivery_count + 1
                     redis_client.rpush(redis_queue_key, json.dumps(next_envelope))
-                    logging.warning(
-                        "[%s] Requeued message (delivery_count=%s): %s",
-                        component,
-                        delivery_count,
-                        e,
-                    )
+                    if info.log_traceback:
+                        logging.exception(
+                            "[%s] Requeued message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
+                            component,
+                            job_id,
+                            correlation_id,
+                            delivery_count,
+                            info.code,
+                            info.message,
+                        )
+                    else:
+                        logging.warning(
+                            "[%s] Requeued message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
+                            component,
+                            job_id,
+                            correlation_id,
+                            delivery_count,
+                            info.code,
+                            info.message,
+                        )
                 else:
+                    dlq_reason = info.code
+                    if info.retryable:
+                        dlq_reason = "max-retries-exceeded"
                     dlq_envelope = envelope or {
                         "delivery_count": delivery_count,
                         "payload": task or {},
                     }
-                    dlq_envelope["last_error"] = str(e)
+                    dlq_envelope["last_error"] = info.message
+                    dlq_envelope["last_error_code"] = info.code
+                    dlq_envelope["dlq_reason"] = dlq_reason
                     redis_client.rpush(redis_dlq_key, json.dumps(dlq_envelope))
-                    logging.error(
-                        "[%s] DLQ'd message (delivery_count=%s): %s",
-                        component,
-                        delivery_count,
-                        e,
-                    )
+                    if info.log_traceback:
+                        logging.exception(
+                            "[%s] DLQ'd message (job_id=%s correlation_id=%s delivery_count=%s dlq_reason=%s code=%s): %s",
+                            component,
+                            job_id,
+                            correlation_id,
+                            delivery_count,
+                            dlq_reason,
+                            info.code,
+                            info.message,
+                        )
+                    else:
+                        logging.error(
+                            "[%s] DLQ'd message (job_id=%s correlation_id=%s delivery_count=%s dlq_reason=%s code=%s): %s",
+                            component,
+                            job_id,
+                            correlation_id,
+                            delivery_count,
+                            dlq_reason,
+                            info.code,
+                            info.message,
+                        )
         return
 
     if queue_backend == "servicebus":
@@ -163,26 +204,68 @@ def run_consumer(
                                 if on_exception:
                                     on_exception(task, e, msg.delivery_count, duration_ms)
 
-                                if msg.delivery_count >= max_retries:
+                                info = classify_exception(e)
+                                retrying = info.retryable and msg.delivery_count < max_retries
+                                job_id = task.get("job_id") if isinstance(task, dict) else None
+                                correlation_id = task.get("correlation_id") if isinstance(task, dict) else None
+
+                                if retrying:
+                                    receiver.abandon_message(msg)
+                                    if info.log_traceback:
+                                        logging.exception(
+                                            "[%s] Abandoned message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
+                                            component,
+                                            job_id,
+                                            correlation_id,
+                                            msg.delivery_count,
+                                            info.code,
+                                            info.message,
+                                        )
+                                    else:
+                                        logging.warning(
+                                            "[%s] Abandoned message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
+                                            component,
+                                            job_id,
+                                            correlation_id,
+                                            msg.delivery_count,
+                                            info.code,
+                                            info.message,
+                                        )
+                                else:
+                                    dlq_reason = info.code or "error"
+                                    dlq_description = info.message
+                                    if info.retryable and msg.delivery_count >= max_retries:
+                                        dlq_reason = "max-retries-exceeded"
+                                        if info.code and info.message:
+                                            dlq_description = f"{info.code}: {info.message}"
+
                                     receiver.dead_letter_message(
                                         msg,
-                                        reason="max-retries-exceeded",
-                                        error_description=str(e),
+                                        reason=dlq_reason,
+                                        error_description=dlq_description,
                                     )
-                                    logging.error(
-                                        "[%s] DLQ'd message (delivery_count=%s): %s",
-                                        component,
-                                        msg.delivery_count,
-                                        e,
-                                    )
-                                else:
-                                    receiver.abandon_message(msg)
-                                    logging.warning(
-                                        "[%s] Abandoned message (delivery_count=%s): %s",
-                                        component,
-                                        msg.delivery_count,
-                                        e,
-                                    )
+                                    if info.log_traceback:
+                                        logging.exception(
+                                            "[%s] DLQ'd message (job_id=%s correlation_id=%s delivery_count=%s dlq_reason=%s code=%s): %s",
+                                            component,
+                                            job_id,
+                                            correlation_id,
+                                            msg.delivery_count,
+                                            dlq_reason,
+                                            info.code,
+                                            info.message,
+                                        )
+                                    else:
+                                        logging.error(
+                                            "[%s] DLQ'd message (job_id=%s correlation_id=%s delivery_count=%s dlq_reason=%s code=%s): %s",
+                                            component,
+                                            job_id,
+                                            correlation_id,
+                                            msg.delivery_count,
+                                            dlq_reason,
+                                            info.code,
+                                            info.message,
+                                        )
                     except OperationTimeoutError:
                         continue
                     except ServiceBusError as e:

@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from azure.data.tables import TableClient
 
 from common.config import ConsumerConfig, ResultPersister, init_redis_client, init_table_client
+from common.errors import classify_exception
 from common.screenshot_store import (
     redis_screenshot_key,
     store_screenshot_blob_sync,
@@ -154,17 +155,19 @@ def process(task: dict):
     screenshot = _maybe_capture_and_store_screenshot(
         job_id=job_id, url=url, download=download
     )
-    try:
-        page_info = details["results"]["web"]["page_information"]
-        if isinstance(screenshot, dict) and screenshot:
-            url_val = screenshot.get("url")
-            if isinstance(url_val, str) and url_val.strip():
-                page_info["screenshot_url"] = url_val.strip()
-            page_info["screenshot"] = {
-                k: v for k, v in screenshot.items() if k != "url" and v is not None
-            }
-    except Exception:
-        pass
+    page_info = None
+    results = details.get("results")
+    if isinstance(results, dict):
+        web = results.get("web")
+        if isinstance(web, dict):
+            page_info = web.get("page_information")
+    if isinstance(page_info, dict) and isinstance(screenshot, dict) and screenshot:
+        url_val = screenshot.get("url")
+        if isinstance(url_val, str) and url_val.strip():
+            page_info["screenshot_url"] = url_val.strip()
+        page_info["screenshot"] = {
+            k: v for k, v in screenshot.items() if k != "url" and v is not None
+        }
 
     duration_ms = int((time.time() - start) * 1000)
     if not result_persister or not result_persister.save_result(
@@ -710,13 +713,14 @@ def main():
     def _on_exception(
         task: Optional[dict], exc: Exception, delivery_count: int, duration_ms: int
     ) -> None:
+        info = classify_exception(exc)
         job_id = task.get("job_id") if isinstance(task, dict) else None
         if not job_id:
             return
         correlation_id = task.get("correlation_id") if isinstance(task, dict) else None
         submitted_at = task.get("submitted_at") if isinstance(task, dict) else None
 
-        retrying = delivery_count < MAX_RETRIES
+        retrying = info.retryable and delivery_count < MAX_RETRIES
         status = "retrying" if retrying else "error"
 
         if not result_persister:
@@ -725,9 +729,11 @@ def main():
             job_id=job_id,
             status=status,
             verdict="" if retrying else "error",
-            error=str(exc),
+            error=info.message,
             details={
-                "reason": str(exc),
+                "reason": info.message,
+                "error_code": info.code,
+                "retryable": bool(info.retryable),
                 "delivery_count": delivery_count,
                 "max_retries": MAX_RETRIES,
             },
