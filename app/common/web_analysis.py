@@ -14,7 +14,6 @@ from typing import Optional
 from urllib.parse import parse_qsl, urljoin, urlparse
 
 from bs4 import BeautifulSoup
-
 from common.http_parsing import parse_set_cookie_headers
 
 try:
@@ -216,6 +215,7 @@ def _is_tracking_resource(resource_url: str, *, page_host: str, kind: str) -> bo
         return bool(rules.should_block(resource_url, opts))
     except Exception:
         return False
+
 
 _OPEN_REDIRECT_PARAM_HINTS = {
     "redirect",
@@ -443,8 +443,12 @@ def analyze_html(
         if not resolved or not _is_http_url(resolved):
             continue
 
-        is_stylesheet = "stylesheet" in rels or ("preload" in rels and as_attr == "style")
-        is_script = "modulepreload" in rels or ("preload" in rels and as_attr == "script")
+        is_stylesheet = "stylesheet" in rels or (
+            "preload" in rels and as_attr == "style"
+        )
+        is_script = "modulepreload" in rels or (
+            "preload" in rels and as_attr == "script"
+        )
         is_image = "preload" in rels and as_attr == "image"
 
         if is_stylesheet and len(styles) < max_items and resolved not in seen_styles:
@@ -464,7 +468,9 @@ def analyze_html(
 
         if is_script and len(scripts) < max_items and resolved not in seen_scripts:
             seen_scripts.add(resolved)
-            rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+            rtype = classify_internal_external(
+                resource_url=resolved, page_host=page_host
+            )
             scripts.append({"url": resolved, "type": rtype})
             _maybe_add_mixed(mixed_content, resolved)
             if rtype == "external":
@@ -502,14 +508,18 @@ def analyze_html(
             if resolved in seen_scripts:
                 continue
             seen_scripts.add(resolved)
-            rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+            rtype = classify_internal_external(
+                resource_url=resolved, page_host=page_host
+            )
             scripts.append({"url": resolved, "type": rtype})
             _maybe_add_mixed(mixed_content, resolved)
             if rtype == "external":
                 external_scripts += 1
 
             host = _url_host(resolved)
-            if host and _is_tracking_resource(resolved, page_host=page_host, kind="script"):
+            if host and _is_tracking_resource(
+                resolved, page_host=page_host, kind="script"
+            ):
                 tracking_scripts = True
             yara_names = _yara_rule_names(resolved)
             if "Web_Fingerprinting_INFO" in yara_names:
@@ -674,7 +684,9 @@ def rdap_whois(domain: str, *, timeout_seconds: float = 3.0) -> Optional[dict]:
         method="GET",
     )
     try:
-        with urllib.request.urlopen(req, timeout=max(0.5, float(timeout_seconds))) as resp:
+        with urllib.request.urlopen(
+            req, timeout=max(0.5, float(timeout_seconds))
+        ) as resp:
             if getattr(resp, "status", 200) != 200:
                 return None
             raw = resp.read()
@@ -699,7 +711,9 @@ def rdap_whois(domain: str, *, timeout_seconds: float = 3.0) -> Optional[dict]:
             if not isinstance(ent, dict):
                 continue
             roles = ent.get("roles")
-            if not isinstance(roles, list) or "registrar" not in [str(r).lower() for r in roles if r]:
+            if not isinstance(roles, list) or "registrar" not in [
+                str(r).lower() for r in roles if r
+            ]:
                 continue
             vcard = ent.get("vcardArray")
             if (
@@ -756,7 +770,9 @@ def registrable_domain(host: str) -> str:
             extracted = extractor(h)
             # Use top_domain_under_public_suffix (newer API); avoid deprecated registered_domain
             if hasattr(extracted, "top_domain_under_public_suffix"):
-                reg = str(extracted.top_domain_under_public_suffix or "").strip().lower()
+                reg = (
+                    str(extracted.top_domain_under_public_suffix or "").strip().lower()
+                )
             else:
                 reg = str(extracted.registered_domain or "").strip().lower()
             if reg:
