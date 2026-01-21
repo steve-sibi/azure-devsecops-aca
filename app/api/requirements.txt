@@ -1,28 +1,33 @@
-fastapi==0.115.14
-starlette>=0.42.0,<0.47.0
-uvicorn[standard]==0.30.6
+# Core API framework
+fastapi>=0.115
+starlette>=0.46
+uvicorn[standard]>=0.30
 python-multipart>=0.0.9
-azure-servicebus~=7.12
-# Optional, for MI path in main.py:
-azure-identity>=1.16.0
+
+# Azure Service Bus messaging
+azure-servicebus>=7.14
+
+# Azure Identity (Managed Identity, DefaultAzureCredential)
+azure-identity>=1.25
 
 # OpenTelemetry (Azure Monitor exporter) — pin versions to avoid breaking API changes
 # NOTE: azure-monitor-opentelemetry-exporter currently imports LogData from opentelemetry.sdk._logs
 # which was removed in newer OpenTelemetry releases; keep these in a compatible range.
-opentelemetry-api~=1.35.0
-opentelemetry-sdk~=1.35.0
-azure-monitor-opentelemetry-exporter==1.0.0b45
+opentelemetry-api>=1.35
+opentelemetry-sdk>=1.35
+azure-monitor-opentelemetry-exporter>=1.0.0b45
+
 # App Insights logs (simple AzureLogHandler)
-opencensus-ext-azure==1.1.13
+opencensus-ext-azure>=1.1
 
 # Table storage for scan results
-azure-data-tables>=12.6.0
+azure-data-tables>=12.7
 
 # Blob storage for optional screenshots
-azure-storage-blob>=12.19.0
+azure-storage-blob>=12.28
 
 # Required for azure-* async clients (azure.data.tables.aio -> AioHttpTransport)
-aiohttp>=3.9.5,<4.0.0
+aiohttp>=3.13
 
 # Local dev backends (queue/results)
-redis>=5.0.0
+redis>=7.1

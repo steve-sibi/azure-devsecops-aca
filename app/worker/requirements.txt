@@ -1,12 +1,35 @@
-azure-identity>=1.16.0
-azure-servicebus~=7.12
-opencensus-ext-azure==1.1.13
-azure-data-tables>=12.6.0
-azure-storage-blob>=12.19.0
-requests>=2.32.3
-redis>=5.0.0
-beautifulsoup4>=4.12.3
+# Azure Identity (Managed Identity, DefaultAzureCredential)
+azure-identity>=1.25
+
+# Azure Service Bus messaging
+azure-servicebus>=7.14
+
+# App Insights logs (simple AzureLogHandler)
+opencensus-ext-azure>=1.1
+
+# Table storage for scan results
+azure-data-tables>=12.7
+
+# Blob storage for screenshots
+azure-storage-blob>=12.28
+
+# HTTP client for web fetching
+requests>=2.32
+
+# Local dev backends (queue/results)
+redis>=7.1
+
+# HTML parsing
+beautifulsoup4>=4.14
+
+# Ad/tracker detection
 adblockparser>=0.7
-tldextract>=5.1.2
-yara-python>=4.5.1
-playwright>=1.41.0
+
+# Domain extraction
+tldextract>=5.3
+
+# YARA pattern matching
+yara-python>=4.5
+
+# Browser automation for screenshots
+playwright>=1.57
