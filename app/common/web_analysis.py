@@ -754,7 +754,11 @@ def registrable_domain(host: str) -> str:
     if extractor is not None:
         try:
             extracted = extractor(h)
-            reg = str(getattr(extracted, "registered_domain", "") or "").strip().lower()
+            # Use top_domain_under_public_suffix (newer API); avoid deprecated registered_domain
+            if hasattr(extracted, "top_domain_under_public_suffix"):
+                reg = str(extracted.top_domain_under_public_suffix or "").strip().lower()
+            else:
+                reg = str(extracted.registered_domain or "").strip().lower()
             if reg:
                 return reg.rstrip(".")
         except Exception:

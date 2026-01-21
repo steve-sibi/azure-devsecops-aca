@@ -727,7 +727,7 @@ terraform plan \
         
     2. **Terraform destroy** (recommended; only removes Terraform-managed resources):
         
-        ```bash
+        ```bashclear
         cd infra
         terraform destroy \
           -var="prefix=devsecopsaca" \
