@@ -8,9 +8,8 @@ import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
-import requests
 from azure.servicebus import ServiceBusClient
 from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 from azure.data.tables import TableClient, TableServiceClient
@@ -23,17 +22,16 @@ from common.screenshot_store import (
 )
 from common.signals import Signal, aggregate_signals, signal
 from common.url_canonicalization import canonicalize_url
-from common.url_validation import UrlValidationError, validate_public_https_url
 from common.web_analysis import (
     analyze_html,
     find_open_redirects,
-    parse_set_cookie_headers,
     rdap_whois,
     registrable_domain,
     resolve_dns_addresses,
 )
 
 from screenshot_capture import capture_website_screenshot
+from web_fetch import download_url
 
 # ---- Config via env ----
 QUEUE_BACKEND = os.getenv("QUEUE_BACKEND", "servicebus").strip().lower()
@@ -52,9 +50,6 @@ RESULT_BACKEND = os.getenv("RESULT_BACKEND", "table").strip().lower()
 RESULT_STORE_CONN = os.getenv("RESULT_STORE_CONN")
 RESULT_TABLE = os.getenv("RESULT_TABLE", "scanresults")
 RESULT_PARTITION = os.getenv("RESULT_PARTITION", "scan")
-MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(1024 * 1024)))  # 1MB
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "10"))  # seconds
-MAX_REDIRECTS = int(os.getenv("MAX_REDIRECTS", "5"))
 BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in (
     "1",
     "true",
@@ -77,8 +72,6 @@ ARTIFACT_DELETE_ON_SUCCESS = os.getenv("ARTIFACT_DELETE_ON_SUCCESS", "false").lo
 )
 
 # Web analysis tuning (UI-focused)
-WEB_MAX_HEADER_VALUE_LEN = int(os.getenv("WEB_MAX_HEADER_VALUE_LEN", "600"))
-WEB_MAX_HEADERS = int(os.getenv("WEB_MAX_HEADERS", "40"))
 WEB_MAX_RESOURCES = int(os.getenv("WEB_MAX_RESOURCES", "25"))
 WEB_MAX_INLINE_SCRIPT_CHARS = int(os.getenv("WEB_MAX_INLINE_SCRIPT_CHARS", "80000"))
 WEB_MAX_HTML_BYTES = int(os.getenv("WEB_MAX_HTML_BYTES", str(300_000)))
@@ -170,7 +163,7 @@ def process(task: dict):
 
         download = task.get("download") if isinstance(task.get("download"), dict) else {}
     else:
-        content, size_bytes, download = _download(url)
+        content, size_bytes, download = download_url(url)
 
     verdict, details = _scan_bytes(content, url, download=download)
 
@@ -291,132 +284,6 @@ def _maybe_capture_and_store_screenshot(
 
     return {"status": "skipped"}
 
-
-def _download(url: str) -> tuple[bytes, int, dict]:
-    session = requests.Session()
-    current = url
-    redirects: list[dict] = []
-
-    try:
-        for _hop in range(MAX_REDIRECTS + 1):
-            canonical = _validate_url_for_download(current)
-            request_url = canonical.canonical
-
-            with session.get(
-                request_url,
-                timeout=REQUEST_TIMEOUT,
-                stream=True,
-                allow_redirects=False,
-            ) as resp:
-                if resp.status_code in (301, 302, 303, 307, 308):
-                    location = resp.headers.get("Location")
-                    if not location:
-                        raise ValueError("redirect without Location header")
-                    next_url = urljoin(request_url, location)
-                    redirects.append(
-                        {
-                            "from": request_url,
-                            "to": next_url,
-                            "status_code": resp.status_code,
-                        }
-                    )
-                    current = next_url
-                    continue
-
-                resp.raise_for_status()
-                buf = bytearray()
-                content_type = (resp.headers.get("Content-Type") or "").strip()
-                content_length = (resp.headers.get("Content-Length") or "").strip()
-                for chunk in resp.iter_content(chunk_size=8192):
-                    if not chunk:
-                        continue
-                    buf.extend(chunk)
-                    if len(buf) > MAX_DOWNLOAD_BYTES:
-                        raise ValueError("content too large")
-
-                # Response headers/cookies (sanitized) for UI analysis.
-                response_headers: list[dict] = []
-                response_header_names: list[str] = []
-                try:
-                    seen_names: set[str] = set()
-                    for k in resp.headers.keys():
-                        name = str(k or "").strip().lower()
-                        if not name or name == "set-cookie":
-                            continue
-                        if name in seen_names:
-                            continue
-                        seen_names.add(name)
-                        response_header_names.append(name)
-                    for k, v in resp.headers.items():
-                        name = str(k or "").strip().lower()
-                        if not name or name == "set-cookie":
-                            continue
-                        val = str(v or "").strip()
-                        if val and len(val) > max(0, int(WEB_MAX_HEADER_VALUE_LEN)):
-                            val = val[: max(0, int(WEB_MAX_HEADER_VALUE_LEN) - 3)] + "..."
-                        response_headers.append({"name": name, "value": val})
-                        if len(response_headers) >= max(1, int(WEB_MAX_HEADERS)):
-                            break
-                except Exception:
-                    response_headers = []
-                    response_header_names = []
-
-                set_cookie_raw: list[str] = []
-                try:
-                    raw_headers = getattr(getattr(resp, "raw", None), "headers", None)
-                    if raw_headers is not None and hasattr(raw_headers, "getlist"):
-                        set_cookie_raw = [
-                            str(x) for x in raw_headers.getlist("Set-Cookie") if x
-                        ]
-                    elif raw_headers is not None and hasattr(raw_headers, "get_all"):
-                        set_cookie_raw = [
-                            str(x) for x in raw_headers.get_all("Set-Cookie") if x
-                        ]
-                except Exception:
-                    set_cookie_raw = []
-                if not set_cookie_raw:
-                    sc = resp.headers.get("Set-Cookie")
-                    if isinstance(sc, str) and sc.strip():
-                        set_cookie_raw = [sc.strip()]
-
-                cookies = parse_set_cookie_headers(set_cookie_raw)
-                download_info = {
-                    "requested_url": url,
-                    "final_url": request_url,
-                    "redirects": redirects,
-                    "status_code": int(resp.status_code),
-                }
-                if content_type:
-                    download_info["content_type"] = content_type
-                if content_length:
-                    download_info["content_length"] = content_length
-                if response_headers:
-                    download_info["response_headers"] = response_headers
-                if response_header_names:
-                    download_info["response_header_names"] = response_header_names
-                if cookies:
-                    download_info["cookies"] = cookies
-                return bytes(buf), len(buf), download_info
-
-        raise ValueError("too many redirects")
-    finally:
-        try:
-            session.close()
-        except Exception:
-            pass
-
-
-def _validate_url_for_download(url: str):
-    # Canonicalize first to prevent representation bypasses, then validate.
-    canonical = canonicalize_url(url)
-    if canonical.has_userinfo:
-        raise UrlValidationError(
-            code="userinfo_not_allowed", message="userinfo in url is not allowed"
-        )
-    validate_public_https_url(
-        canonical.canonical, block_private_networks=BLOCK_PRIVATE_NETWORKS
-    )
-    return canonical
 
 def _decode_text_sample(content: bytes, *, max_bytes: int) -> str:
     sample = content[: max(0, int(max_bytes))]
