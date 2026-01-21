@@ -11,6 +11,7 @@ from azure.servicebus import ServiceBusClient, ServiceBusMessage
 
 from common.config import ConsumerConfig, ResultPersister, init_redis_client, init_table_client
 from common.message_consumer import ShutdownFlag, install_signal_handlers, run_consumer
+from common.scan_messages import validate_scan_artifact_v1, validate_scan_task_v1
 
 from web_fetch import download_url
 
@@ -105,6 +106,7 @@ def _enqueue_scan(payload: dict, *, message_id: str):
 
 
 def process(task: dict):
+    task = validate_scan_task_v1(task)
     job_id = task.get("job_id")
     url = task.get("url")
     correlation_id = task.get("correlation_id")
@@ -149,6 +151,7 @@ def process(task: dict):
         "artifact_size_bytes": size_bytes,
         "download": download,
     }
+    forward_payload = validate_scan_artifact_v1(forward_payload)
 
     if not result_persister or not result_persister.save_result(
         job_id=job_id,

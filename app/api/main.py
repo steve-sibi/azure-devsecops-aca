@@ -37,6 +37,12 @@ from common.screenshot_store import (
     get_screenshot_redis_async,
     redis_screenshot_key,
 )
+from common.scan_messages import (
+    SCAN_SOURCE_MAX_LENGTH,
+    SCAN_URL_MAX_LENGTH,
+    ScanMessageValidationError,
+    validate_scan_task_v1,
+)
 from common.url_validation import UrlValidationError, validate_public_https_url_async
 
 # ---------- Settings ----------
@@ -121,9 +127,11 @@ class TaskIn(BaseModel):
 
 
 class ScanRequest(BaseModel):
-    url: str = Field(..., description="HTTPS URL to scan")
-    type: str = Field("url", pattern="^(url|file)$")
-    source: Optional[str] = Field(None, description="Optional source identifier")
+    url: str = Field(..., description="HTTPS URL to scan", max_length=SCAN_URL_MAX_LENGTH)
+    type: str = Field("url", pattern="^(url|file)$", max_length=16)
+    source: Optional[str] = Field(
+        None, description="Optional source identifier", max_length=SCAN_SOURCE_MAX_LENGTH
+    )
     metadata: Optional[dict] = Field(None, description="Optional metadata")
 
 
@@ -851,7 +859,6 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
     if RESULT_BACKEND == "redis" and not redis_client:
         raise HTTPException(status_code=503, detail="Result store not initialized")
 
-    await _validate_scan_url(req.url)
     job_id = str(uuid4())
     correlation_id = str(uuid4())
     submitted_at = datetime.now(timezone.utc).isoformat()
@@ -866,6 +873,12 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
         "submitted_at": submitted_at,
     }
     try:
+        payload = validate_scan_task_v1(payload)
+    except ScanMessageValidationError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    await _validate_scan_url(payload["url"])
+    try:
         await _enqueue_json(
             payload,
             schema="scan-v1",
@@ -875,7 +888,11 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
         await _upsert_result(
             job_id,
             status="queued",
-            details={"url": req.url, "type": req.type, "source": req.source},
+            details={
+                "url": payload["url"],
+                "type": payload.get("type"),
+                "source": payload.get("source"),
+            },
             extra={"submitted_at": submitted_at},
         )
         return {"job_id": job_id, "status": "queued"}

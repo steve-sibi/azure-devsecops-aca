@@ -16,6 +16,7 @@ from common.screenshot_store import (
     store_screenshot_redis_sync,
 )
 from common.message_consumer import ShutdownFlag, install_signal_handlers, run_consumer
+from common.scan_messages import validate_scan_artifact_v1
 from common.signals import Signal, aggregate_signals, signal
 from common.url_canonicalization import canonicalize_url
 from common.web_analysis import (
@@ -111,6 +112,7 @@ result_persister: Optional[ResultPersister] = None
 
 
 def process(task: dict):
+    task = validate_scan_artifact_v1(task)
     job_id = task.get("job_id")
     url = task.get("url")
     correlation_id = task.get("correlation_id")
