@@ -1,25 +1,39 @@
+import hashlib
 import logging
 import os
-import time
-import hashlib
 import secrets
+import time
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
 
 from azure.data.tables import TableClient
-
-from common.config import ConsumerConfig, ResultPersister, init_redis_client, init_table_client
+from common.config import (
+    ConsumerConfig,
+    ResultPersister,
+    init_redis_client,
+    init_table_client,
+)
 from common.errors import classify_exception
-from common.limits import ScreenshotLimits, get_web_analysis_limits, get_web_fetch_limits
+from common.limits import (
+    ScreenshotLimits,
+    get_web_analysis_limits,
+    get_web_fetch_limits,
+)
+from common.logging_config import (
+    get_logger,
+    log_with_context,
+    set_correlation_id,
+    setup_logging,
+)
+from common.message_consumer import ShutdownFlag, install_signal_handlers, run_consumer
+from common.scan_messages import validate_scan_artifact_v1
 from common.screenshot_store import (
     redis_screenshot_key,
     store_screenshot_blob_sync,
     store_screenshot_redis_sync,
 )
-from common.message_consumer import ShutdownFlag, install_signal_handlers, run_consumer
-from common.scan_messages import validate_scan_artifact_v1
-from common.signals import Signal, aggregate_signals, signal
+from common.signals import signal
 from common.url_canonicalization import canonicalize_url
 from common.web_analysis import (
     analyze_html,
@@ -28,7 +42,6 @@ from common.web_analysis import (
     registrable_domain,
     resolve_dns_addresses,
 )
-
 from screenshot_capture import capture_website_screenshot
 from web_fetch import download_url
 
@@ -60,7 +73,9 @@ REDIS_RESULT_TTL_SECONDS = _CFG.redis_result_ttl_seconds
 
 # ---- Artifact handoff (fetcher -> analyzer) ----
 ARTIFACT_DIR = _CFG.artifact_dir
-ARTIFACT_DELETE_ON_SUCCESS = os.getenv("ARTIFACT_DELETE_ON_SUCCESS", "false").lower() in (
+ARTIFACT_DELETE_ON_SUCCESS = os.getenv(
+    "ARTIFACT_DELETE_ON_SUCCESS", "false"
+).lower() in (
     "1",
     "true",
     "yes",
@@ -77,7 +92,9 @@ WEB_WHOIS_TIMEOUT_SECONDS = _WEB_LIMITS.whois_timeout_seconds
 SCREENSHOT_REDIS_PREFIX = os.getenv("SCREENSHOT_REDIS_PREFIX", "screenshot:")
 SCREENSHOT_CONTAINER = os.getenv("SCREENSHOT_CONTAINER", "screenshots")
 SCREENSHOT_FORMAT = os.getenv("SCREENSHOT_FORMAT", "jpeg")
-_SCREENSHOT_LIMITS = ScreenshotLimits.from_env(default_ttl_seconds=REDIS_RESULT_TTL_SECONDS)
+_SCREENSHOT_LIMITS = ScreenshotLimits.from_env(
+    default_ttl_seconds=REDIS_RESULT_TTL_SECONDS
+)
 SCREENSHOT_TIMEOUT_SECONDS = _SCREENSHOT_LIMITS.timeout_seconds
 SCREENSHOT_VIEWPORT_WIDTH = _SCREENSHOT_LIMITS.viewport_width
 SCREENSHOT_VIEWPORT_HEIGHT = _SCREENSHOT_LIMITS.viewport_height
@@ -86,7 +103,9 @@ SCREENSHOT_JPEG_QUALITY = _SCREENSHOT_LIMITS.jpeg_quality
 SCREENSHOT_TTL_SECONDS = _SCREENSHOT_LIMITS.ttl_seconds
 
 # ---- Logging (console + optional App Insights) ----
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+setup_logging(service_name="worker", level=logging.INFO)
+logger = get_logger(__name__)
+
 if APPINSIGHTS_CONN:
     try:
         from opencensus.ext.azure.log_exporter import AzureLogHandler
@@ -95,7 +114,7 @@ if APPINSIGHTS_CONN:
             AzureLogHandler(connection_string=APPINSIGHTS_CONN)
         )
     except Exception as e:
-        logging.warning(f"App Insights logging not enabled: {e}")
+        logger.warning("App Insights logging not enabled", exc_info=e)
 
 shutdown_flag = ShutdownFlag()
 install_signal_handlers(shutdown_flag)
@@ -110,6 +129,14 @@ def process(task: dict):
     job_id = task.get("job_id")
     url = task.get("url")
     correlation_id = task.get("correlation_id")
+
+    # Set correlation ID in context for all logs in this request
+    if correlation_id:
+        set_correlation_id(correlation_id)
+
+    log_with_context(
+        logger, logging.INFO, "Processing scan task", job_id=job_id, url=url
+    )
 
     if not url or not job_id:
         raise ValueError("missing url/job_id in task")
@@ -139,11 +166,13 @@ def process(task: dict):
             if not secrets.compare_digest(actual_sha, expected_sha.lower()):
                 raise ValueError("artifact sha256 mismatch")
 
-        download = task.get("download") if isinstance(task.get("download"), dict) else {}
+        download = (
+            task.get("download") if isinstance(task.get("download"), dict) else {}
+        )
     else:
         content, size_bytes, download = download_url(url)
 
-    verdict, details = _scan_bytes(content, url, download=download)
+    details = _scan_bytes(content, url, download=download)
 
     screenshot = _maybe_capture_and_store_screenshot(
         job_id=job_id, url=url, download=download
@@ -166,7 +195,6 @@ def process(task: dict):
     if not result_persister or not result_persister.save_result(
         job_id=job_id,
         status="completed",
-        verdict=verdict,
         details=details,
         size_bytes=size_bytes,
         correlation_id=correlation_id,
@@ -183,14 +211,16 @@ def process(task: dict):
                 (Path(ARTIFACT_DIR) / Path(artifact_path).name).unlink(missing_ok=True)
             except Exception:
                 pass
-    logging.info(
-        "[worker] job_id=%s verdict=%s size=%sB duration_ms=%s",
-        job_id,
-        verdict,
-        size_bytes,
-        duration_ms,
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Scan completed successfully",
+        job_id=job_id,
+        size_bytes=size_bytes,
+        duration_ms=duration_ms,
+        url=url,
     )
-    return verdict, details
+    return details
 
 
 def _screenshot_blob_name(job_id: str) -> str:
@@ -221,7 +251,11 @@ def _maybe_capture_and_store_screenshot(
     if not capture:
         status = "disabled" if capture_error == "disabled" else "failed"
         out = {"status": status}
-        if isinstance(capture_error, str) and capture_error and capture_error != "disabled":
+        if (
+            isinstance(capture_error, str)
+            and capture_error
+            and capture_error != "disabled"
+        ):
             out["error"] = capture_error
         return out
 
@@ -335,7 +369,7 @@ def _header_names_from_download(download: Optional[dict]) -> set[str]:
 
 def _web_scan(
     content: bytes, *, url: str, download: Optional[dict] = None
-) -> tuple[dict, list[Signal]]:
+) -> tuple[dict, list]:
     final_url = url
     content_type = ""
     cookies: list[dict] = []
@@ -363,7 +397,11 @@ def _web_scan(
     is_html = "html" in (content_type or "").lower()
     if not is_html:
         sniff = content.lstrip()[:50].lower()
-        if sniff.startswith(b"<!doctype html") or sniff.startswith(b"<html") or b"<head" in sniff:
+        if (
+            sniff.startswith(b"<!doctype html")
+            or sniff.startswith(b"<html")
+            or b"<head" in sniff
+        ):
             is_html = True
 
     parsed = None
@@ -530,7 +568,11 @@ def _web_scan(
                 )
             ):
                 likely_sensitive.append(c)
-            elif c.get("httponly") is True and not c.get("expires") and not c.get("max_age"):
+            elif (
+                c.get("httponly") is True
+                and not c.get("expires")
+                and not c.get("max_age")
+            ):
                 likely_sensitive.append(c)
 
         if samesite_none_without_secure:
@@ -622,7 +664,10 @@ def _web_scan(
                 verdict="benign",
                 severity="info",
                 weight=10,
-                evidence={"reason": "No notable web security indicators found", "url": final_url},
+                evidence={
+                    "reason": "No notable web security indicators found",
+                    "url": final_url,
+                },
             )
         )
 
@@ -634,17 +679,14 @@ def _scan_bytes(
     url: str,
     *,
     download: Optional[dict] = None,
-) -> tuple[str, dict]:
+) -> dict:
+    """Analyze content and return security analysis details (no verdict)."""
     digest = hashlib.sha256(content).hexdigest()
     engines = ["web"]
     results: dict[str, dict] = {}
-    signals: list[Signal] = []
 
-    web_results, web_signals = _web_scan(content, url=url, download=download)
+    web_results, _ = _web_scan(content, url=url, download=download)
     results.update(web_results)
-    signals.extend(web_signals)
-
-    decision = aggregate_signals(signals)
 
     canonical_url = None
     try:
@@ -659,8 +701,6 @@ def _scan_bytes(
         "engine": "web",
         "engines": engines,
         "results": results,
-        "decision": decision.as_dict(),
-        "signals": [s.as_dict() for s in signals],
     }
     if isinstance(download, dict) and download:
         download_out = dict(download)
@@ -668,7 +708,7 @@ def _scan_bytes(
         details["download"] = download_out
     if canonical_url:
         details["canonical_url"] = canonical_url
-    return decision.final_verdict, details
+    return details
 
 
 def main():
@@ -678,7 +718,9 @@ def main():
 
     if QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis":
         if not REDIS_URL:
-            raise RuntimeError("REDIS_URL env var is required when using Redis backends")
+            raise RuntimeError(
+                "REDIS_URL env var is required when using Redis backends"
+            )
         redis_client = init_redis_client(redis_url=REDIS_URL)
 
     if RESULT_BACKEND == "table":

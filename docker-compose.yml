@@ -32,6 +32,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      LOG_FORMAT: ${LOG_FORMAT:-pretty}
       PORT: "8000"
       QUEUE_NAME: ${QUEUE_NAME:-tasks}
       QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}
@@ -74,6 +75,7 @@ services:
       context: ./app
       dockerfile: worker/Dockerfile.sidecar
     environment:
+      LOG_FORMAT: ${LOG_FORMAT:-pretty}
       WORKER_MODE: fetcher
       QUEUE_NAME: ${QUEUE_NAME:-tasks}
       SCAN_QUEUE_NAME: ${SCAN_QUEUE_NAME:-tasks-scan}
@@ -103,6 +105,7 @@ services:
       context: ./app
       dockerfile: worker/Dockerfile.sidecar
     environment:
+      LOG_FORMAT: ${LOG_FORMAT:-pretty}
       WORKER_MODE: analyzer
       QUEUE_NAME: ${SCAN_QUEUE_NAME:-tasks-scan}
       QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}

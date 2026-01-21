@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import os
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
@@ -90,8 +90,12 @@ class ConsumerConfig:
             raise RuntimeError(
                 "RESULT_STORE_CONN env var is required when RESULT_BACKEND=table"
             )
-        if (self.queue_backend == "redis" or self.result_backend == "redis") and not self.redis_url:
-            raise RuntimeError("REDIS_URL env var is required when using Redis backends")
+        if (
+            self.queue_backend == "redis" or self.result_backend == "redis"
+        ) and not self.redis_url:
+            raise RuntimeError(
+                "REDIS_URL env var is required when using Redis backends"
+            )
 
 
 def init_redis_client(*, redis_url: str):
@@ -139,7 +143,6 @@ class ResultPersister:
         *,
         job_id: str,
         status: str,
-        verdict: str,
         details: Optional[dict] = None,
         size_bytes: Optional[int] = None,
         correlation_id: Optional[str] = None,
@@ -174,7 +177,6 @@ class ResultPersister:
                 partition_key=self._partition_key,
                 job_id=job_id,
                 status=status,
-                verdict=verdict,
                 error=error,
                 details=details_out,
                 extra=extra,

@@ -1,32 +1,24 @@
-import base64
-from contextlib import asynccontextmanager
-from collections import deque
-from datetime import datetime, timezone
 import asyncio
+import base64
 import hashlib
 import html
 import json
 import logging
 import os
-from pathlib import Path
 import secrets
 import time
+from collections import deque
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from http import HTTPStatus
+from pathlib import Path
 from typing import Optional
 from uuid import uuid4
 
+from azure.data.tables.aio import TableServiceClient
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus.exceptions import ServiceBusError
-from azure.data.tables.aio import TableServiceClient
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Security, UploadFile
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, Response
-from fastapi.security.api_key import APIKeyHeader
-from pydantic import BaseModel, Field
-from starlette.exceptions import HTTPException as StarletteHTTPException
-
-from http import HTTPStatus
-
 from common.clamav_client import (
     ClamAVConnectionError,
     ClamAVError,
@@ -35,20 +27,45 @@ from common.clamav_client import (
     clamd_scan_bytes,
     clamd_version,
 )
-from common.result_store import get_result_async, upsert_result_async
-from common.screenshot_store import (
-    get_screenshot_blob_async,
-    get_screenshot_redis_async,
-    redis_screenshot_key,
+from common.limits import get_api_limits, get_file_scan_limits
+from common.logging_config import (
+    clear_correlation_id,
+    get_logger,
+    log_with_context,
+    set_correlation_id,
+    setup_logging,
 )
+from common.result_store import get_result_async, upsert_result_async
 from common.scan_messages import (
     SCAN_SOURCE_MAX_LENGTH,
     SCAN_URL_MAX_LENGTH,
     ScanMessageValidationError,
     validate_scan_task_v1,
 )
+from common.screenshot_store import (
+    get_screenshot_blob_async,
+    get_screenshot_redis_async,
+    redis_screenshot_key,
+)
 from common.url_validation import UrlValidationError, validate_public_https_url_async
-from common.limits import get_api_limits, get_file_scan_limits
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Security,
+    UploadFile,
+)
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.security.api_key import APIKeyHeader
+from pydantic import BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+# ---------- Logging Setup ----------
+setup_logging(service_name="api", level=logging.INFO)
 
 # ---------- Settings ----------
 QUEUE_NAME = os.getenv("QUEUE_NAME", "tasks")
@@ -77,7 +94,7 @@ SCREENSHOT_REDIS_PREFIX = os.getenv("SCREENSHOT_REDIS_PREFIX", "screenshot:")
 SCREENSHOT_CONTAINER = os.getenv("SCREENSHOT_CONTAINER", "screenshots")
 SCREENSHOT_FORMAT = os.getenv("SCREENSHOT_FORMAT", "jpeg")
 
-logger = logging.getLogger("aca.api")
+logger = get_logger(__name__)
 
 # API hardening
 API_KEY = os.getenv("API_KEY")
@@ -102,11 +119,11 @@ FILE_SCAN_MAX_BYTES = _FILE_SCAN_LIMITS.max_bytes
 FILE_SCAN_INCLUDE_VERSION = _FILE_SCAN_LIMITS.include_version
 
 # HTML dashboard template lives alongside this file.
-DASHBOARD_TEMPLATE = Path(__file__).with_name("dashboard.html").read_text(
-    encoding="utf-8"
+DASHBOARD_TEMPLATE = (
+    Path(__file__).with_name("dashboard.html").read_text(encoding="utf-8")
 )
-FILE_SCANNER_TEMPLATE = Path(__file__).with_name("file_scanner.html").read_text(
-    encoding="utf-8"
+FILE_SCANNER_TEMPLATE = (
+    Path(__file__).with_name("file_scanner.html").read_text(encoding="utf-8")
 )
 
 # Globals set during app startup
@@ -130,10 +147,14 @@ class TaskIn(BaseModel):
 
 
 class ScanRequest(BaseModel):
-    url: str = Field(..., description="HTTPS URL to scan", max_length=SCAN_URL_MAX_LENGTH)
+    url: str = Field(
+        ..., description="HTTPS URL to scan", max_length=SCAN_URL_MAX_LENGTH
+    )
     type: str = Field("url", pattern="^(url|file)$", max_length=16)
     source: Optional[str] = Field(
-        None, description="Optional source identifier", max_length=SCAN_SOURCE_MAX_LENGTH
+        None,
+        description="Optional source identifier",
+        max_length=SCAN_SOURCE_MAX_LENGTH,
     )
     metadata: Optional[dict] = Field(None, description="Optional metadata")
 
@@ -178,7 +199,8 @@ def _decode_payload_bytes(
             data = base64.b64decode(compact, validate=True)
         except Exception:
             raise HTTPException(
-                status_code=400, detail="payload_base64=true but payload is not valid base64"
+                status_code=400,
+                detail="payload_base64=true but payload is not valid base64",
             )
     else:
         data = raw.encode("utf-8")
@@ -197,6 +219,7 @@ async def _validate_scan_url(url: str):
             url, block_private_networks=BLOCK_PRIVATE_NETWORKS
         )
     except UrlValidationError as e:
+
         def _bad_url(detail: str):
             raise HTTPException(
                 status_code=400,
@@ -409,21 +432,6 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
     if download_blocked is not None:
         summary["download_blocked"] = download_blocked
 
-    # Decision layer (signals → deterministic aggregation)
-    if isinstance(details, dict) and isinstance(details.get("decision"), dict):
-        d = details["decision"]
-        decision_out: dict = {}
-        for key in ("final_verdict", "confidence", "action"):
-            val = d.get(key)
-            if val is None or val == "":
-                continue
-            decision_out[key] = val
-        reasons = d.get("reasons")
-        if isinstance(reasons, list):
-            decision_out["reasons"] = [str(r) for r in reasons if r][:10]
-        if decision_out:
-            summary["decision"] = decision_out
-
     # Download metadata (if present)
     if isinstance(details, dict) and isinstance(details.get("download"), dict):
         d = details["download"]
@@ -539,7 +547,9 @@ async def lifespan(app: FastAPI):
         try:
             from azure.storage.blob.aio import BlobServiceClient as AioBlobServiceClient
 
-            blob_service = AioBlobServiceClient.from_connection_string(RESULT_STORE_CONN)
+            blob_service = AioBlobServiceClient.from_connection_string(
+                RESULT_STORE_CONN
+            )
             await blob_service.__aenter__()
         except Exception as e:
             blob_service = None
@@ -608,12 +618,25 @@ app = FastAPI(title="Azure DevSecOps URL Scanner", lifespan=lifespan)
 
 
 @app.middleware("http")
-async def request_id_middleware(request: Request, call_next):
-    request_id = str(uuid4())
-    request.state.request_id = request_id
-    response = await call_next(request)
-    response.headers["X-Request-Id"] = request_id
-    return response
+async def correlation_id_middleware(request: Request, call_next):
+    # Get or generate correlation ID from headers
+    correlation_id = (
+        request.headers.get("X-Correlation-ID")
+        or request.headers.get("X-Request-ID")
+        or str(uuid4())
+    )
+
+    # Set in context for structured logging
+    set_correlation_id(correlation_id)
+    request.state.request_id = correlation_id
+
+    try:
+        response = await call_next(request)
+        response.headers["X-Correlation-ID"] = correlation_id
+        response.headers["X-Request-Id"] = correlation_id
+        return response
+    finally:
+        clear_correlation_id()
 
 
 def _problem_type(code: str | None) -> str:
@@ -752,7 +775,9 @@ async def otel_request_spans(request: Request, call_next):
             response = await call_next(request)
         except Exception as exc:
             logger.exception(
-                "Unhandled exception in request: %s %s", request.method, request.url.path
+                "Unhandled exception in request: %s %s",
+                request.method,
+                request.url.path,
             )
             span.record_exception(exc)
             span.set_status(Status(StatusCode.ERROR, str(exc)))
@@ -776,7 +801,10 @@ async def otel_request_spans(request: Request, call_next):
                     body = getattr(response, "body", None)
                     if body:
                         parsed = json.loads(body.decode("utf-8"))
-                        if isinstance(parsed, dict) and parsed.get("detail") is not None:
+                        if (
+                            isinstance(parsed, dict)
+                            and parsed.get("detail") is not None
+                        ):
                             detail = parsed.get("detail")
             except Exception:
                 detail = None
@@ -864,7 +892,9 @@ async def scan_file(
         )
         filename = "payload.bin" if payload_base64 else "payload.txt"
         content_type = (
-            "application/octet-stream" if payload_base64 else "text/plain; charset=utf-8"
+            "application/octet-stream"
+            if payload_base64
+            else "text/plain; charset=utf-8"
         )
 
     scan_timeout_seconds = float(CLAMAV_TIMEOUT_SECONDS or 0) or 8.0
@@ -978,6 +1008,15 @@ async def enqueue_task(task: TaskIn, _: None = Security(require_api_key)):
 
 @app.post("/scan")
 async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Scan request received",
+        url=req.url,
+        scan_type=req.type,
+        source=req.source,
+    )
+
     if RESULT_BACKEND == "table" and not table_client:
         raise HTTPException(status_code=503, detail="Result store not initialized")
     if RESULT_BACKEND == "redis" and not redis_client:
@@ -999,6 +1038,9 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
     try:
         payload = validate_scan_task_v1(payload)
     except ScanMessageValidationError as e:
+        log_with_context(
+            logger, logging.WARNING, "Invalid scan request", url=req.url, error=str(e)
+        )
         raise HTTPException(status_code=400, detail=str(e))
 
     await _validate_scan_url(payload["url"])
@@ -1019,14 +1061,38 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
             },
             extra={"submitted_at": submitted_at},
         )
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Scan queued successfully",
+            job_id=job_id,
+            url=req.url,
+            scan_type=req.type,
+        )
         return {"job_id": job_id, "status": "queued"}
     except HTTPException:
         raise
     except ServiceBusError as e:
+        log_with_context(
+            logger,
+            logging.ERROR,
+            "Queue send failed",
+            job_id=job_id,
+            error=str(e),
+            error_type=e.__class__.__name__,
+        )
         raise HTTPException(
             status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
         )
     except Exception as e:
+        log_with_context(
+            logger,
+            logging.ERROR,
+            "Queue send failed",
+            job_id=job_id,
+            error=str(e),
+            error_type=e.__class__.__name__,
+        )
         raise HTTPException(
             status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
         )
@@ -1038,21 +1104,40 @@ async def get_scan_status(
     view: str = Query("summary", description="Response view: summary or full"),
     _: None = Security(require_api_key),
 ):
+    log_with_context(
+        logger, logging.INFO, "Fetching scan result", job_id=job_id, view=view
+    )
+
     view = (view or "summary").strip().lower()
     if view not in ("summary", "full"):
         raise HTTPException(status_code=400, detail="view must be 'summary' or 'full'")
 
     entity = await _get_result_entity(job_id)
     if not entity:
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Scan result not found",
+            job_id=job_id,
+            status="pending",
+        )
         return {"job_id": job_id, "status": "pending", "summary": None}
 
     details = _parse_details(entity.get("details"))
     summary = _build_summary(entity, details)
 
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Scan result retrieved",
+        job_id=job_id,
+        status=entity.get("status"),
+        duration_ms=_safe_int(entity.get("duration_ms")),
+    )
+
     response = {
         "job_id": job_id,
         "status": entity.get("status", "unknown"),
-        "verdict": entity.get("verdict") or None,
         "error": entity.get("error") or None,
         "submitted_at": entity.get("submitted_at"),
         "scanned_at": entity.get("scanned_at"),
@@ -1074,25 +1159,67 @@ def _screenshot_blob_name(job_id: str) -> str:
 
 @app.get("/scan/{job_id}/screenshot")
 async def get_scan_screenshot(job_id: str, _: None = Security(require_api_key)):
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Fetching screenshot",
+        job_id=job_id,
+        backend=RESULT_BACKEND,
+    )
+
     if RESULT_BACKEND == "redis":
         if not redis_client:
             raise HTTPException(status_code=503, detail="Result store not initialized")
         key = redis_screenshot_key(SCREENSHOT_REDIS_PREFIX, job_id)
         data = await get_screenshot_redis_async(redis_client=redis_client, key=key)
         if not data or not data.bytes:
+            log_with_context(
+                logger,
+                logging.WARNING,
+                "Screenshot not found",
+                job_id=job_id,
+                backend="redis",
+            )
             raise HTTPException(status_code=404, detail="Screenshot not found")
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Screenshot retrieved",
+            job_id=job_id,
+            backend="redis",
+            size_bytes=len(data.bytes),
+        )
         return Response(content=data.bytes, media_type=data.content_type)
 
     if RESULT_BACKEND == "table":
         if not blob_service:
-            raise HTTPException(status_code=503, detail="Screenshot store not initialized")
+            raise HTTPException(
+                status_code=503, detail="Screenshot store not initialized"
+            )
         data = await get_screenshot_blob_async(
             blob_service_client=blob_service,
             container=SCREENSHOT_CONTAINER,
             blob_name=_screenshot_blob_name(job_id),
         )
         if not data or not data.bytes:
+            log_with_context(
+                logger,
+                logging.WARNING,
+                "Screenshot not found",
+                job_id=job_id,
+                backend="blob",
+            )
             raise HTTPException(status_code=404, detail="Screenshot not found")
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Screenshot retrieved",
+            job_id=job_id,
+            backend="blob",
+            size_bytes=len(data.bytes),
+        )
         return Response(content=data.bytes, media_type=data.content_type)
 
-    raise HTTPException(status_code=500, detail=f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
+    raise HTTPException(
+        status_code=500, detail=f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}"
+    )

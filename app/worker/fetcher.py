@@ -8,14 +8,16 @@ from typing import Optional
 
 from azure.data.tables import TableClient
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
-
-from common.config import ConsumerConfig, ResultPersister, init_redis_client, init_table_client
+from common.config import (
+    ConsumerConfig,
+    ResultPersister,
+    init_redis_client,
+    init_table_client,
+)
 from common.errors import classify_exception
 from common.message_consumer import ShutdownFlag, install_signal_handlers, run_consumer
 from common.scan_messages import validate_scan_artifact_v1, validate_scan_task_v1
-
 from web_fetch import download_url
-
 
 # ---- Config via env ----
 _CFG = ConsumerConfig.from_env()
@@ -46,8 +48,9 @@ SERVICEBUS_SCAN_CONN = os.getenv("SERVICEBUS_SCAN_CONN")  # send to SCAN_QUEUE_N
 SCAN_QUEUE_NAME = os.getenv("SCAN_QUEUE_NAME", f"{QUEUE_NAME}-scan")
 REDIS_SCAN_QUEUE_KEY = os.getenv("REDIS_SCAN_QUEUE_KEY", f"queue:{SCAN_QUEUE_NAME}")
 
+from common.logging_config import get_logger
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = get_logger(__name__)
 
 shutdown_flag = ShutdownFlag()
 install_signal_handlers(shutdown_flag)
@@ -88,7 +91,9 @@ def _enqueue_scan(payload: dict, *, message_id: str):
 
     if QUEUE_BACKEND == "servicebus":
         if not SERVICEBUS_SCAN_CONN:
-            raise RuntimeError("SERVICEBUS_SCAN_CONN is required for fetcher forwarding")
+            raise RuntimeError(
+                "SERVICEBUS_SCAN_CONN is required for fetcher forwarding"
+            )
         with ServiceBusClient.from_connection_string(SERVICEBUS_SCAN_CONN) as client:
             with client.get_queue_sender(queue_name=SCAN_QUEUE_NAME) as sender:
                 msg = ServiceBusMessage(
@@ -121,7 +126,6 @@ def process(task: dict):
     if not result_persister or not result_persister.save_result(
         job_id=job_id,
         status="fetching",
-        verdict="",
         details={"url": url, "stage": "fetching", "engines": engines},
         correlation_id=correlation_id,
         submitted_at=submitted_at,
@@ -145,7 +149,9 @@ def process(task: dict):
         "url": url,
         "type": task.get("type"),
         "source": task.get("source"),
-        "metadata": task.get("metadata") if isinstance(task.get("metadata"), dict) else {},
+        "metadata": (
+            task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
+        ),
         "submitted_at": submitted_at,
         "artifact_path": artifact_name,
         "artifact_sha256": sha256,
@@ -157,7 +163,6 @@ def process(task: dict):
     if not result_persister or not result_persister.save_result(
         job_id=job_id,
         status="queued_scan",
-        verdict="",
         details={
             "url": url,
             "stage": "queued_scan",
@@ -192,7 +197,9 @@ def main() -> None:
 
     if QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis":
         if not REDIS_URL:
-            raise RuntimeError("REDIS_URL env var is required when using Redis backends")
+            raise RuntimeError(
+                "REDIS_URL env var is required when using Redis backends"
+            )
         redis_client = init_redis_client(redis_url=REDIS_URL)
 
     if RESULT_BACKEND == "table":
@@ -214,7 +221,13 @@ def main() -> None:
         component="fetcher",
     )
 
-    logging.info("[fetcher] started; queue=%s scan_queue=%s backend=%s", QUEUE_NAME, SCAN_QUEUE_NAME, QUEUE_BACKEND)
+    logging.info(
+        "[fetcher] started; queue=%s scan_queue=%s backend=%s",
+        QUEUE_NAME,
+        SCAN_QUEUE_NAME,
+        QUEUE_BACKEND,
+    )
+
     def _on_exception(
         task: Optional[dict], exc: Exception, delivery_count: int, duration_ms: int
     ) -> None:
@@ -233,7 +246,6 @@ def main() -> None:
         result_persister.save_result(
             job_id=job_id,
             status=status,
-            verdict="" if retrying else "error",
             error=info.message,
             details={
                 "reason": info.message,

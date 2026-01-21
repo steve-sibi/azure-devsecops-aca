@@ -9,9 +9,10 @@ from functools import lru_cache
 from typing import Optional
 from urllib.parse import urlparse
 
+from common.logging_config import get_logger
 from common.url_validation import UrlValidationError, validate_public_https_url
 
-logger = logging.getLogger("aca.screenshot")
+logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
@@ -136,7 +137,10 @@ def capture_website_screenshot(
     def route_handler(route, request) -> None:
         nonlocal allowed_requests, blocked_requests
         req_url = getattr(request, "url", "") or ""
-        rtype = str(getattr(request, "resource_type", "") or "").strip().lower() or "unknown"
+        rtype = (
+            str(getattr(request, "resource_type", "") or "").strip().lower()
+            or "unknown"
+        )
         if _allow_request_url(req_url, block_private_networks=block_private_networks):
             allowed_requests += 1
             allowed_by_type[rtype] = int(allowed_by_type.get(rtype, 0)) + 1
