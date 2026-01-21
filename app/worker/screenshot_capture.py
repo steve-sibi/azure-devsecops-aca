@@ -49,9 +49,10 @@ def _parse_int(name: str, default: int) -> int:
 
 def _screenshot_type(fmt: str) -> tuple[str, str]:
     f = (fmt or "").strip().lower()
-    if f in ("png",):
+    if f == "png":
         return "png", "image/png"
     return "jpeg", "image/jpeg"
+
 
 @lru_cache(maxsize=2048)
 def _is_allowed_host(host: str, *, block_private_networks: bool) -> bool:
@@ -59,7 +60,9 @@ def _is_allowed_host(host: str, *, block_private_networks: bool) -> bool:
     if not h:
         return False
     try:
-        validate_public_https_url(f"https://{h}", block_private_networks=block_private_networks)
+        validate_public_https_url(
+            f"https://{h}", block_private_networks=block_private_networks
+        )
         return True
     except UrlValidationError:
         return False

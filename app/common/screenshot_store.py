@@ -43,7 +43,9 @@ def store_screenshot_redis_sync(
         redis_client.expire(key, int(ttl_seconds))
 
 
-async def get_screenshot_redis_async(*, redis_client, key: str) -> Optional[ScreenshotData]:
+async def get_screenshot_redis_async(
+    *, redis_client, key: str
+) -> Optional[ScreenshotData]:
     mapping = await redis_client.hgetall(key)
     if not mapping:
         return None
@@ -92,7 +94,8 @@ def store_screenshot_blob_sync(
         except Exception:
             pass
 
-            
+
+
 async def get_screenshot_blob_async(
     *,
     blob_service_client,
@@ -112,7 +115,11 @@ async def get_screenshot_blob_async(
     except Exception:
         return None
 
-    content_type = getattr(getattr(props, "content_settings", None), "content_type", None)
+    content_type = getattr(
+        getattr(props, "content_settings", None),
+        "content_type",
+        None,
+    )
     if not isinstance(content_type, str) or not content_type.strip():
         content_type = "application/octet-stream"
     return ScreenshotData(content_type=content_type, bytes=data or b"")

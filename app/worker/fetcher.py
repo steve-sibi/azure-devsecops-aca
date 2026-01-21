@@ -14,7 +14,7 @@ from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 
 from common.result_store import upsert_result_sync
 
-import worker as scan_worker
+from web_fetch import download_url
 
 
 # ---- Config via env ----
@@ -196,7 +196,7 @@ def process(task: dict):
     ):
         raise RuntimeError("failed to persist fetcher status")
 
-    content, size_bytes, download = scan_worker._download(url)
+    content, size_bytes, download = download_url(url)
 
     artifact_dir = _ensure_artifact_dir()
     artifact_name = f"{job_id}.bin"
