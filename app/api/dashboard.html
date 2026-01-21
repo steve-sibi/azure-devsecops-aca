@@ -1333,8 +1333,50 @@
           }
         }
 
+        function isProblemDetails(obj) {
+          if (!obj || typeof obj !== 'object') return false;
+          return typeof obj.type === 'string'
+            && typeof obj.title === 'string'
+            && (typeof obj.status === 'number' || typeof obj.status === 'string');
+        }
+
+        function hintForProblemCode(code) {
+          const c = String(code || '').trim().toLowerCase();
+          if (!c) return '';
+          if (c === 'https_only') return 'Enter a valid HTTPS URL (e.g. https://example.com).';
+          if (c === 'host_required') return 'Enter a valid URL (e.g. https://example.com).';
+          if (c === 'dns_failed' || c === 'no_records') return 'Enter a valid public HTTPS URL (e.g. https://example.com).';
+          if (c === 'localhost_not_allowed') return 'Use a public HTTPS URL (localhost is blocked).';
+          if (c === 'non_public_ip' || c === 'direct_ip_not_public') return 'Use a publicly routable HTTPS URL (private IPs are blocked).';
+          if (c === 'port_not_allowed') return 'Use the default HTTPS port (443).';
+          if (c === 'userinfo_not_allowed') return 'Remove credentials from the URL.';
+          return '';
+        }
+
+        function formatProblemMessage(problem) {
+          const code = (problem && typeof problem.code === 'string') ? problem.code : '';
+          const detailRaw = (problem && typeof problem.detail === 'string') ? problem.detail : '';
+          const titleRaw = (problem && typeof problem.title === 'string') ? problem.title : '';
+          let message = String(detailRaw || titleRaw || 'Request failed').trim();
+          const hint = hintForProblemCode(code);
+          if (hint && !message.toLowerCase().includes(hint.toLowerCase())) {
+            if (!/[.?!]$/.test(message)) message += '.';
+            message += ' ' + hint;
+          }
+          return message;
+        }
+
+        function formatApiError(err) {
+          const data = err && err.data ? err.data : null;
+          if (isProblemDetails(data)) {
+            return { message: formatProblemMessage(data), problem: data };
+          }
+          const raw = data != null ? JSON.stringify(data) : '';
+          return { message: raw || (err ? err.message : 'Unknown error'), problem: null };
+        }
+
         async function api(path, method, body) {
-          const headers = { 'content-type': 'application/json' };
+          const headers = { 'content-type': 'application/json', 'accept': 'application/problem+json, application/json' };
           const key = apiKeyEl.value.trim();
           if (key) headers[API_KEY_HEADER] = key;
           const res = await fetch(path, {
@@ -1518,9 +1560,9 @@
             setStatus(statusKind(s.status), 'Job ' + jobId + ' is ' + s.status);
             return s;
           } catch (e) {
-            const msg = e && e.data ? JSON.stringify(e.data) : (e ? e.message : 'Unknown error');
-            setStatus('bad', msg);
-            if (showOutput) showSummary({ error: msg });
+            const info = formatApiError(e);
+            setStatus('bad', info.message);
+            if (showOutput) showSummary({ status: 'error', error: info.message, problem: info.problem || null });
             return null;
           }
         }
@@ -1618,9 +1660,9 @@
             if (result && result.status === 'completed') setStatus('ok', 'Completed');
             else setStatus('bad', 'Error');
           } catch (e) {
-            const msg = e && e.data ? JSON.stringify(e.data) : (e ? e.message : 'Unknown error');
-            setStatus('bad', msg);
-            showSummary({ status: 'error', error: msg, summary: { url: target } });
+            const info = formatApiError(e);
+            setStatus('bad', info.message);
+            showSummary({ status: 'error', error: info.message, summary: { url: target }, problem: info.problem || null });
           } finally {
             isPolling = false;
             startEl.disabled = false;
@@ -1666,13 +1708,13 @@
         copyJsonEl.addEventListener('click', async () => {
           const text = activeTab === 'raw'
             ? (outEl.textContent || '')
-            : JSON.stringify((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {}), null, 2);
+            : JSON.stringify((lastSummary && lastSummary.problem) ? lastSummary.problem : ((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {})), null, 2);
           if (text) await copyText(text);
         });
         copyJson2El.addEventListener('click', async () => {
           const text = activeTab === 'raw'
             ? (outEl.textContent || '')
-            : JSON.stringify((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {}), null, 2);
+            : JSON.stringify((lastSummary && lastSummary.problem) ? lastSummary.problem : ((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {})), null, 2);
           if (text) await copyText(text);
         });
 

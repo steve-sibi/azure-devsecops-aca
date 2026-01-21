@@ -198,35 +198,32 @@ async def _validate_scan_url(url: str):
             url, block_private_networks=BLOCK_PRIVATE_NETWORKS
         )
     except UrlValidationError as e:
+        def _bad_url(detail: str):
+            raise HTTPException(
+                status_code=400,
+                detail=detail,
+                headers={"X-Error-Code": str(e.code or "invalid_url")},
+            )
+
         if e.code == "https_only":
-            raise HTTPException(status_code=400, detail="Only HTTPS URLs are allowed")
+            _bad_url("Only HTTPS URLs are allowed")
         if e.code == "host_required":
-            raise HTTPException(status_code=400, detail="URL host is required")
+            _bad_url("URL host is required")
         if e.code == "userinfo_not_allowed":
-            raise HTTPException(
-                status_code=400, detail="Userinfo in URL is not allowed"
-            )
+            _bad_url("Userinfo in URL is not allowed")
         if e.code == "port_not_allowed":
-            raise HTTPException(
-                status_code=400, detail="Only default HTTPS port 443 is allowed"
-            )
+            _bad_url("Only default HTTPS port 443 is allowed")
         if e.code == "localhost_not_allowed":
-            raise HTTPException(status_code=400, detail="Localhost is not allowed")
+            _bad_url("Localhost is not allowed")
         if e.code == "dns_failed":
-            raise HTTPException(status_code=400, detail="DNS resolution failed")
+            _bad_url("DNS resolution failed")
         if e.code == "no_records":
-            raise HTTPException(status_code=400, detail="No A/AAAA records found")
+            _bad_url("No A/AAAA records found")
         if e.code == "non_public_ip":
-            raise HTTPException(
-                status_code=400,
-                detail="URL resolves to a non-public IP address (blocked)",
-            )
+            _bad_url("URL resolves to a non-public IP address (blocked)")
         if e.code == "direct_ip_not_public":
-            raise HTTPException(
-                status_code=400,
-                detail="Direct IP destinations must be publicly routable",
-            )
-        raise HTTPException(status_code=400, detail=str(e))
+            _bad_url("Direct IP destinations must be publicly routable")
+        _bad_url(str(e))
 
 
 async def _enforce_rate_limit(api_key: str):
@@ -689,7 +686,15 @@ _STATUS_CODE_TO_CODE: dict[int, str] = {
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
     status = int(getattr(exc, "status_code", 500) or 500)
-    code = _STATUS_CODE_TO_CODE.get(status, f"http_{status}")
+    headers = getattr(exc, "headers", None)
+    code = None
+    if isinstance(headers, dict):
+        for k, v in headers.items():
+            if str(k or "").lower() == "x-error-code" and v:
+                code = str(v)
+                break
+    if not code:
+        code = _STATUS_CODE_TO_CODE.get(status, f"http_{status}")
     detail = getattr(exc, "detail", None)
     if detail is None or detail == "":
         detail = _problem_title(status)
@@ -699,7 +704,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         title=_problem_title(status),
         detail=str(detail),
         code=code,
-        headers=getattr(exc, "headers", None),
+        headers=headers,
     )
 
 
