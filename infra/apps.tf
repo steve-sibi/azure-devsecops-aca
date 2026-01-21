@@ -1,3 +1,52 @@
+# Shared runtime limits/timeouts. These env vars are read by the API/Fetcher/Worker.
+locals {
+  runtime_env_common = [
+    { name = "BLOCK_PRIVATE_NETWORKS", value = "true" },
+    { name = "MAX_DOWNLOAD_BYTES", value = tostring(1024 * 1024) }, # 1MB
+    { name = "MAX_REDIRECTS", value = "5" },
+    { name = "REQUEST_TIMEOUT", value = "10" },
+    { name = "WEB_MAX_HEADERS", value = "40" },
+    { name = "WEB_MAX_HEADER_VALUE_LEN", value = "600" },
+  ]
+
+  consumer_tuning_env = [
+    { name = "BATCH_SIZE", value = "10" },
+    { name = "MAX_RETRIES", value = "5" },
+    { name = "MAX_WAIT", value = "5" },
+    { name = "PREFETCH", value = "20" },
+  ]
+
+  api_limits_env = [
+    { name = "CLAMAV_TIMEOUT_SECONDS", value = "8" },
+    { name = "FILE_SCAN_INCLUDE_VERSION", value = "true" },
+    { name = "FILE_SCAN_MAX_BYTES", value = tostring(10 * 1024 * 1024) }, # 10MB
+    { name = "MAX_DASHBOARD_POLL_SECONDS", value = "180" },
+    { name = "RATE_LIMIT_WINDOW_SECONDS", value = "60" },
+  ]
+
+  result_store_env = [
+    # Azure Table has a ~64KB per-property limit; details are compacted/truncated accordingly.
+    { name = "RESULT_DETAILS_MAX_BYTES", value = "60000" },
+  ]
+
+  web_analysis_env = [
+    { name = "WEB_MAX_HTML_BYTES", value = "300000" },
+    { name = "WEB_MAX_INLINE_SCRIPT_CHARS", value = "80000" },
+    { name = "WEB_MAX_RESOURCES", value = "25" },
+    { name = "WEB_WHOIS_TIMEOUT_SECONDS", value = "3.0" },
+  ]
+
+  screenshot_env = [
+    { name = "SCREENSHOT_FULL_PAGE", value = "false" },
+    { name = "SCREENSHOT_JPEG_QUALITY", value = "60" },
+    { name = "SCREENSHOT_SETTLE_MS", value = "750" },
+    { name = "SCREENSHOT_TIMEOUT_SECONDS", value = "12" },
+    { name = "SCREENSHOT_TTL_SECONDS", value = "0" },
+    { name = "SCREENSHOT_VIEWPORT_HEIGHT", value = "720" },
+    { name = "SCREENSHOT_VIEWPORT_WIDTH", value = "1280" },
+  ]
+}
+
 # --- API app ---
 resource "azurerm_container_app" "api" {
   count                        = var.create_apps ? 1 : 0
@@ -103,9 +152,12 @@ resource "azurerm_container_app" "api" {
         name  = "RATE_LIMIT_RPM"
         value = tostring(var.api_rate_limit_rpm)
       }
-      env {
-        name  = "BLOCK_PRIVATE_NETWORKS"
-        value = "true"
+      dynamic "env" {
+        for_each = concat(local.runtime_env_common, local.api_limits_env, local.result_store_env)
+        content {
+          name  = env.value.name
+          value = env.value.value
+        }
       }
       env {
         name  = "CLAMAV_HOST"
@@ -238,13 +290,12 @@ resource "azurerm_container_app" "fetcher" {
         name  = "ARTIFACT_DIR"
         value = "/artifacts"
       }
-      env {
-        name  = "BLOCK_PRIVATE_NETWORKS"
-        value = "true"
-      }
-      env {
-        name  = "MAX_REDIRECTS"
-        value = "5"
+      dynamic "env" {
+        for_each = concat(local.runtime_env_common, local.consumer_tuning_env, local.result_store_env)
+        content {
+          name  = env.value.name
+          value = env.value.value
+        }
       }
       volume_mounts {
         name = "artifacts"
@@ -370,9 +421,12 @@ resource "azurerm_container_app" "worker" {
         name  = "ARTIFACT_DELETE_ON_SUCCESS"
         value = "false"
       }
-      env {
-        name  = "BLOCK_PRIVATE_NETWORKS"
-        value = "true"
+      dynamic "env" {
+        for_each = concat(local.runtime_env_common, local.consumer_tuning_env, local.result_store_env, local.web_analysis_env, local.screenshot_env)
+        content {
+          name  = env.value.name
+          value = env.value.value
+        }
       }
       env {
         name  = "CAPTURE_SCREENSHOTS"
@@ -385,10 +439,6 @@ resource "azurerm_container_app" "worker" {
       env {
         name  = "SCREENSHOT_FORMAT"
         value = var.screenshot_format
-      }
-      env {
-        name  = "MAX_REDIRECTS"
-        value = "5"
       }
       volume_mounts {
         name = "artifacts"

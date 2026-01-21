@@ -1,26 +1,23 @@
 from __future__ import annotations
 
-import os
 from urllib.parse import urljoin
 
 import requests
 
+from common.limits import get_web_fetch_limits
 from common.http_parsing import parse_set_cookie_headers
 from common.url_canonicalization import CanonicalUrl, canonicalize_url
 from common.url_validation import UrlValidationError, validate_public_https_url
 
-MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(1024 * 1024)))  # 1MB
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "10"))  # seconds
-MAX_REDIRECTS = int(os.getenv("MAX_REDIRECTS", "5"))
-BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in (
-    "1",
-    "true",
-    "yes",
-)
+_LIMITS = get_web_fetch_limits()
+MAX_DOWNLOAD_BYTES = _LIMITS.max_download_bytes
+REQUEST_TIMEOUT = _LIMITS.request_timeout_seconds
+MAX_REDIRECTS = _LIMITS.max_redirects
+BLOCK_PRIVATE_NETWORKS = _LIMITS.block_private_networks
 
 # Response headers/cookies are used for the web analysis UI.
-WEB_MAX_HEADER_VALUE_LEN = int(os.getenv("WEB_MAX_HEADER_VALUE_LEN", "600"))
-WEB_MAX_HEADERS = int(os.getenv("WEB_MAX_HEADERS", "40"))
+WEB_MAX_HEADER_VALUE_LEN = _LIMITS.max_header_value_len
+WEB_MAX_HEADERS = _LIMITS.max_headers
 
 
 def validate_url_for_download(
@@ -160,4 +157,3 @@ def download_url(
             session.close()
         except Exception:
             pass
-

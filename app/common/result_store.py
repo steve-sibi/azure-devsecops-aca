@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
 import json
 from typing import Any, Optional
 
 from azure.core.exceptions import ResourceNotFoundError
 
+from common.limits import get_result_store_limits
 
 def _redis_key(prefix: str, job_id: str) -> str:
     return f"{prefix}{job_id}"
@@ -191,7 +191,7 @@ def _build_table_entity(
     if details is not None:
         max_bytes = max_details_bytes
         if max_bytes is None:
-            max_bytes = int(os.getenv("RESULT_DETAILS_MAX_BYTES", "60000"))
+            max_bytes = get_result_store_limits().details_max_bytes
         if max_bytes > 0:
             details = _truncate_details_for_table(details, max_bytes=max_bytes)
         entity["details"] = _json_dumps_compact(details)

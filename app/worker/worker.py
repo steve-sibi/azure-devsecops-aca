@@ -11,6 +11,7 @@ from azure.data.tables import TableClient
 
 from common.config import ConsumerConfig, ResultPersister, init_redis_client, init_table_client
 from common.errors import classify_exception
+from common.limits import ScreenshotLimits, get_web_analysis_limits, get_web_fetch_limits
 from common.screenshot_store import (
     redis_screenshot_key,
     store_screenshot_blob_sync,
@@ -48,11 +49,7 @@ RESULT_BACKEND = _CFG.result_backend
 RESULT_STORE_CONN = _CFG.result_store_conn
 RESULT_TABLE = _CFG.result_table
 RESULT_PARTITION = _CFG.result_partition
-BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in (
-    "1",
-    "true",
-    "yes",
-)
+BLOCK_PRIVATE_NETWORKS = get_web_fetch_limits().block_private_networks
 
 # Local dev backends (Redis)
 REDIS_URL = _CFG.redis_url
@@ -70,27 +67,23 @@ ARTIFACT_DELETE_ON_SUCCESS = os.getenv("ARTIFACT_DELETE_ON_SUCCESS", "false").lo
 )
 
 # Web analysis tuning (UI-focused)
-WEB_MAX_RESOURCES = int(os.getenv("WEB_MAX_RESOURCES", "25"))
-WEB_MAX_INLINE_SCRIPT_CHARS = int(os.getenv("WEB_MAX_INLINE_SCRIPT_CHARS", "80000"))
-WEB_MAX_HTML_BYTES = int(os.getenv("WEB_MAX_HTML_BYTES", str(300_000)))
-WEB_WHOIS_TIMEOUT_SECONDS = float(os.getenv("WEB_WHOIS_TIMEOUT_SECONDS", "3.0"))
+_WEB_LIMITS = get_web_analysis_limits()
+WEB_MAX_RESOURCES = _WEB_LIMITS.max_resources
+WEB_MAX_INLINE_SCRIPT_CHARS = _WEB_LIMITS.max_inline_script_chars
+WEB_MAX_HTML_BYTES = _WEB_LIMITS.max_html_bytes
+WEB_WHOIS_TIMEOUT_SECONDS = _WEB_LIMITS.whois_timeout_seconds
 
 # Screenshot capture (optional)
 SCREENSHOT_REDIS_PREFIX = os.getenv("SCREENSHOT_REDIS_PREFIX", "screenshot:")
 SCREENSHOT_CONTAINER = os.getenv("SCREENSHOT_CONTAINER", "screenshots")
 SCREENSHOT_FORMAT = os.getenv("SCREENSHOT_FORMAT", "jpeg")
-SCREENSHOT_TIMEOUT_SECONDS = float(os.getenv("SCREENSHOT_TIMEOUT_SECONDS", "12"))
-SCREENSHOT_VIEWPORT_WIDTH = int(os.getenv("SCREENSHOT_VIEWPORT_WIDTH", "1280"))
-SCREENSHOT_VIEWPORT_HEIGHT = int(os.getenv("SCREENSHOT_VIEWPORT_HEIGHT", "720"))
-SCREENSHOT_FULL_PAGE = os.getenv("SCREENSHOT_FULL_PAGE", "false").lower() in (
-    "1",
-    "true",
-    "yes",
-)
-SCREENSHOT_JPEG_QUALITY = int(os.getenv("SCREENSHOT_JPEG_QUALITY", "60"))
-SCREENSHOT_TTL_SECONDS = int(
-    os.getenv("SCREENSHOT_TTL_SECONDS", str(REDIS_RESULT_TTL_SECONDS))
-)
+_SCREENSHOT_LIMITS = ScreenshotLimits.from_env(default_ttl_seconds=REDIS_RESULT_TTL_SECONDS)
+SCREENSHOT_TIMEOUT_SECONDS = _SCREENSHOT_LIMITS.timeout_seconds
+SCREENSHOT_VIEWPORT_WIDTH = _SCREENSHOT_LIMITS.viewport_width
+SCREENSHOT_VIEWPORT_HEIGHT = _SCREENSHOT_LIMITS.viewport_height
+SCREENSHOT_FULL_PAGE = _SCREENSHOT_LIMITS.full_page
+SCREENSHOT_JPEG_QUALITY = _SCREENSHOT_LIMITS.jpeg_quality
+SCREENSHOT_TTL_SECONDS = _SCREENSHOT_LIMITS.ttl_seconds
 
 # ---- Logging (console + optional App Insights) ----
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

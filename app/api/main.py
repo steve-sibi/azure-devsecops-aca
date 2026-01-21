@@ -48,6 +48,7 @@ from common.scan_messages import (
     validate_scan_task_v1,
 )
 from common.url_validation import UrlValidationError, validate_public_https_url_async
+from common.limits import get_api_limits, get_file_scan_limits
 
 # ---------- Settings ----------
 QUEUE_NAME = os.getenv("QUEUE_NAME", "tasks")
@@ -82,25 +83,23 @@ logger = logging.getLogger("aca.api")
 API_KEY = os.getenv("API_KEY")
 API_KEY_HEADER = os.getenv("API_KEY_HEADER", "X-API-Key")
 REQUIRE_API_KEY = os.getenv("REQUIRE_API_KEY", "true").lower() in ("1", "true", "yes")
-RATE_LIMIT_RPM = int(os.getenv("RATE_LIMIT_RPM", "60"))
-RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("RATE_LIMIT_WINDOW_SECONDS", "60"))
+_API_LIMITS = get_api_limits()
+RATE_LIMIT_RPM = _API_LIMITS.rate_limit_rpm
+RATE_LIMIT_WINDOW_SECONDS = _API_LIMITS.rate_limit_window_seconds
 BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in (
     "1",
     "true",
     "yes",
 )
-MAX_DASHBOARD_POLL_SECONDS = int(os.getenv("MAX_DASHBOARD_POLL_SECONDS", "180"))
+MAX_DASHBOARD_POLL_SECONDS = _API_LIMITS.max_dashboard_poll_seconds
 
 # File scanning (ClamAV)
 CLAMAV_HOST = (os.getenv("CLAMAV_HOST", "127.0.0.1") or "127.0.0.1").strip()
 CLAMAV_PORT = int(os.getenv("CLAMAV_PORT", "3310"))
-CLAMAV_TIMEOUT_SECONDS = float(os.getenv("CLAMAV_TIMEOUT_SECONDS", "8"))
-FILE_SCAN_MAX_BYTES = int(os.getenv("FILE_SCAN_MAX_BYTES", str(10 * 1024 * 1024)))  # 10MB
-FILE_SCAN_INCLUDE_VERSION = os.getenv("FILE_SCAN_INCLUDE_VERSION", "true").lower() in (
-    "1",
-    "true",
-    "yes",
-)
+_FILE_SCAN_LIMITS = get_file_scan_limits()
+CLAMAV_TIMEOUT_SECONDS = _FILE_SCAN_LIMITS.clamav_timeout_seconds
+FILE_SCAN_MAX_BYTES = _FILE_SCAN_LIMITS.max_bytes
+FILE_SCAN_INCLUDE_VERSION = _FILE_SCAN_LIMITS.include_version
 
 # HTML dashboard template lives alongside this file.
 DASHBOARD_TEMPLATE = Path(__file__).with_name("dashboard.html").read_text(
