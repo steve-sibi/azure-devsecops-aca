@@ -366,9 +366,7 @@ def _header_names_from_download(download: Optional[dict]) -> set[str]:
     return names
 
 
-def _web_scan(
-    content: bytes, *, url: str, download: Optional[dict] = None
-) -> tuple[dict, list]:
+def _web_scan(content: bytes, *, url: str, download: Optional[dict] = None) -> dict:
     final_url = url
     content_type = ""
     cookies: list[dict] = []
@@ -569,7 +567,7 @@ def main():
         )
 
     result_persister = ResultPersister(
-        backend=RESULT_BACKEND,
+        backend=str(RESULT_BACKEND),
         partition_key=RESULT_PARTITION,
         table_client=table_client,
         redis_client=redis_client,
