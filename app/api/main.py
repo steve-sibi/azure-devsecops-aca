@@ -70,11 +70,7 @@ setup_logging(service_name="api", level=logging.INFO)
 # ---------- Settings ----------
 QUEUE_NAME = os.getenv("QUEUE_NAME", "tasks")
 QUEUE_BACKEND = os.getenv("QUEUE_BACKEND", "servicebus").strip().lower()
-SERVICEBUS_CONN = os.getenv("SERVICEBUS_CONN")  # connection string (current)
-SERVICEBUS_FQDN = os.getenv(
-    "SERVICEBUS_FQDN"
-)  # e.g. "mynamespace.servicebus.windows.net"
-USE_MI = os.getenv("USE_MANAGED_IDENTITY", "false").lower() in ("1", "true", "yes")
+SERVICEBUS_CONN = os.getenv("SERVICEBUS_CONN")  # connection string
 APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
     "APPLICATIONINSIGHTS_CONNECTION_STRING"
 )  # optional
@@ -504,25 +500,9 @@ async def lifespan(app: FastAPI):
 
     # --- Queue backend ---
     if QUEUE_BACKEND == "servicebus":
-        if USE_MI:
-            try:
-                from azure.identity.aio import DefaultAzureCredential
-            except Exception as e:
-                raise RuntimeError(
-                    "USE_MANAGED_IDENTITY=true but azure-identity is not installed"
-                ) from e
-            if not SERVICEBUS_FQDN:
-                raise RuntimeError(
-                    "SERVICEBUS_FQDN is required when using Managed Identity"
-                )
-            cred = DefaultAzureCredential()
-            sb_client = ServiceBusClient(
-                fully_qualified_namespace=SERVICEBUS_FQDN, credential=cred
-            )
-        else:
-            if not SERVICEBUS_CONN:
-                raise RuntimeError("SERVICEBUS_CONN environment variable is required")
-            sb_client = ServiceBusClient.from_connection_string(SERVICEBUS_CONN)
+        if not SERVICEBUS_CONN:
+            raise RuntimeError("SERVICEBUS_CONN environment variable is required")
+        sb_client = ServiceBusClient.from_connection_string(SERVICEBUS_CONN)
 
         await sb_client.__aenter__()
         sb_sender = sb_client.get_queue_sender(queue_name=QUEUE_NAME)
