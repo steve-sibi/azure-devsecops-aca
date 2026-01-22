@@ -154,7 +154,7 @@ sequenceDiagram
   W-->>LA: Console logs (processing info)
 
   C->>API: GET /scan/{job_id}
-  API->>T: Read status/verdict
+  API->>T: Read status
   API-->>C: JSON result
 ```
 *Flow*
@@ -515,7 +515,7 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `fetching`: fetcher is downloading (SSRF-protected) and preparing an artifact
 - `queued_scan`: artifact is ready and the scan stage has been queued
 - `retrying`: transient failure; will retry automatically (up to `MAX_RETRIES`)
-- `completed`: finished; check `verdict` + `summary` (and `details` if `view=full`)
+- `completed`: finished; check `summary` (and `details` if `view=full`)
 - `error`: failed; check `error` + `details`
 
 ### Try it (CLI)
@@ -757,7 +757,7 @@ To restart later, just re-run the **Deploy** workflow.
     
 - `POST /scan` -> requires `X-API-Key`, enforces SSRF protections, enqueues a scan job, and records a queued status in the configured result backend (`RESULT_BACKEND=table` on Azure; `RESULT_BACKEND=redis` locally).
     
-- `GET /scan/{job_id}` -> reads the configured result backend and returns the current status/verdict.
+- `GET /scan/{job_id}` -> reads the configured result backend and returns the current status and security analysis.
 
 - `GET /scan/{job_id}/screenshot` -> serves an optional worker-captured screenshot (stored in Blob Storage when `RESULT_BACKEND=table`, or Redis when `RESULT_BACKEND=redis`).
 

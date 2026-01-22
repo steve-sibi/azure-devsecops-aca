@@ -33,7 +33,6 @@ from common.screenshot_store import (
     store_screenshot_blob_sync,
     store_screenshot_redis_sync,
 )
-from common.signals import signal
 from common.url_canonicalization import canonicalize_url
 from common.web_analysis import (
     analyze_html,
@@ -508,170 +507,7 @@ def _web_scan(
         "network_information": network,
     }
 
-    signals: list[Signal] = []
-    if not csp_enforced:
-        signals.append(
-            signal(
-                source="web.headers.csp_missing",
-                verdict="benign",
-                severity="low",
-                weight=15,
-                evidence={
-                    "reason": (
-                        "Content-Security-Policy header is missing"
-                        if not csp_report_only
-                        else "Content-Security-Policy is report-only (not enforced)"
-                    ),
-                    "url": final_url,
-                },
-            )
-        )
-    if mixed_content:
-        signals.append(
-            signal(
-                source="web.mixed_content",
-                verdict="suspicious",
-                severity="high",
-                weight=70,
-                evidence={
-                    "reason": "Mixed content detected (HTTP resources on an HTTPS page)",
-                    "count": int(len(mixed_content)),
-                    "url": final_url,
-                },
-            )
-        )
-    if insecure_cookies:
-        likely_sensitive = []
-        samesite_none_without_secure = []
-        for c in insecure_cookies:
-            name = str(c.get("name") or "").strip().lower()
-            issues = c.get("issues") if isinstance(c.get("issues"), list) else []
-            issues_l = [str(i).lower() for i in issues if i]
-            if any("samesite=none without secure" in i for i in issues_l):
-                samesite_none_without_secure.append(c)
-            if any(
-                hint in name
-                for hint in (
-                    "session",
-                    "sess",
-                    "sid",
-                    "auth",
-                    "token",
-                    "jwt",
-                    "bearer",
-                    "access",
-                    "refresh",
-                    "login",
-                    "csrftoken",
-                    "xsrf",
-                    "csrf",
-                )
-            ):
-                likely_sensitive.append(c)
-            elif (
-                c.get("httponly") is True
-                and not c.get("expires")
-                and not c.get("max_age")
-            ):
-                likely_sensitive.append(c)
-
-        if samesite_none_without_secure:
-            signals.append(
-                signal(
-                    source="web.cookies.samesite_none_without_secure",
-                    verdict="suspicious",
-                    severity="medium",
-                    weight=55,
-                    evidence={
-                        "reason": "Cookies set SameSite=None without Secure",
-                        "count": int(len(samesite_none_without_secure)),
-                        "url": final_url,
-                    },
-                )
-            )
-        elif likely_sensitive or not hsts_present:
-            signals.append(
-                signal(
-                    source="web.cookies.insecure",
-                    verdict="suspicious",
-                    severity="low",
-                    weight=30,
-                    evidence={
-                        "reason": (
-                            "Insecure cookies detected (missing Secure attribute)"
-                            if not likely_sensitive
-                            else "Insecure cookies detected (missing Secure on likely session/auth cookies)"
-                        ),
-                        "count": int(len(insecure_cookies)),
-                        "url": final_url,
-                    },
-                )
-            )
-        else:
-            signals.append(
-                signal(
-                    source="web.cookies.insecure",
-                    verdict="benign",
-                    severity="low",
-                    weight=10,
-                    evidence={
-                        "reason": "Cookies missing Secure attribute (HSTS present)",
-                        "count": int(len(insecure_cookies)),
-                        "url": final_url,
-                    },
-                )
-            )
-    if login_forms > 0 and not csrf_protection:
-        signals.append(
-            signal(
-                source="web.forms.csrf_missing",
-                verdict="suspicious",
-                severity="medium",
-                weight=55,
-                evidence={
-                    "reason": "Login form detected without obvious CSRF protection",
-                    "url": final_url,
-                },
-            )
-        )
-    if eval_usage:
-        signals.append(
-            signal(
-                source="web.vuln.eval_usage",
-                verdict="suspicious",
-                severity="high",
-                weight=70,
-                evidence={"reason": "JavaScript eval usage detected", "url": final_url},
-            )
-        )
-    if open_redirects.get("detected"):
-        signals.append(
-            signal(
-                source="web.vuln.open_redirect_patterns",
-                verdict="suspicious",
-                severity="medium",
-                weight=60,
-                evidence={
-                    "reason": "Open redirect patterns detected in links/forms",
-                    "url": final_url,
-                },
-            )
-        )
-    if not signals:
-        signals.append(
-            signal(
-                source="web.ok",
-                verdict="benign",
-                severity="info",
-                weight=10,
-                evidence={
-                    "reason": "No notable web security indicators found",
-                    "url": final_url,
-                },
-            )
-        )
-
-    return {"web": web}, signals
+    return {"web": web}
 
 
 def _scan_bytes(
@@ -680,12 +516,12 @@ def _scan_bytes(
     *,
     download: Optional[dict] = None,
 ) -> dict:
-    """Analyze content and return security analysis details (no verdict)."""
+    """Analyze content and return security analysis details."""
     digest = hashlib.sha256(content).hexdigest()
     engines = ["web"]
     results: dict[str, dict] = {}
 
-    web_results, _ = _web_scan(content, url=url, download=download)
+    web_results = _web_scan(content, url=url, download=download)
     results.update(web_results)
 
     canonical_url = None
@@ -763,7 +599,6 @@ def main():
         result_persister.save_result(
             job_id=job_id,
             status=status,
-            verdict="" if retrying else "error",
             error=info.message,
             details={
                 "reason": info.message,

@@ -219,12 +219,13 @@ async def _validate_scan_url(url: str):
             url, block_private_networks=BLOCK_PRIVATE_NETWORKS
         )
     except UrlValidationError as e:
+        error_code = str(e.code or "invalid_url")
 
         def _bad_url(detail: str):
             raise HTTPException(
                 status_code=400,
                 detail=detail,
-                headers={"X-Error-Code": str(e.code or "invalid_url")},
+                headers={"X-Error-Code": error_code},
             )
 
         if e.code == "https_only":
