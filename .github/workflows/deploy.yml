@@ -183,7 +183,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          echo "## 🚀 Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Deploy Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
@@ -192,7 +192,7 @@ jobs:
           echo "| **Prefix** | ${{ env.PREFIX }} |" >> $GITHUB_STEP_SUMMARY
           echo "| **Image Tag** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### 📦 Container Images" >> $GITHUB_STEP_SUMMARY
+          echo "### Container Images" >> $GITHUB_STEP_SUMMARY
           echo "- API: \`${{ needs.build-and-push.outputs.api_image }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- Worker: \`${{ needs.build-and-push.outputs.worker_image }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- ClamAV: \`${{ needs.build-and-push.outputs.clamav_image }}\`" >> $GITHUB_STEP_SUMMARY
