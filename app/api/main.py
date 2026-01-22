@@ -561,9 +561,6 @@ async def lifespan(app: FastAPI):
                     await maybe
     if blob_service:
         await blob_service.__aexit__(None, None, None)
-    if cred:
-        # Properly close the async credential if used
-        await cred.close()
 
 
 app = FastAPI(title="Azure DevSecOps URL Scanner", lifespan=lifespan)
