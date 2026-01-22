@@ -27,6 +27,7 @@ from common.clamav_client import (
     clamd_scan_bytes,
     clamd_version,
 )
+from common.config import ConsumerConfig
 from common.limits import get_api_limits, get_file_scan_limits
 from common.logging_config import (
     clear_correlation_id,
@@ -68,22 +69,24 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 setup_logging(service_name="api", level=logging.INFO)
 
 # ---------- Settings ----------
-QUEUE_NAME = os.getenv("QUEUE_NAME", "tasks")
-QUEUE_BACKEND = os.getenv("QUEUE_BACKEND", "servicebus").strip().lower()
-SERVICEBUS_CONN = os.getenv("SERVICEBUS_CONN")  # connection string
+# Shared configuration (queues, results, redis)
+_CONSUMER_CFG = ConsumerConfig.from_env()
+QUEUE_NAME = _CONSUMER_CFG.queue_name
+QUEUE_BACKEND = _CONSUMER_CFG.queue_backend
+SERVICEBUS_CONN = _CONSUMER_CFG.servicebus_conn
+RESULT_BACKEND = _CONSUMER_CFG.result_backend
+RESULT_STORE_CONN = _CONSUMER_CFG.result_store_conn
+RESULT_TABLE = _CONSUMER_CFG.result_table
+RESULT_PARTITION = _CONSUMER_CFG.result_partition
+REDIS_URL = _CONSUMER_CFG.redis_url
+REDIS_QUEUE_KEY = _CONSUMER_CFG.redis_queue_key
+REDIS_RESULT_PREFIX = _CONSUMER_CFG.redis_result_prefix
+REDIS_RESULT_TTL_SECONDS = _CONSUMER_CFG.redis_result_ttl_seconds
+
+# API-specific settings
 APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
     "APPLICATIONINSIGHTS_CONNECTION_STRING"
 )  # optional
-RESULT_BACKEND = os.getenv("RESULT_BACKEND", "table").strip().lower()
-RESULT_STORE_CONN = os.getenv("RESULT_STORE_CONN")
-RESULT_TABLE = os.getenv("RESULT_TABLE", "scanresults")
-RESULT_PARTITION = os.getenv("RESULT_PARTITION", "scan")
-
-# Local dev backends (Redis)
-REDIS_URL = os.getenv("REDIS_URL")
-REDIS_QUEUE_KEY = os.getenv("REDIS_QUEUE_KEY", f"queue:{QUEUE_NAME}")
-REDIS_RESULT_PREFIX = os.getenv("REDIS_RESULT_PREFIX", "scan:")
-REDIS_RESULT_TTL_SECONDS = int(os.getenv("REDIS_RESULT_TTL_SECONDS", "0"))
 
 # Screenshots (optional)
 SCREENSHOT_REDIS_PREFIX = os.getenv("SCREENSHOT_REDIS_PREFIX", "screenshot:")
@@ -478,15 +481,8 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
 async def lifespan(app: FastAPI):
     global sb_client, sb_sender, table_service, table_client, redis_client, blob_service
 
-    cred = None  # will hold DefaultAzureCredential if MI is used
-    if QUEUE_BACKEND not in ("servicebus", "redis"):
-        raise RuntimeError("QUEUE_BACKEND must be 'servicebus' or 'redis'")
-    if RESULT_BACKEND not in ("table", "redis"):
-        raise RuntimeError("RESULT_BACKEND must be 'table' or 'redis'")
-
-    # --- Optional Redis client (local dev backends) ---
-    if (QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis") and not REDIS_URL:
-        raise RuntimeError("REDIS_URL is required when using Redis backends")
+    # Validate shared configuration
+    _CONSUMER_CFG.validate()
 
     if QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis":
         try:
