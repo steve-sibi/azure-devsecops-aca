@@ -105,16 +105,6 @@ SCREENSHOT_TTL_SECONDS = _SCREENSHOT_LIMITS.ttl_seconds
 setup_logging(service_name="worker", level=logging.INFO)
 logger = get_logger(__name__)
 
-if APPINSIGHTS_CONN:
-    try:
-        from opencensus.ext.azure.log_exporter import AzureLogHandler
-
-        logging.getLogger().addHandler(
-            AzureLogHandler(connection_string=APPINSIGHTS_CONN)
-        )
-    except Exception as e:
-        logger.warning("App Insights logging not enabled", exc_info=e)
-
 shutdown_flag = ShutdownFlag()
 install_signal_handlers(shutdown_flag)
 

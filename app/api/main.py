@@ -542,26 +542,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.warning(f"App Insights logging not enabled: {e}")
 
-    # --- Optional OpenTelemetry tracing (only if packages + conn are present) ---
-    if APPINSIGHTS_CONN:
-        try:
-            from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
-            from opentelemetry import trace
-            from opentelemetry.sdk.resources import SERVICE_NAME, Resource
-            from opentelemetry.sdk.trace import TracerProvider
-            from opentelemetry.sdk.trace.export import BatchSpanProcessor
-
-            resource = Resource.create({SERVICE_NAME: "aca-fastapi-api"})
-            provider = TracerProvider(resource=resource)
-            trace.set_tracer_provider(provider)
-            exporter = AzureMonitorTraceExporter.from_connection_string(
-                APPINSIGHTS_CONN
-            )
-            provider.add_span_processor(BatchSpanProcessor(exporter))
-        except Exception as e:
-            # Optional; don't fail app startup on telemetry wiring issues
-            print("OTel init skipped:", e)
-
     yield  # ---- App runs ----
 
     # ---- Cleanup on shutdown ----
