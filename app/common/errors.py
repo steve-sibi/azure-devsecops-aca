@@ -4,7 +4,6 @@ import json
 from dataclasses import dataclass
 from typing import Optional
 
-
 DEFAULT_MAX_ERROR_CHARS = 300
 
 
@@ -23,7 +22,9 @@ def _truncate(value: str, *, max_chars: int) -> str:
     return s[: max(0, max_chars - 3)] + "..."
 
 
-def classify_exception(exc: Exception, *, max_error_chars: int = DEFAULT_MAX_ERROR_CHARS) -> ErrorInfo:
+def classify_exception(
+    exc: Exception, *, max_error_chars: int = DEFAULT_MAX_ERROR_CHARS
+) -> ErrorInfo:
     from common.scan_messages import ScanMessageValidationError
     from common.url_validation import UrlValidationError
 
@@ -67,7 +68,11 @@ def classify_exception(exc: Exception, *, max_error_chars: int = DEFAULT_MAX_ERR
             log_traceback=False,
         )
 
-    if msg in ("content too large", "too many redirects", "redirect without Location header"):
+    if msg in (
+        "content too large",
+        "too many redirects",
+        "redirect without Location header",
+    ):
         return ErrorInfo(
             code="upstream_rejected",
             message=_truncate(msg, max_chars=max_error_chars),
@@ -110,14 +115,3 @@ def classify_exception(exc: Exception, *, max_error_chars: int = DEFAULT_MAX_ERR
         retryable=True,
         log_traceback=True,
     )
-
-
-def safe_error_message(exc: Exception, *, max_error_chars: int = DEFAULT_MAX_ERROR_CHARS) -> str:
-    return classify_exception(exc, max_error_chars=max_error_chars).message
-
-
-def should_retry(exc: Exception, *, delivery_count: int, max_retries: int) -> bool:
-    info = classify_exception(exc)
-    if not info.retryable:
-        return False
-    return int(delivery_count or 0) < int(max_retries or 0)

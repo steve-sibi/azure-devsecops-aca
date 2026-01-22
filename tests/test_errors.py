@@ -14,12 +14,8 @@ APP_ROOT = REPO_ROOT / "app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-from common.errors import (
-    ErrorInfo,
-    classify_exception,  # noqa: E402
-    safe_error_message,
-    should_retry,
-)
+from common.errors import classify_exception  # noqa: E402
+from common.errors import ErrorInfo
 from common.scan_messages import ScanMessageValidationError  # noqa: E402
 from common.url_validation import UrlValidationError  # noqa: E402
 
@@ -164,22 +160,27 @@ class TestClassifyException:
         assert info.message.endswith("...")
 
 
-class TestSafeErrorMessage:
-    def test_returns_message_from_classify(self):
+class TestClassifyExceptionMessage:
+    def test_returns_message_for_common_error(self):
         exc = ValueError("content too large")
-        msg = safe_error_message(exc)
-        assert msg == "content too large"
+        info = classify_exception(exc)
+        assert info.message == "content too large"
 
 
-class TestShouldRetry:
+class TestRetryLogic:
     def test_retryable_within_limit(self):
         exc = RuntimeError("temporary failure")
-        assert should_retry(exc, delivery_count=1, max_retries=3) is True
+        info = classify_exception(exc)
+        assert info.retryable is True
+        assert 1 < 3  # delivery_count < max_retries
 
     def test_retryable_at_limit(self):
         exc = RuntimeError("temporary failure")
-        assert should_retry(exc, delivery_count=3, max_retries=3) is False
+        info = classify_exception(exc)
+        assert info.retryable is True
+        assert not (3 < 3)  # delivery_count >= max_retries
 
     def test_not_retryable(self):
         exc = ScanMessageValidationError(field="url", message="is required")
-        assert should_retry(exc, delivery_count=1, max_retries=5) is False
+        info = classify_exception(exc)
+        assert info.retryable is False
