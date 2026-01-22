@@ -1,1726 +1,2167 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Azure DevSecOps URL Scanner</title>
-    <meta name="description" content="Submit URL scan jobs and poll for results." />
-    <style>
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Azure DevSecOps URL Scanner</title>
+  <meta name="description" content="Submit URL scan jobs and poll for results." />
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f6f7fb;
+      --card: #ffffff;
+      --text: #111827;
+      --muted: #6b7280;
+      --border: #e5e7eb;
+      --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      --primary: #2563eb;
+      --primary-ink: #ffffff;
+      --success: #16a34a;
+      --success-ink: #ffffff;
+      --success-soft: rgba(22, 163, 74, 0.14);
+      --danger: #dc2626;
+      --danger-soft: rgba(220, 38, 38, 0.14);
+      --code-bg: #0b1020;
+      --code-fg: #d6e0ff;
+      --ring: rgba(37, 99, 235, 0.22);
+      --primary-soft: rgba(37, 99, 235, 0.12);
+      --primary-soft-border: rgba(37, 99, 235, 0.45);
+    }
+
+    @media (prefers-color-scheme: dark) {
       :root {
-        color-scheme: light dark;
-        --bg: #f6f7fb;
-        --card: #ffffff;
-        --text: #111827;
-        --muted: #6b7280;
-        --border: #e5e7eb;
-        --shadow: 0 10px 30px rgba(0,0,0,0.08);
-        --primary: #2563eb;
-        --primary-ink: #ffffff;
-        --success: #16a34a;
-        --success-ink: #ffffff;
-        --success-soft: rgba(22,163,74,0.14);
-        --danger: #dc2626;
-        --danger-soft: rgba(220,38,38,0.14);
-        --code-bg: #0b1020;
+        --bg: #0b1020;
+        --card: #0f172a;
+        --text: #e5e7eb;
+        --muted: #94a3b8;
+        --border: #22304a;
+        --shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+        --primary: #60a5fa;
+        --primary-ink: #0b1020;
+        --success: #4ade80;
+        --success-ink: #0b1020;
+        --success-soft: rgba(74, 222, 128, 0.16);
+        --danger: #fb7185;
+        --danger-soft: rgba(251, 113, 133, 0.16);
+        --code-bg: #070b18;
         --code-fg: #d6e0ff;
-        --ring: rgba(37, 99, 235, 0.22);
-        --primary-soft: rgba(37, 99, 235, 0.12);
-        --primary-soft-border: rgba(37, 99, 235, 0.45);
+        --ring: rgba(96, 165, 250, 0.26);
+        --primary-soft: rgba(96, 165, 250, 0.14);
+        --primary-soft-border: rgba(96, 165, 250, 0.45);
       }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --bg: #0b1020;
-          --card: #0f172a;
-          --text: #e5e7eb;
-          --muted: #94a3b8;
-          --border: #22304a;
-          --shadow: 0 14px 40px rgba(0,0,0,0.35);
-          --primary: #60a5fa;
-          --primary-ink: #0b1020;
-          --success: #4ade80;
-          --success-ink: #0b1020;
-          --success-soft: rgba(74,222,128,0.16);
-          --danger: #fb7185;
-          --danger-soft: rgba(251,113,133,0.16);
-          --code-bg: #070b18;
-          --code-fg: #d6e0ff;
-          --ring: rgba(96, 165, 250, 0.26);
-          --primary-soft: rgba(96, 165, 250, 0.14);
-          --primary-soft-border: rgba(96, 165, 250, 0.45);
-        }
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background:
+        radial-gradient(1200px circle at 15% 5%, rgba(37, 99, 235, 0.16), transparent 55%),
+        radial-gradient(900px circle at 85% 18%, rgba(22, 163, 74, 0.10), transparent 55%),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    a {
+      color: var(--primary);
+    }
+
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    .app {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: clamp(1.25rem, 2vw, 2rem) clamp(1rem, 3vw, 2.25rem) 3rem;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .header h1 {
+      margin: 0;
+      font-size: 1.65rem;
+      letter-spacing: -0.02em;
+    }
+
+    .sub {
+      margin: 0.35rem 0 0;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .grid {
+      margin-top: 1.25rem;
+      display: grid;
+      grid-template-columns: minmax(320px, 380px) 1fr;
+      gap: 1.15rem;
+      align-items: start;
+    }
+
+    @media (max-width: 980px) {
+      .grid {
+        grid-template-columns: 1fr;
       }
-      * { box-sizing: border-box; }
-      body {
-        margin: 0;
-        font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-        background:
-          radial-gradient(1200px circle at 15% 5%, rgba(37,99,235,0.16), transparent 55%),
-          radial-gradient(900px circle at 85% 18%, rgba(22,163,74,0.10), transparent 55%),
-          var(--bg);
-        color: var(--text);
-        line-height: 1.45;
-        min-height: 100vh;
-        -webkit-font-smoothing: antialiased;
-        -moz-osx-font-smoothing: grayscale;
-      }
-      a { color: var(--primary); }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-      .app { max-width: 1440px; margin: 0 auto; padding: clamp(1.25rem, 2vw, 2rem) clamp(1rem, 3vw, 2.25rem) 3rem; }
-      .header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
-      .header h1 { margin: 0; font-size: 1.65rem; letter-spacing: -0.02em; }
-      .sub { margin: 0.35rem 0 0; color: var(--muted); line-height: 1.4; }
-      .grid { margin-top: 1.25rem; display: grid; grid-template-columns: minmax(320px, 380px) 1fr; gap: 1.15rem; align-items: start; }
-      @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
-      .card {
-        background: linear-gradient(180deg, rgba(148,163,184,0.06), rgba(148,163,184,0.02)), var(--card);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        box-shadow: var(--shadow);
-        padding: 1rem;
-      }
-      .card.full { grid-column: 1 / -1; }
-      .card h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
-      .card-head { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
-      .field { margin-bottom: 0.9rem; }
-      label { display: block; font-size: 0.85rem; color: var(--muted); margin-bottom: 0.35rem; }
-      input {
-        width: 100%;
-        padding: 0.65rem 0.75rem;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-        background: rgba(148,163,184,0.06);
-        color: var(--text);
-        transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
-      }
-      input::placeholder { color: var(--muted); opacity: 0.75; }
-      input:focus {
-        outline: none;
-        border-color: var(--primary);
-        box-shadow: 0 0 0 4px var(--ring);
-        background: rgba(148,163,184,0.04);
-      }
-      .url-group {
-        display: flex;
-        width: 100%;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-        background: rgba(148,163,184,0.06);
-        overflow: hidden;
-        transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
-      }
-      .url-scheme {
-        display: inline-flex;
-        align-items: center;
-        padding: 0.65rem 0.75rem;
-        font-weight: 700;
-        color: var(--success-ink);
-        background: var(--success);
-        border-right: 1px solid rgba(0,0,0,0.18);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        white-space: nowrap;
-      }
-      .url-input {
-        flex: 1 1 auto;
-        border: none;
-        background: transparent;
-        padding: 0.65rem 0.75rem;
-        width: auto;
-      }
-      .url-input:focus,
-      .url-input:focus-visible {
-        outline: none;
-        box-shadow: none;
-        background: transparent;
-      }
-      .url-group:focus-within {
-        border-color: var(--primary);
-        box-shadow: 0 0 0 4px var(--ring);
-        background: rgba(148,163,184,0.04);
-      }
-      .url-group:focus-within .url-scheme { border-right-color: var(--primary-soft-border); }
-      .help { margin-top: 0.35rem; font-size: 0.85rem; color: var(--muted); }
-      .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
-      button {
-        border: 1px solid var(--border);
-        background: transparent;
-        color: var(--text);
-        padding: 0.6rem 0.85rem;
-        border-radius: 10px;
-        cursor: pointer;
-        transition: transform 80ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
-      }
-      button:hover:not(:disabled) {
-        background: rgba(148,163,184,0.08);
-        transform: translateY(-1px);
-      }
-      button.primary {
-        background: var(--primary);
-        border-color: var(--primary);
-        color: var(--primary-ink);
-        font-weight: 600;
-      }
-      button.primary:hover:not(:disabled) { filter: brightness(1.03); }
-      button:focus-visible, .tab:focus-visible, input:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 4px var(--ring);
-      }
-      button:disabled { opacity: 0.55; cursor: not-allowed; }
-      .status { margin-top: 0.85rem; min-height: 1.25rem; display: flex; align-items: center; gap: 0.5rem; color: var(--muted); }
-      .badge { font-size: 0.75rem; padding: 0.2rem 0.55rem; border-radius: 999px; border: 1px solid var(--border); background: transparent; color: var(--text); font-weight: 600; }
-      .badge.ok { border-color: rgba(22,163,74,0.5); background: rgba(22,163,74,0.12); }
-      .badge.warn { border-color: rgba(234,179,8,0.6); background: rgba(234,179,8,0.14); }
-      .badge.bad { border-color: rgba(220,38,38,0.5); background: rgba(220,38,38,0.12); }
-      .badge.info { border-color: var(--primary-soft-border); background: var(--primary-soft); }
-      .muted { color: var(--muted); }
-      .small { font-size: 0.85rem; }
-      pre {
-        margin: 0;
-        background: var(--code-bg);
-        color: var(--code-fg);
-        padding: 1rem;
-        border-radius: 12px;
-        overflow: auto;
-        border: 1px solid var(--border);
-        font-size: 0.9rem;
-        line-height: 1.45;
-      }
-      .table-wrap { overflow: auto; border: 1px solid var(--border); border-radius: 12px; background: rgba(148,163,184,0.03); }
-      table { width: 100%; border-collapse: collapse; min-width: 720px; }
-      th, td { text-align: left; padding: 0.55rem 0.65rem; border-bottom: 1px solid var(--border); vertical-align: top; }
-      th {
-        font-size: 0.78rem;
-        letter-spacing: 0.02em;
-        text-transform: uppercase;
-        color: var(--muted);
-        background: rgba(148,163,184,0.10);
-        position: sticky;
-        top: 0;
-      }
-      tr:last-child td { border-bottom: none; }
-      .nowrap { white-space: nowrap; }
-      .url-cell { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .filter { flex: 1; min-width: 220px; }
-      .tabs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.25rem 0 0.85rem; }
-      .tab {
-        border: 1px solid var(--border);
-        background: transparent;
-        color: var(--text);
-        padding: 0.45rem 0.7rem;
-        border-radius: 999px;
-        cursor: pointer;
-        font-size: 0.85rem;
-      }
-      .tab[aria-selected="true"] {
-        background: var(--primary-soft);
-        border-color: var(--primary-soft-border);
-      }
-      .tab[aria-current="page"] {
-        background: var(--primary-soft);
-        border-color: var(--primary-soft-border);
-      }
-      a.tab { text-decoration: none; display: inline-flex; align-items: center; }
-      .panel.hidden { display: none; }
+    }
+
+    .card {
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.02)), var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      padding: 1rem;
+    }
+
+    .card.full {
+      grid-column: 1 / -1;
+    }
+
+    .card h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1.05rem;
+    }
+
+    .card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.75rem;
+    }
+
+    .field {
+      margin-bottom: 0.9rem;
+    }
+
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 0.35rem;
+    }
+
+    input {
+      width: 100%;
+      padding: 0.65rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(148, 163, 184, 0.06);
+      color: var(--text);
+      transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    input::placeholder {
+      color: var(--muted);
+      opacity: 0.75;
+    }
+
+    input:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px var(--ring);
+      background: rgba(148, 163, 184, 0.04);
+    }
+
+    .url-group {
+      display: flex;
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(148, 163, 184, 0.06);
+      overflow: hidden;
+      transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    .url-scheme {
+      display: inline-flex;
+      align-items: center;
+      padding: 0.65rem 0.75rem;
+      font-weight: 700;
+      color: var(--success-ink);
+      background: var(--success);
+      border-right: 1px solid rgba(0, 0, 0, 0.18);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      white-space: nowrap;
+    }
+
+    .url-input {
+      flex: 1 1 auto;
+      border: none;
+      background: transparent;
+      padding: 0.65rem 0.75rem;
+      width: auto;
+    }
+
+    .url-input:focus,
+    .url-input:focus-visible {
+      outline: none;
+      box-shadow: none;
+      background: transparent;
+    }
+
+    .url-group:focus-within {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px var(--ring);
+      background: rgba(148, 163, 184, 0.04);
+    }
+
+    .url-group:focus-within .url-scheme {
+      border-right-color: var(--primary-soft-border);
+    }
+
+    .help {
+      margin-top: 0.35rem;
+      font-size: 0.85rem;
+      color: var(--muted);
+    }
+
+    .actions {
+      display: flex;
+      gap: 0.6rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    button {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      padding: 0.6rem 0.85rem;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: transform 80ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
+    }
+
+    button:hover:not(:disabled) {
+      background: rgba(148, 163, 184, 0.08);
+      transform: translateY(-1px);
+    }
+
+    button.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--primary-ink);
+      font-weight: 600;
+    }
+
+    button.primary:hover:not(:disabled) {
+      filter: brightness(1.03);
+    }
+
+    button:focus-visible,
+    .tab:focus-visible,
+    input:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 4px var(--ring);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+
+    .status {
+      margin-top: 0.85rem;
+      min-height: 1.25rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--muted);
+    }
+
+    .badge {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .badge.ok {
+      border-color: rgba(22, 163, 74, 0.5);
+      background: rgba(22, 163, 74, 0.12);
+    }
+
+    .badge.warn {
+      border-color: rgba(234, 179, 8, 0.6);
+      background: rgba(234, 179, 8, 0.14);
+    }
+
+    .badge.bad {
+      border-color: rgba(220, 38, 38, 0.5);
+      background: rgba(220, 38, 38, 0.12);
+    }
+
+    .badge.info {
+      border-color: var(--primary-soft-border);
+      background: var(--primary-soft);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .small {
+      font-size: 0.85rem;
+    }
+
+    pre {
+      margin: 0;
+      background: var(--code-bg);
+      color: var(--code-fg);
+      padding: 1rem;
+      border-radius: 12px;
+      overflow: auto;
+      border: 1px solid var(--border);
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(148, 163, 184, 0.03);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 720px;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 0.55rem 0.65rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    th {
+      font-size: 0.78rem;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: var(--muted);
+      background: rgba(148, 163, 184, 0.10);
+      position: sticky;
+      top: 0;
+    }
+
+    tr:last-child td {
+      border-bottom: none;
+    }
+
+    .nowrap {
+      white-space: nowrap;
+    }
+
+    .url-cell {
+      max-width: 340px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .filter {
+      flex: 1;
+      min-width: 220px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+      margin: 0.25rem 0 0.85rem;
+    }
+
+    .tab {
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text);
+      padding: 0.45rem 0.7rem;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 0.85rem;
+    }
+
+    .tab[aria-selected="true"] {
+      background: var(--primary-soft);
+      border-color: var(--primary-soft-border);
+    }
+
+    .tab[aria-current="page"] {
+      background: var(--primary-soft);
+      border-color: var(--primary-soft-border);
+    }
+
+    a.tab {
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+
+    .panel.hidden {
+      display: none;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
+      align-items: start;
+    }
+
+    .summary-col {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      min-width: 0;
+    }
+
+    @media (max-width: 900px) {
       .summary-grid {
-        display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 1rem;
-        align-items: start;
+        grid-template-columns: 1fr;
       }
-      .summary-col { display: flex; flex-direction: column; gap: 1rem; min-width: 0; }
-      @media (max-width: 900px) { .summary-grid { grid-template-columns: 1fr; } }
-      .summary-block {
-        --dot: var(--primary);
-        --dot-soft: var(--primary-soft);
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 0.95rem;
-        background: rgba(148,163,184,0.04);
-        backdrop-filter: blur(10px);
-        align-self: start;
-        height: fit-content;
-        min-width: 0;
-      }
-      .summary-block.span-all { grid-column: 1 / -1; }
-      .summary-block.tone-ok { --dot: var(--success); --dot-soft: var(--success-soft); }
-      .summary-block.tone-warn { --dot: rgba(234,179,8,1); --dot-soft: rgba(234,179,8,0.14); }
-      .summary-block.tone-bad { --dot: var(--danger); --dot-soft: var(--danger-soft); }
-      .summary-block h3 {
-        margin: 0 0 0.75rem;
-        font-size: 0.95rem;
-        display: flex;
-        align-items: center;
-        gap: 0.55rem;
-        padding-bottom: 0.55rem;
-        border-bottom: 1px solid rgba(148,163,184,0.14);
-      }
-      .summary-block h3::before {
-        content: "";
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        background: var(--dot);
-        box-shadow: 0 0 0 4px var(--dot-soft);
-        opacity: 0.9;
-        flex: 0 0 auto;
-      }
-      .summary-title { font-weight: 700; letter-spacing: -0.01em; }
-      .summary-meta { margin-left: auto; display: inline-flex; flex-wrap: wrap; gap: 0.35rem; justify-content: flex-end; }
-      dl.kv { display: block; margin: 0; }
-      dl.kv.kv-wide .kv-row { grid-template-columns: 1fr; }
-      dl.kv.kv-wide dt { display: none; }
+    }
+
+    .summary-block {
+      --dot: var(--primary);
+      --dot-soft: var(--primary-soft);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.95rem;
+      background: rgba(148, 163, 184, 0.04);
+      backdrop-filter: blur(10px);
+      align-self: start;
+      height: fit-content;
+      min-width: 0;
+    }
+
+    .summary-block.span-all {
+      grid-column: 1 / -1;
+    }
+
+    .summary-block.tone-ok {
+      --dot: var(--success);
+      --dot-soft: var(--success-soft);
+    }
+
+    .summary-block.tone-warn {
+      --dot: rgba(234, 179, 8, 1);
+      --dot-soft: rgba(234, 179, 8, 0.14);
+    }
+
+    .summary-block.tone-bad {
+      --dot: var(--danger);
+      --dot-soft: var(--danger-soft);
+    }
+
+    .summary-block h3 {
+      margin: 0 0 0.75rem;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding-bottom: 0.55rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    }
+
+    .summary-block h3::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--dot);
+      box-shadow: 0 0 0 4px var(--dot-soft);
+      opacity: 0.9;
+      flex: 0 0 auto;
+    }
+
+    .summary-title {
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+
+    .summary-meta {
+      margin-left: auto;
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      justify-content: flex-end;
+    }
+
+    dl.kv {
+      display: block;
+      margin: 0;
+    }
+
+    dl.kv.kv-wide .kv-row {
+      grid-template-columns: 1fr;
+    }
+
+    dl.kv.kv-wide dt {
+      display: none;
+    }
+
+    dl.kv .kv-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 170px) 1fr;
+      gap: 0.35rem 0.8rem;
+      padding: 0.4rem 0;
+    }
+
+    dl.kv .kv-row>* {
+      min-width: 0;
+    }
+
+    dl.kv .kv-row+.kv-row {
+      border-top: 1px solid rgba(148, 163, 184, 0.14);
+    }
+
+    dl.kv dt {
+      color: var(--muted);
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding-top: 0.12rem;
+    }
+
+    dl.kv dd {
+      margin: 0;
+      min-width: 0;
+      overflow-wrap: anywhere;
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+      line-height: 1.35;
+    }
+
+    @media (max-width: 520px) {
       dl.kv .kv-row {
-        display: grid;
-        grid-template-columns: minmax(120px, 170px) 1fr;
-        gap: 0.35rem 0.8rem;
-        padding: 0.4rem 0;
-      }
-      dl.kv .kv-row > * { min-width: 0; }
-      dl.kv .kv-row + .kv-row { border-top: 1px solid rgba(148,163,184,0.14); }
-      dl.kv dt {
-        color: var(--muted);
-        font-size: 0.72rem;
-        letter-spacing: 0.06em;
-        text-transform: uppercase;
-        padding-top: 0.12rem;
-      }
-      dl.kv dd {
-        margin: 0;
-        min-width: 0;
-        overflow-wrap: anywhere;
-        font-weight: 500;
-        font-variant-numeric: tabular-nums;
-        line-height: 1.35;
-      }
-      @media (max-width: 520px) {
-        dl.kv .kv-row { grid-template-columns: 1fr; gap: 0.2rem; }
-        dl.kv dt { padding-top: 0; }
-      }
-      .value-inline { display: inline-flex; gap: 0.35rem; flex-wrap: wrap; align-items: center; }
-      .value-row { display: flex; align-items: flex-start; gap: 0.5rem; justify-content: space-between; width: 100%; }
-      .value-row > :first-child { flex: 1 1 auto; min-width: 0; }
-      .value-row .icon-btn { flex: 0 0 auto; }
-      .value-code {
-        display: inline-block;
-        padding: 0.18rem 0.45rem;
-        border-radius: 10px;
-        border: 1px solid rgba(148,163,184,0.22);
-        background: rgba(148,163,184,0.08);
-        font-size: 0.86rem;
-        line-height: 1.2;
-        white-space: pre-wrap;
-        word-break: break-word;
-      }
-      .value-link {
-        text-decoration: none;
-        border-bottom: 1px dashed rgba(148,163,184,0.45);
-        overflow-wrap: anywhere;
-        word-break: break-word;
-      }
-      .value-link:hover { border-bottom-color: var(--primary); }
-      .icon-btn {
-        padding: 0.3rem 0.55rem;
-        border-radius: 10px;
-        font-size: 0.78rem;
-        line-height: 1;
-        border: 1px solid rgba(148,163,184,0.28);
-        background: rgba(148,163,184,0.08);
-      }
-      .icon-btn:hover:not(:disabled) {
-        background: rgba(148,163,184,0.14);
-        transform: none;
+        grid-template-columns: 1fr;
+        gap: 0.2rem;
       }
 
-      /* --- Web analysis UI (Security Analysis / Page / Network) --- */
-      .section {
-        grid-column: 1 / -1;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        padding: 1rem;
-        background: rgba(148,163,184,0.04);
-        backdrop-filter: blur(10px);
-        min-width: 0;
+      dl.kv dt {
+        padding-top: 0;
       }
-      .section-head {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.75rem;
-        flex-wrap: wrap;
-        margin-bottom: 0.85rem;
-      }
-      .section-title {
-        margin: 0;
-        font-size: 1.05rem;
-        letter-spacing: -0.01em;
-        font-weight: 800;
-      }
+    }
+
+    .value-inline {
+      display: inline-flex;
+      gap: 0.35rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .value-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      justify-content: space-between;
+      width: 100%;
+    }
+
+    .value-row> :first-child {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .value-row .icon-btn {
+      flex: 0 0 auto;
+    }
+
+    .value-code {
+      display: inline-block;
+      padding: 0.18rem 0.45rem;
+      border-radius: 10px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(148, 163, 184, 0.08);
+      font-size: 0.86rem;
+      line-height: 1.2;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .value-link {
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.45);
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+
+    .value-link:hover {
+      border-bottom-color: var(--primary);
+    }
+
+    .icon-btn {
+      padding: 0.3rem 0.55rem;
+      border-radius: 10px;
+      font-size: 0.78rem;
+      line-height: 1;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background: rgba(148, 163, 184, 0.08);
+    }
+
+    .icon-btn:hover:not(:disabled) {
+      background: rgba(148, 163, 184, 0.14);
+      transform: none;
+    }
+
+    /* --- Web analysis UI (Security Analysis / Page / Network) --- */
+    .section {
+      grid-column: 1 / -1;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1rem;
+      background: rgba(148, 163, 184, 0.04);
+      backdrop-filter: blur(10px);
+      min-width: 0;
+    }
+
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      flex-wrap: wrap;
+      margin-bottom: 0.85rem;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: 1.05rem;
+      letter-spacing: -0.01em;
+      font-weight: 800;
+    }
+
+    .analysis-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1rem;
+      align-items: start;
+    }
+
+    @media (max-width: 1100px) {
       .analysis-grid {
-        display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 1rem;
-        align-items: start;
-      }
-      @media (max-width: 1100px) { .analysis-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-      @media (max-width: 720px) { .analysis-grid { grid-template-columns: 1fr; } }
-      .analysis-card {
-        border: 1px solid rgba(148,163,184,0.22);
-        border-radius: 14px;
-        padding: 0.95rem;
-        background: linear-gradient(180deg, rgba(148,163,184,0.06), rgba(148,163,184,0.02));
-        min-width: 0;
-      }
-      .analysis-card.tone-ok { border-color: rgba(22,163,74,0.5); }
-      .analysis-card.tone-warn { border-color: rgba(234,179,8,0.6); }
-      .analysis-card.tone-bad { border-color: rgba(220,38,38,0.5); }
-      .analysis-card h4 {
-        margin: 0 0 0.75rem;
-        font-size: 0.95rem;
-        font-weight: 800;
-        letter-spacing: -0.01em;
-      }
-      .checklist { display: flex; flex-direction: column; gap: 0.55rem; }
-      .checkline {
-        border-radius: 12px;
-      }
-      .checkline summary {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 0.6rem;
-        min-width: 0;
-        padding: 0.1rem 0;
-        cursor: pointer;
-        user-select: none;
-        list-style: none;
-      }
-      .checkline summary::-webkit-details-marker { display: none; }
-      .checkline summary:focus-visible {
-        outline: none;
-        box-shadow: 0 0 0 4px var(--ring);
-        border-radius: 10px;
-      }
-      .checkleft { display: inline-flex; align-items: center; gap: 0.55rem; min-width: 0; }
-      .checkdot {
-        width: 10px;
-        height: 10px;
-        border-radius: 999px;
-        background: var(--primary);
-        box-shadow: 0 0 0 4px var(--primary-soft);
-        flex: 0 0 auto;
-        opacity: 0.95;
-      }
-      .checkline.ok .checkdot { background: var(--success); box-shadow: 0 0 0 4px var(--success-soft); }
-      .checkline.bad .checkdot { background: var(--danger); box-shadow: 0 0 0 4px var(--danger-soft); }
-      .checkline.warn .checkdot { background: rgba(234,179,8,1); box-shadow: 0 0 0 4px rgba(234,179,8,0.14); }
-      .checklabel { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .checkvalue { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--muted); flex: 0 0 auto; }
-      .checkhint {
-        margin-left: 0.35rem;
-        font-size: 0.72rem;
-        font-weight: 900;
-        color: var(--muted);
-        border: 1px solid rgba(148,163,184,0.28);
-        background: rgba(148,163,184,0.08);
-        padding: 0.08rem 0.35rem;
-        border-radius: 999px;
-        line-height: 1.2;
-        flex: 0 0 auto;
-      }
-      .checkhelp {
-        margin: 0.35rem 0 0.1rem;
-        padding-left: 1.65rem;
-        color: var(--muted);
-        font-size: 0.82rem;
-        line-height: 1.35;
-      }
-      .analysis-actions { display: flex; justify-content: center; gap: 0.7rem; flex-wrap: wrap; margin-top: 1rem; }
-      a.btn {
-        display: inline-flex;
-        align-items: center;
-        gap: 0.5rem;
-        padding: 0.65rem 0.9rem;
-        border-radius: 10px;
-        border: 1px solid var(--border);
-        text-decoration: none;
-        color: var(--text);
-        background: rgba(148,163,184,0.06);
-        font-weight: 700;
-      }
-      a.btn:hover { background: rgba(148,163,184,0.10); }
-      a.btn.primary {
-        background: var(--primary);
-        border-color: var(--primary);
-        color: var(--primary-ink);
-      }
-      a.btn.success {
-        background: var(--success);
-        border-color: var(--success);
-        color: var(--success-ink);
-      }
-      .split {
-        display: grid;
-        grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.65fr);
-        gap: 1rem;
-        align-items: start;
-      }
-      @media (max-width: 980px) { .split { grid-template-columns: 1fr; } }
-      .mini-toggle {
-        border: 1px solid rgba(148,163,184,0.22);
-        border-radius: 12px;
-        background: rgba(148,163,184,0.06);
-        padding: 0.35rem 0.55rem;
-      }
-      .mini-toggle summary {
-        cursor: pointer;
-        user-select: none;
-        list-style: none;
-        font-size: 0.85rem;
-        font-weight: 700;
-        color: var(--text);
-      }
-      .mini-toggle summary::-webkit-details-marker { display: none; }
-      .headers-list {
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: rgba(148,163,184,0.03);
-        overflow: auto;
-        max-height: 280px;
-        min-width: 0;
-      }
-      .header-row {
-        display: grid;
-        grid-template-columns: minmax(140px, 180px) 1fr;
-        gap: 0.6rem;
-        padding: 0.5rem 0.65rem;
-        border-bottom: 1px solid rgba(148,163,184,0.14);
-        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-        font-size: 0.86rem;
-      }
-      .header-row:last-child { border-bottom: none; }
-      .header-name { color: var(--success); font-weight: 800; }
-      .header-value { overflow-wrap: anywhere; color: var(--text); }
-      .screenshot {
-        border: 1px solid var(--border);
-        border-radius: 12px;
-        background: rgba(148,163,184,0.03);
-        padding: 0.75rem;
-        min-width: 0;
-      }
-      .screenshot img {
-        width: 100%;
-        height: auto;
-        border-radius: 10px;
-        display: block;
-        background: rgba(148,163,184,0.06);
-        cursor: zoom-in;
-      }
-      .screenshot .placeholder {
-        border: 1px dashed rgba(148,163,184,0.4);
-        border-radius: 12px;
-        padding: 1rem;
-        text-align: center;
-        color: var(--muted);
-        font-weight: 700;
-      }
-      .dns-grid {
-        display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.65rem;
       }
-      @media (max-width: 720px) { .dns-grid { grid-template-columns: 1fr; } }
-      .dns-item {
-        border: 1px solid rgba(148,163,184,0.22);
-        border-radius: 12px;
-        padding: 0.55rem 0.65rem;
-        background: rgba(148,163,184,0.06);
-        font-variant-numeric: tabular-nums;
-        overflow-wrap: anywhere;
-        font-weight: 700;
-        color: var(--success);
+    }
+
+    @media (max-width: 720px) {
+      .analysis-grid {
+        grid-template-columns: 1fr;
       }
-      .modal {
-        position: fixed;
-        inset: 0;
-        background: rgba(0,0,0,0.7);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 1.25rem;
-        z-index: 1000;
+    }
+
+    .analysis-card {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 14px;
+      padding: 0.95rem;
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.02));
+      min-width: 0;
+    }
+
+    .analysis-card.tone-ok {
+      border-color: rgba(22, 163, 74, 0.5);
+    }
+
+    .analysis-card.tone-warn {
+      border-color: rgba(234, 179, 8, 0.6);
+    }
+
+    .analysis-card.tone-bad {
+      border-color: rgba(220, 38, 38, 0.5);
+    }
+
+    .analysis-card h4 {
+      margin: 0 0 0.75rem;
+      font-size: 0.95rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
+    }
+
+    .checklist {
+      display: flex;
+      flex-direction: column;
+      gap: 0.55rem;
+    }
+
+    .checkline {
+      border-radius: 12px;
+    }
+
+    .checkline summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.6rem;
+      min-width: 0;
+      padding: 0.1rem 0;
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+    }
+
+    .checkline summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .checkline summary:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 4px var(--ring);
+      border-radius: 10px;
+    }
+
+    .checkleft {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.55rem;
+      min-width: 0;
+    }
+
+    .checkdot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--primary);
+      box-shadow: 0 0 0 4px var(--primary-soft);
+      flex: 0 0 auto;
+      opacity: 0.95;
+    }
+
+    .checkline.ok .checkdot {
+      background: var(--success);
+      box-shadow: 0 0 0 4px var(--success-soft);
+    }
+
+    .checkline.bad .checkdot {
+      background: var(--danger);
+      box-shadow: 0 0 0 4px var(--danger-soft);
+    }
+
+    .checkline.warn .checkdot {
+      background: rgba(234, 179, 8, 1);
+      box-shadow: 0 0 0 4px rgba(234, 179, 8, 0.14);
+    }
+
+    .checklabel {
+      font-weight: 700;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .checkvalue {
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      flex: 0 0 auto;
+    }
+
+    .checkhint {
+      margin-left: 0.35rem;
+      font-size: 0.72rem;
+      font-weight: 900;
+      color: var(--muted);
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background: rgba(148, 163, 184, 0.08);
+      padding: 0.08rem 0.35rem;
+      border-radius: 999px;
+      line-height: 1.2;
+      flex: 0 0 auto;
+    }
+
+    .checkhelp {
+      margin: 0.35rem 0 0.1rem;
+      padding-left: 1.65rem;
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.35;
+    }
+
+    .analysis-actions {
+      display: flex;
+      justify-content: center;
+      gap: 0.7rem;
+      flex-wrap: wrap;
+      margin-top: 1rem;
+    }
+
+    a.btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.65rem 0.9rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      text-decoration: none;
+      color: var(--text);
+      background: rgba(148, 163, 184, 0.06);
+      font-weight: 700;
+    }
+
+    a.btn:hover {
+      background: rgba(148, 163, 184, 0.10);
+    }
+
+    a.btn.primary {
+      background: var(--primary);
+      border-color: var(--primary);
+      color: var(--primary-ink);
+    }
+
+    a.btn.success {
+      background: var(--success);
+      border-color: var(--success);
+      color: var(--success-ink);
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.65fr);
+      gap: 1rem;
+      align-items: start;
+    }
+
+    @media (max-width: 980px) {
+      .split {
+        grid-template-columns: 1fr;
       }
-      .modal img {
-        max-width: min(1100px, 96vw);
-        max-height: 86vh;
-        border-radius: 14px;
-        border: 1px solid rgba(148,163,184,0.35);
-        background: rgba(15, 23, 42, 0.95);
+    }
+
+    .mini-toggle {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 12px;
+      background: rgba(148, 163, 184, 0.06);
+      padding: 0.35rem 0.55rem;
+    }
+
+    .mini-toggle summary {
+      cursor: pointer;
+      user-select: none;
+      list-style: none;
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .mini-toggle summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .headers-list {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(148, 163, 184, 0.03);
+      overflow: auto;
+      max-height: 280px;
+      min-width: 0;
+    }
+
+    .header-row {
+      display: grid;
+      grid-template-columns: minmax(140px, 180px) 1fr;
+      gap: 0.6rem;
+      padding: 0.5rem 0.65rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.86rem;
+    }
+
+    .header-row:last-child {
+      border-bottom: none;
+    }
+
+    .header-name {
+      color: var(--success);
+      font-weight: 800;
+    }
+
+    .header-value {
+      overflow-wrap: anywhere;
+      color: var(--text);
+    }
+
+    .screenshot {
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(148, 163, 184, 0.03);
+      padding: 0.75rem;
+      min-width: 0;
+    }
+
+    .screenshot img {
+      width: 100%;
+      height: auto;
+      border-radius: 10px;
+      display: block;
+      background: rgba(148, 163, 184, 0.06);
+      cursor: zoom-in;
+    }
+
+    .screenshot .placeholder {
+      border: 1px dashed rgba(148, 163, 184, 0.4);
+      border-radius: 12px;
+      padding: 1rem;
+      text-align: center;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .dns-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 0.65rem;
+    }
+
+    @media (max-width: 720px) {
+      .dns-grid {
+        grid-template-columns: 1fr;
       }
-    </style>
-  </head>
-  <body>
-    <div class="app">
-      <header class="header">
-        <div>
-          <h1>Azure DevSecOps URL Scanner</h1>
-          <p class="sub">Submit scan jobs and poll results. Swagger: <a href="/docs">/docs</a>. API key required for scan endpoints.</p>
+    }
+
+    .dns-item {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 12px;
+      padding: 0.55rem 0.65rem;
+      background: rgba(148, 163, 184, 0.06);
+      font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
+      font-weight: 700;
+      color: var(--success);
+    }
+
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.25rem;
+      z-index: 1000;
+    }
+
+    .modal img {
+      max-width: min(1100px, 96vw);
+      max-height: 86vh;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.35);
+      background: rgba(15, 23, 42, 0.95);
+    }
+  </style>
+</head>
+
+<body>
+  <div class="app">
+    <header class="header">
+      <div>
+        <h1>Azure DevSecOps URL Scanner</h1>
+        <p class="sub">Submit scan jobs and poll results. Swagger: <a href="/docs">/docs</a>. API key required for scan
+          endpoints.</p>
+      </div>
+      <div class="actions">
+        <a class="tab" aria-current="page" href="/">URL scanner</a>
+        <a class="tab" href="/file">File scanner</a>
+        <button id="clearHistory" type="button">Clear history</button>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="card">
+        <h2>New scan</h2>
+        <div class="field">
+          <label for="apiKey">API key <span class="muted">(header: __API_KEY_HEADER__)</span></label>
+          <input id="apiKey" autocomplete="off" placeholder="Paste API key" />
+          <div class="help">Saved in this browser only (local storage).</div>
+        </div>
+        <div class="field">
+          <label for="url">HTTPS URL to scan</label>
+          <div class="url-group">
+            <span class="url-scheme" aria-hidden="true">https://</span>
+            <input id="url" class="url-input" inputmode="url" autocomplete="off" placeholder="example.com" />
+          </div>
+          <div class="help">Only public HTTPS destinations on port 443 are allowed.</div>
         </div>
         <div class="actions">
-          <a class="tab" aria-current="page" href="/">URL scanner</a>
-          <a class="tab" href="/file">File scanner</a>
-          <button id="clearHistory" type="button">Clear history</button>
+          <button id="start" class="primary" type="button">Start scan</button>
+          <button id="checkCurrent" type="button" disabled>Check job</button>
+          <button id="copyJson" type="button" disabled>Copy JSON</button>
         </div>
-      </header>
+        <div id="status" class="status" aria-live="polite"></div>
+      </section>
 
-      <div class="grid">
-        <section class="card">
-          <h2>New scan</h2>
-          <div class="field">
-            <label for="apiKey">API key <span class="muted">(header: __API_KEY_HEADER__)</span></label>
-            <input id="apiKey" autocomplete="off" placeholder="Paste API key" />
-            <div class="help">Saved in this browser only (local storage).</div>
-          </div>
-          <div class="field">
-            <label for="url">HTTPS URL to scan</label>
-            <div class="url-group">
-              <span class="url-scheme" aria-hidden="true">https://</span>
-              <input id="url" class="url-input" inputmode="url" autocomplete="off" placeholder="example.com" />
-            </div>
-            <div class="help">Only public HTTPS destinations on port 443 are allowed.</div>
-          </div>
+      <section class="card">
+        <div class="card-head">
+          <h2>History</h2>
+          <input id="historyFilter" class="filter" placeholder="Filter by URL or job id" />
+        </div>
+        <div class="table-wrap" role="region" aria-label="Scan history">
+          <table>
+            <thead>
+              <tr>
+                <th class="nowrap">When</th>
+                <th>URL</th>
+                <th class="nowrap">Job</th>
+                <th class="nowrap">Status</th>
+                <th class="nowrap">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
+        <p class="muted small">History is stored locally in your browser.</p>
+      </section>
+
+      <section class="card full">
+        <div class="card-head">
+          <h2>Response</h2>
           <div class="actions">
-            <button id="start" class="primary" type="button">Start scan</button>
-            <button id="checkCurrent" type="button" disabled>Check job</button>
-            <button id="copyJson" type="button" disabled>Copy JSON</button>
+            <button id="copyJson2" type="button" disabled>Copy JSON</button>
           </div>
-          <div id="status" class="status" aria-live="polite"></div>
-        </section>
-
-        <section class="card">
-          <div class="card-head">
-            <h2>History</h2>
-            <input id="historyFilter" class="filter" placeholder="Filter by URL or job id" />
-          </div>
-          <div class="table-wrap" role="region" aria-label="Scan history">
-            <table>
-              <thead>
-                <tr>
-                  <th class="nowrap">When</th>
-                  <th>URL</th>
-                  <th class="nowrap">Job</th>
-                  <th class="nowrap">Status</th>
-                  <th class="nowrap">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="historyBody"></tbody>
-            </table>
-          </div>
-          <p class="muted small">History is stored locally in your browser.</p>
-        </section>
-
-        <section class="card full">
-          <div class="card-head">
-            <h2>Response</h2>
-            <div class="actions">
-              <button id="copyJson2" type="button" disabled>Copy JSON</button>
-            </div>
-          </div>
-          <div class="tabs" role="tablist" aria-label="Response view">
-            <button id="tabSummary" class="tab" role="tab" aria-selected="true" type="button">Summary</button>
-            <button id="tabRaw" class="tab" role="tab" aria-selected="false" type="button">Raw JSON</button>
-          </div>
-          <div id="panelSummary" class="panel">
-            <div id="summaryOut" class="summary-grid"></div>
-          </div>
-          <div id="panelRaw" class="panel hidden">
-            <pre id="out">{}</pre>
-          </div>
-        </section>
-      </div>
+        </div>
+        <div class="tabs" role="tablist" aria-label="Response view">
+          <button id="tabSummary" class="tab" role="tab" aria-selected="true" type="button">Summary</button>
+          <button id="tabRaw" class="tab" role="tab" aria-selected="false" type="button">Raw JSON</button>
+        </div>
+        <div id="panelSummary" class="panel">
+          <div id="summaryOut" class="summary-grid"></div>
+        </div>
+        <div id="panelRaw" class="panel hidden">
+          <pre id="out">{}</pre>
+        </div>
+      </section>
     </div>
+  </div>
 
-    <script>
-      (function () {
-        const API_KEY_HEADER = __API_KEY_HEADER_JSON__;
-        const MAX_POLL_SECONDS = __MAX_DASHBOARD_POLL_SECONDS__;
+  <script>
+    (function () {
+      const API_KEY_HEADER = __API_KEY_HEADER_JSON__;
+      const MAX_POLL_SECONDS = __MAX_DASHBOARD_POLL_SECONDS__;
 
-        const LS = {
-          apiKey: 'acaScanner.apiKey',
-          history: 'acaScanner.scanHistory.v1',
-          legacyApiKey: 'apiKey',
-        };
+      const LS = {
+        apiKey: 'acaScanner.apiKey',
+        history: 'acaScanner.scanHistory.v1',
+        legacyApiKey: 'apiKey',
+      };
 
-        const apiKeyEl = document.getElementById('apiKey');
-        const urlEl = document.getElementById('url');
-        const outEl = document.getElementById('out');
-        const summaryOutEl = document.getElementById('summaryOut');
-        const statusEl = document.getElementById('status');
-        const startEl = document.getElementById('start');
-        const historyBodyEl = document.getElementById('historyBody');
-        const historyFilterEl = document.getElementById('historyFilter');
-        const clearHistoryEl = document.getElementById('clearHistory');
-        const checkCurrentEl = document.getElementById('checkCurrent');
-        const copyJsonEl = document.getElementById('copyJson');
-        const copyJson2El = document.getElementById('copyJson2');
-        const tabSummaryEl = document.getElementById('tabSummary');
-        const tabRawEl = document.getElementById('tabRaw');
-        const panelSummaryEl = document.getElementById('panelSummary');
-        const panelRawEl = document.getElementById('panelRaw');
+      const apiKeyEl = document.getElementById('apiKey');
+      const urlEl = document.getElementById('url');
+      const outEl = document.getElementById('out');
+      const summaryOutEl = document.getElementById('summaryOut');
+      const statusEl = document.getElementById('status');
+      const startEl = document.getElementById('start');
+      const historyBodyEl = document.getElementById('historyBody');
+      const historyFilterEl = document.getElementById('historyFilter');
+      const clearHistoryEl = document.getElementById('clearHistory');
+      const checkCurrentEl = document.getElementById('checkCurrent');
+      const copyJsonEl = document.getElementById('copyJson');
+      const copyJson2El = document.getElementById('copyJson2');
+      const tabSummaryEl = document.getElementById('tabSummary');
+      const tabRawEl = document.getElementById('tabRaw');
+      const panelSummaryEl = document.getElementById('panelSummary');
+      const panelRawEl = document.getElementById('panelRaw');
 
-	        let history = [];
-	        let currentJobId = null;
-	        let isPolling = false;
-	        let activeTab = 'summary'; // 'summary' | 'raw'
+      let history = [];
+      let currentJobId = null;
+      let isPolling = false;
+      let activeTab = 'summary'; // 'summary' | 'raw'
 
-	        let lastSummary = null; // most recent response for summary view
-	        let lastFull = null; // most recent response for full view (raw JSON)
-	        let lastSummaryJobId = null;
-        let lastFullJobId = null;
+      let lastSummary = null; // most recent response for summary view
+      let lastFull = null; // most recent response for full view (raw JSON)
+      let lastSummaryJobId = null;
+      let lastFullJobId = null;
 
-        const screenshotCache = new Map(); // screenshotUrl -> objectUrl
-        const screenshotPending = new Map(); // screenshotUrl -> Promise<objectUrl>
+      const screenshotCache = new Map(); // screenshotUrl -> objectUrl
+      const screenshotPending = new Map(); // screenshotUrl -> Promise<objectUrl>
 
-        const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
-        const HTTPS_PREFIX = 'https://';
+      const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+      const HTTPS_PREFIX = 'https://';
 
-        function normalizeUrlInput(raw) {
-          const v = String(raw || '').trim();
-          if (!v) return '';
-          return v.replace(/^https:\/\//i, '');
+      function normalizeUrlInput(raw) {
+        const v = String(raw || '').trim();
+        if (!v) return '';
+        return v.replace(/^https:\/\//i, '');
+      }
+
+      function toHttpsUrl(raw) {
+        const v = String(raw || '').trim();
+        if (!v) return '';
+        if (/^https:\/\//i.test(v)) return v;
+        if (/^http:\/\//i.test(v)) throw new Error('Only HTTPS URLs are allowed');
+        return HTTPS_PREFIX + v.replace(/^\/+/, '');
+      }
+
+      function readJson(key, fallback) {
+        try {
+          const raw = localStorage.getItem(key);
+          if (!raw) return fallback;
+          return JSON.parse(raw);
+        } catch (_) {
+          return fallback;
         }
+      }
 
-        function toHttpsUrl(raw) {
-          const v = String(raw || '').trim();
-          if (!v) return '';
-          if (/^https:\/\//i.test(v)) return v;
-          if (/^http:\/\//i.test(v)) throw new Error('Only HTTPS URLs are allowed');
-          return HTTPS_PREFIX + v.replace(/^\/+/, '');
+      function writeJson(key, value) {
+        localStorage.setItem(key, JSON.stringify(value));
+      }
+
+      function loadHistory() {
+        const items = readJson(LS.history, []);
+        if (!Array.isArray(items)) return [];
+        return items.filter(Boolean).slice(0, 50);
+      }
+
+      function saveHistory() {
+        writeJson(LS.history, history.slice(0, 50));
+      }
+
+      function upsertHistory(entry) {
+        const idx = history.findIndex(x => x && x.job_id === entry.job_id);
+        if (idx >= 0) history[idx] = Object.assign({}, history[idx], entry);
+        else history.unshift(entry);
+        history = history.slice(0, 50);
+        saveHistory();
+        renderHistory();
+      }
+
+      function patchHistory(jobId, patch) {
+        const idx = history.findIndex(x => x && x.job_id === jobId);
+        if (idx < 0) return;
+        history[idx] = Object.assign({}, history[idx], patch);
+        saveHistory();
+        renderHistory();
+      }
+
+      function clearHistory() {
+        history = [];
+        saveHistory();
+        renderHistory();
+        clearScreenshotCache();
+      }
+
+      function clearScreenshotCache() {
+        for (const objectUrl of screenshotCache.values()) {
+          try { URL.revokeObjectURL(objectUrl); } catch (_) { }
         }
+        screenshotCache.clear();
+        screenshotPending.clear();
+      }
 
-        function readJson(key, fallback) {
-          try {
-            const raw = localStorage.getItem(key);
-            if (!raw) return fallback;
-            return JSON.parse(raw);
-          } catch (_) {
-            return fallback;
+      function el(tag, attrs) {
+        const node = document.createElement(tag);
+        if (attrs) {
+          for (const [k, v] of Object.entries(attrs)) {
+            if (k === 'class') node.className = v;
+            else if (k === 'text') node.textContent = v;
+            else if (k === 'title') node.title = v;
+            else if (k === 'href') node.href = v;
+            else if (k === 'target') node.target = v;
+            else if (k === 'rel') node.rel = v;
+            else node.setAttribute(k, v);
           }
         }
+        for (let i = 2; i < arguments.length; i++) {
+          const child = arguments[i];
+          if (child == null) continue;
+          if (typeof child === 'string') node.appendChild(document.createTextNode(child));
+          else node.appendChild(child);
+        }
+        return node;
+      }
 
-        function writeJson(key, value) {
-          localStorage.setItem(key, JSON.stringify(value));
+      function makeBadge(kind, label) {
+        const cls = kind ? ('badge ' + kind) : 'badge';
+        return el('span', { class: cls, text: label });
+      }
+
+      function setStatus(kind, text) {
+        statusEl.textContent = '';
+        if (!text) return;
+        const label = kind === 'ok' ? 'OK' : (kind === 'bad' ? 'ERROR' : (kind === 'warn' ? 'WARN' : 'INFO'));
+        statusEl.appendChild(makeBadge(kind || 'info', label));
+        statusEl.appendChild(document.createTextNode(' ' + text));
+      }
+
+      function setButtonsEnabled(hasJson) {
+        copyJsonEl.disabled = !hasJson;
+        copyJson2El.disabled = !hasJson;
+        checkCurrentEl.disabled = !currentJobId;
+      }
+
+      function formatBytes(n) {
+        const v = Number(n);
+        if (!Number.isFinite(v)) return '';
+        if (v < 1024) return v + ' B';
+        const kb = v / 1024;
+        if (kb < 1024) return kb.toFixed(1) + ' KB';
+        const mb = kb / 1024;
+        return mb.toFixed(2) + ' MB';
+      }
+
+      function formatMs(n) {
+        const v = Number(n);
+        if (!Number.isFinite(v)) return '';
+        if (v < 1000) return v + ' ms';
+        return (v / 1000).toFixed(2) + ' s';
+      }
+
+      function pick(obj, key) {
+        if (!obj || typeof obj !== 'object') return null;
+        return obj[key];
+      }
+
+      function badgeValue(kind, text) {
+        const label = String(text || '');
+        return makeBadge(kind || 'info', label);
+      }
+
+      function renderSummary(resp) {
+        summaryOutEl.textContent = '';
+        const data = resp || {};
+        const s = (data && data.summary && typeof data.summary === 'object') ? data.summary : {};
+
+        const blocks = [];
+
+        function makeCopyButton(text, label) {
+          const hint = label || 'Copy';
+          const btn = el('button', { type: 'button', class: 'icon-btn', title: hint, 'aria-label': hint }, 'Copy');
+          btn.addEventListener('click', () => copyText(text));
+          return btn;
         }
 
-        function loadHistory() {
-          const items = readJson(LS.history, []);
-          if (!Array.isArray(items)) return [];
-          return items.filter(Boolean).slice(0, 50);
+        function copyableValue(valueNode, text, label) {
+          const v = String(text || '');
+          if (!v) return valueNode;
+          return el('span', { class: 'value-row' }, valueNode, makeCopyButton(v, label));
         }
 
-        function saveHistory() {
-          writeJson(LS.history, history.slice(0, 50));
-        }
-
-        function upsertHistory(entry) {
-          const idx = history.findIndex(x => x && x.job_id === entry.job_id);
-          if (idx >= 0) history[idx] = Object.assign({}, history[idx], entry);
-          else history.unshift(entry);
-          history = history.slice(0, 50);
-          saveHistory();
-          renderHistory();
-        }
-
-        function patchHistory(jobId, patch) {
-          const idx = history.findIndex(x => x && x.job_id === jobId);
-          if (idx < 0) return;
-          history[idx] = Object.assign({}, history[idx], patch);
-          saveHistory();
-          renderHistory();
-        }
-
-        function clearHistory() {
-          history = [];
-          saveHistory();
-          renderHistory();
-          clearScreenshotCache();
-        }
-
-        function clearScreenshotCache() {
-          for (const objectUrl of screenshotCache.values()) {
-            try { URL.revokeObjectURL(objectUrl); } catch (_) {}
-          }
-          screenshotCache.clear();
-          screenshotPending.clear();
-        }
-
-        function el(tag, attrs) {
-          const node = document.createElement(tag);
-          if (attrs) {
-            for (const [k, v] of Object.entries(attrs)) {
-              if (k === 'class') node.className = v;
-              else if (k === 'text') node.textContent = v;
-              else if (k === 'title') node.title = v;
-              else if (k === 'href') node.href = v;
-              else if (k === 'target') node.target = v;
-              else if (k === 'rel') node.rel = v;
-              else node.setAttribute(k, v);
-            }
-          }
-          for (let i = 2; i < arguments.length; i++) {
-            const child = arguments[i];
-            if (child == null) continue;
-            if (typeof child === 'string') node.appendChild(document.createTextNode(child));
-            else node.appendChild(child);
-          }
+        function codeValue(value, opts) {
+          const text = value == null ? '' : String(value);
+          const node = el('code', { class: 'value-code', text: text });
+          if (opts && opts.copy) return copyableValue(node, text, opts.copyLabel);
           return node;
         }
 
-        function makeBadge(kind, label) {
-          const cls = kind ? ('badge ' + kind) : 'badge';
-          return el('span', { class: cls, text: label });
+        function linkValue(url, opts) {
+          const href = String(url || '');
+          const node = el('a', { class: 'value-link', href: href, target: '_blank', rel: 'noreferrer', text: href });
+          if (opts && opts.copy) return copyableValue(node, href, opts.copyLabel);
+          return node;
         }
 
-        function setStatus(kind, text) {
-          statusEl.textContent = '';
-          if (!text) return;
-          const label = kind === 'ok' ? 'OK' : (kind === 'bad' ? 'ERROR' : (kind === 'warn' ? 'WARN' : 'INFO'));
-          statusEl.appendChild(makeBadge(kind || 'info', label));
-          statusEl.appendChild(document.createTextNode(' ' + text));
+        function block(title, rows, opts) {
+          const kvClass = (opts && opts.kvClass) ? String(opts.kvClass) : '';
+          const dl = el('dl', { class: 'kv' + (kvClass ? (' ' + kvClass) : '') });
+          for (const [k, v] of rows) {
+            if (v == null || v === '') continue;
+            const row = el('div', { class: 'kv-row' });
+            row.appendChild(el('dt', { text: k }));
+            const dd = el('dd');
+            if (v && typeof v === 'object' && v.nodeType === 1) dd.appendChild(v);
+            else dd.textContent = String(v);
+            row.appendChild(dd);
+            dl.appendChild(row);
+          }
+          const header = el('h3', null, el('span', { class: 'summary-title', text: title }));
+          const metaNodes = (opts && Array.isArray(opts.meta)) ? opts.meta.filter(Boolean) : [];
+          if (metaNodes.length) header.appendChild(el('span', { class: 'summary-meta' }, ...metaNodes));
+          const tone = opts && opts.tone ? String(opts.tone) : '';
+          const spanAll = Boolean(opts && opts.spanAll);
+          const cls = 'summary-block'
+            + (tone ? (' tone-' + tone) : '')
+            + (spanAll ? ' span-all' : '');
+          blocks.push(el('div', { class: cls }, header, dl));
         }
 
-        function setButtonsEnabled(hasJson) {
-          copyJsonEl.disabled = !hasJson;
-          copyJson2El.disabled = !hasJson;
-          checkCurrentEl.disabled = !currentJobId;
+        const SECURITY_FIELD_HELP = {
+          'Protocol': 'The connection scheme for the final URL. HTTPS encrypts data in transit.',
+          'Mixed Content': 'An HTTPS page that loads any HTTP (non-encrypted) resources. This can weaken security.',
+          'Content Security Policy': 'Rules that tell the browser which scripts/resources are allowed. Helps block injected scripts.',
+          'X Frame Options': 'Controls whether the page can be shown inside an iframe. Helps prevent clickjacking.',
+          'Xss Protection': 'Older XSS filter header. Modern browsers may ignore it, but it can still help in some cases.',
+          'Login Forms': 'Number of forms that look like logins (usually forms with password fields).',
+          'Password Fields': 'Number of password inputs found in the page HTML.',
+          'Csrf Protection': "Looks for CSRF tokens/fields. Without them, a malicious site may trigger actions while you're logged in.",
+          'Suspicious Scripts': 'Scripts that match suspicious patterns (obfuscation, risky APIs). Higher counts can be a red flag.',
+          'External Scripts': "Scripts loaded from outside the site's domain. Third-party scripts increase risk.",
+          'Suspicious Api Calls': 'JavaScript making network calls to external or unusual endpoints (fetch/XHR/WebSocket).',
+          'Insecure Cookies': 'Cookies missing Secure (and similar risky settings). This is especially risky for session/auth cookies.',
+          'Open Redirects': 'Links/parameters that may redirect to another site. Often abused in phishing.',
+          'Inner Html Usage': 'Use of `innerHTML` to insert HTML. Unsafe with untrusted data and can lead to XSS.',
+          'Eval Usage': 'Use of `eval()` to run dynamic code. Risky and often used by obfuscated scripts.',
+          'Tracking Scripts': 'Known tracking/analytics resources detected. Can impact privacy.',
+          'Fingerprinting': 'Scripts that try to uniquely identify a browser/device (fingerprinting).',
+        };
+
+        function checkLine(label, value, kind) {
+          const k = kind || 'info';
+          const labelText = String(label || '');
+          const helpText = SECURITY_FIELD_HELP[labelText] || '';
+          const details = el('details', { class: 'checkline ' + k });
+          const summary = el('summary', null,
+            el('span', { class: 'checkleft' },
+              el('span', { class: 'checkdot' }),
+              el('span', { class: 'checklabel', text: labelText }),
+              el('span', { class: 'checkhint', text: '?' })
+            ),
+            el('span', { class: 'checkvalue', text: String(value || '') })
+          );
+          details.appendChild(summary);
+          if (helpText) details.appendChild(el('div', { class: 'checkhelp', text: helpText }));
+          return details;
         }
 
-        function formatBytes(n) {
-          const v = Number(n);
-          if (!Number.isFinite(v)) return '';
-          if (v < 1024) return v + ' B';
-          const kb = v / 1024;
-          if (kb < 1024) return kb.toFixed(1) + ' KB';
-          const mb = kb / 1024;
-          return mb.toFixed(2) + ' MB';
+        function analysisCard(title, lines, opts) {
+          const nodes = Array.isArray(lines) ? lines.filter(Boolean) : [];
+          const body = el('div', { class: 'checklist' }, ...nodes);
+          const tone = (opts && opts.tone) ? String(opts.tone) : '';
+          const cls = 'analysis-card' + (tone ? (' tone-' + tone) : '');
+          return el('div', { class: cls }, el('h4', { text: String(title || '') }), body, (opts && opts.extra) ? opts.extra : null);
         }
 
-        function formatMs(n) {
-          const v = Number(n);
-          if (!Number.isFinite(v)) return '';
-          if (v < 1000) return v + ' ms';
-          return (v / 1000).toFixed(2) + ' s';
+        function section(title, body, opts) {
+          const meta = (opts && opts.meta) ? opts.meta : null;
+          const head = el('div', { class: 'section-head' },
+            el('h3', { class: 'section-title', text: String(title || '') }),
+            meta
+          );
+          const node = el('div', { class: 'section' }, head, body);
+          blocks.push(node);
         }
 
-        function pick(obj, key) {
-          if (!obj || typeof obj !== 'object') return null;
-          return obj[key];
+        function openImageModal(src) {
+          const url = String(src || '');
+          if (!url) return;
+          const overlay = el('div', { class: 'modal', role: 'dialog', 'aria-label': 'Screenshot' });
+          const img = el('img', { src: url, alt: 'Page screenshot' });
+          overlay.appendChild(img);
+          overlay.addEventListener('click', () => overlay.remove());
+          document.body.appendChild(overlay);
         }
 
-        function badgeValue(kind, text) {
-          const label = String(text || '');
-          return makeBadge(kind || 'info', label);
+        function hostnameFromUrl(url) {
+          try { return new URL(String(url || '')).hostname || ''; } catch (_) { return ''; }
         }
 
-        function renderSummary(resp) {
-          summaryOutEl.textContent = '';
-          const data = resp || {};
-          const s = (data && data.summary && typeof data.summary === 'object') ? data.summary : {};
+        function registrableDomain(host) {
+          const h = String(host || '').trim().toLowerCase().replace(/\.+$/, '');
+          const labels = h.split('.').filter(Boolean);
+          if (labels.length < 2) return h;
 
-          const blocks = [];
+          const publicSuffix2 = new Set([
+            'co.uk', 'org.uk', 'gov.uk', 'ac.uk',
+            'com.au', 'net.au', 'org.au',
+            'co.jp', 'co.in',
+            'com.br', 'com.mx', 'co.nz', 'com.sg',
+          ]);
+          const last2 = labels.slice(-2).join('.');
+          if (labels.length >= 3 && publicSuffix2.has(last2)) return labels.slice(-3).join('.');
+          return last2;
+        }
 
-          function makeCopyButton(text, label) {
-            const hint = label || 'Copy';
-            const btn = el('button', { type: 'button', class: 'icon-btn', title: hint, 'aria-label': hint }, 'Copy');
-            btn.addEventListener('click', () => copyText(text));
-            return btn;
+        function vtUrlId(url) {
+          const u = String(url || '').trim();
+          if (!u) return '';
+
+          function toBase64(bytes) {
+            let bin = '';
+            for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+            return btoa(bin);
           }
 
-          function copyableValue(valueNode, text, label) {
-            const v = String(text || '');
-            if (!v) return valueNode;
-            return el('span', { class: 'value-row' }, valueNode, makeCopyButton(v, label));
-          }
-
-          function codeValue(value, opts) {
-            const text = value == null ? '' : String(value);
-            const node = el('code', { class: 'value-code', text: text });
-            if (opts && opts.copy) return copyableValue(node, text, opts.copyLabel);
-            return node;
-          }
-
-          function linkValue(url, opts) {
-            const href = String(url || '');
-            const node = el('a', { class: 'value-link', href: href, target: '_blank', rel: 'noreferrer', text: href });
-            if (opts && opts.copy) return copyableValue(node, href, opts.copyLabel);
-            return node;
-          }
-
-	          function block(title, rows, opts) {
-	            const kvClass = (opts && opts.kvClass) ? String(opts.kvClass) : '';
-	            const dl = el('dl', { class: 'kv' + (kvClass ? (' ' + kvClass) : '') });
-	            for (const [k, v] of rows) {
-              if (v == null || v === '') continue;
-              const row = el('div', { class: 'kv-row' });
-              row.appendChild(el('dt', { text: k }));
-              const dd = el('dd');
-              if (v && typeof v === 'object' && v.nodeType === 1) dd.appendChild(v);
-              else dd.textContent = String(v);
-              row.appendChild(dd);
-              dl.appendChild(row);
-            }
-            const header = el('h3', null, el('span', { class: 'summary-title', text: title }));
-            const metaNodes = (opts && Array.isArray(opts.meta)) ? opts.meta.filter(Boolean) : [];
-            if (metaNodes.length) header.appendChild(el('span', { class: 'summary-meta' }, ...metaNodes));
-            const tone = opts && opts.tone ? String(opts.tone) : '';
-            const spanAll = Boolean(opts && opts.spanAll);
-            const cls = 'summary-block'
-              + (tone ? (' tone-' + tone) : '')
-              + (spanAll ? ' span-all' : '');
-	            blocks.push(el('div', { class: cls }, header, dl));
-	          }
-
-	          const SECURITY_FIELD_HELP = {
-	            'Protocol': 'The connection scheme for the final URL. HTTPS encrypts data in transit.',
-	            'Mixed Content': 'An HTTPS page that loads any HTTP (non-encrypted) resources. This can weaken security.',
-	            'Content Security Policy': 'Rules that tell the browser which scripts/resources are allowed. Helps block injected scripts.',
-	            'X Frame Options': 'Controls whether the page can be shown inside an iframe. Helps prevent clickjacking.',
-	            'Xss Protection': 'Older XSS filter header. Modern browsers may ignore it, but it can still help in some cases.',
-	            'Login Forms': 'Number of forms that look like logins (usually forms with password fields).',
-	            'Password Fields': 'Number of password inputs found in the page HTML.',
-	            'Csrf Protection': "Looks for CSRF tokens/fields. Without them, a malicious site may trigger actions while you're logged in.",
-	            'Suspicious Scripts': 'Scripts that match suspicious patterns (obfuscation, risky APIs). Higher counts can be a red flag.',
-	            'External Scripts': "Scripts loaded from outside the site's domain. Third-party scripts increase risk.",
-	            'Suspicious Api Calls': 'JavaScript making network calls to external or unusual endpoints (fetch/XHR/WebSocket).',
-	            'Insecure Cookies': 'Cookies missing Secure (and similar risky settings). This is especially risky for session/auth cookies.',
-	            'Open Redirects': 'Links/parameters that may redirect to another site. Often abused in phishing.',
-	            'Inner Html Usage': 'Use of `innerHTML` to insert HTML. Unsafe with untrusted data and can lead to XSS.',
-	            'Eval Usage': 'Use of `eval()` to run dynamic code. Risky and often used by obfuscated scripts.',
-	            'Tracking Scripts': 'Known tracking/analytics resources detected. Can impact privacy.',
-	            'Fingerprinting': 'Scripts that try to uniquely identify a browser/device (fingerprinting).',
-	          };
-
-	          function checkLine(label, value, kind) {
-	            const k = kind || 'info';
-	            const labelText = String(label || '');
-	            const helpText = SECURITY_FIELD_HELP[labelText] || '';
-	            const details = el('details', { class: 'checkline ' + k });
-	            const summary = el('summary', null,
-	              el('span', { class: 'checkleft' },
-	                el('span', { class: 'checkdot' }),
-	                el('span', { class: 'checklabel', text: labelText }),
-	                el('span', { class: 'checkhint', text: '?' })
-	              ),
-	              el('span', { class: 'checkvalue', text: String(value || '') })
-	            );
-	            details.appendChild(summary);
-	            if (helpText) details.appendChild(el('div', { class: 'checkhelp', text: helpText }));
-	            return details;
-	          }
-
-          function analysisCard(title, lines, opts) {
-            const nodes = Array.isArray(lines) ? lines.filter(Boolean) : [];
-            const body = el('div', { class: 'checklist' }, ...nodes);
-            const tone = (opts && opts.tone) ? String(opts.tone) : '';
-            const cls = 'analysis-card' + (tone ? (' tone-' + tone) : '');
-            return el('div', { class: cls }, el('h4', { text: String(title || '') }), body, (opts && opts.extra) ? opts.extra : null);
-          }
-
-          function section(title, body, opts) {
-            const meta = (opts && opts.meta) ? opts.meta : null;
-            const head = el('div', { class: 'section-head' },
-              el('h3', { class: 'section-title', text: String(title || '') }),
-              meta
-            );
-            const node = el('div', { class: 'section' }, head, body);
-            blocks.push(node);
-          }
-
-	          function openImageModal(src) {
-	            const url = String(src || '');
-	            if (!url) return;
-	            const overlay = el('div', { class: 'modal', role: 'dialog', 'aria-label': 'Screenshot' });
-            const img = el('img', { src: url, alt: 'Page screenshot' });
-            overlay.appendChild(img);
-            overlay.addEventListener('click', () => overlay.remove());
-            document.body.appendChild(overlay);
-          }
-
-          function hostnameFromUrl(url) {
-            try { return new URL(String(url || '')).hostname || ''; } catch (_) { return ''; }
-          }
-
-          function registrableDomain(host) {
-            const h = String(host || '').trim().toLowerCase().replace(/\.+$/, '');
-            const labels = h.split('.').filter(Boolean);
-            if (labels.length < 2) return h;
-
-            const publicSuffix2 = new Set([
-              'co.uk', 'org.uk', 'gov.uk', 'ac.uk',
-              'com.au', 'net.au', 'org.au',
-              'co.jp', 'co.in',
-              'com.br', 'com.mx', 'co.nz', 'com.sg',
-            ]);
-            const last2 = labels.slice(-2).join('.');
-            if (labels.length >= 3 && publicSuffix2.has(last2)) return labels.slice(-3).join('.');
-            return last2;
-          }
-
-          function vtUrlId(url) {
-            const u = String(url || '').trim();
-            if (!u) return '';
-
-            function toBase64(bytes) {
-              let bin = '';
-              for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
-              return btoa(bin);
-            }
-
+          try {
+            const bytes = new TextEncoder().encode(u);
+            return toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+          } catch (_) {
             try {
-              const bytes = new TextEncoder().encode(u);
-              return toBase64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+              // Fallback for older browsers.
+              const b64 = btoa(unescape(encodeURIComponent(u)));
+              return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
             } catch (_) {
-              try {
-                // Fallback for older browsers.
-                const b64 = btoa(unescape(encodeURIComponent(u)));
-                return b64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-              } catch (_) {
-                return '';
-              }
+              return '';
             }
           }
+        }
 
-          function urlscanQuery(url) {
-            const u = String(url || '').trim();
-            if (!u) return '';
-            const escaped = u.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-            return 'page.url:"' + escaped + '"';
-          }
+        function urlscanQuery(url) {
+          const u = String(url || '').trim();
+          if (!u) return '';
+          const escaped = u.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+          return 'page.url:"' + escaped + '"';
+        }
 
-	          const status = String(data.status || 'unknown');
-	          const isTerminal = status === 'completed' || status === 'error';
-	          const dl = (pick(s, 'download') && typeof pick(s, 'download') === 'object') ? pick(s, 'download') : {};
-	          const web = (pick(s, 'web') && typeof pick(s, 'web') === 'object') ? pick(s, 'web') : {};
-	          const sec = (web && typeof web.security_analysis === 'object') ? web.security_analysis : {};
-	          const pageInfo = (web && typeof web.page_information === 'object') ? web.page_information : {};
-	          const netInfo = (web && typeof web.network_information === 'object') ? web.network_information : {};
+        const status = String(data.status || 'unknown');
+        const isTerminal = status === 'completed' || status === 'error';
+        const dl = (pick(s, 'download') && typeof pick(s, 'download') === 'object') ? pick(s, 'download') : {};
+        const web = (pick(s, 'web') && typeof pick(s, 'web') === 'object') ? pick(s, 'web') : {};
+        const sec = (web && typeof web.security_analysis === 'object') ? web.security_analysis : {};
+        const pageInfo = (web && typeof web.page_information === 'object') ? web.page_information : {};
+        const netInfo = (web && typeof web.network_information === 'object') ? web.network_information : {};
 
-          const baseUrl = (dl && dl.final_url) ? String(dl.final_url) : (s.url ? String(s.url) : '');
-          const requestedUrl = (dl && dl.requested_url) ? String(dl.requested_url) : (s.url ? String(s.url) : '');
-          const finalUrl = baseUrl || requestedUrl;
+        const baseUrl = (dl && dl.final_url) ? String(dl.final_url) : (s.url ? String(s.url) : '');
+        const requestedUrl = (dl && dl.requested_url) ? String(dl.requested_url) : (s.url ? String(s.url) : '');
+        const finalUrl = baseUrl || requestedUrl;
 
-          const statusBadge = badgeValue(statusKind(status), status);
-          block('Scan', [
-            ['Status', statusBadge],
-            ['Job id', data.job_id ? codeValue(String(data.job_id), { copy: true, copyLabel: 'Copy job id' }) : ''],
-            ['Submitted', data.submitted_at || ''],
-            ['Scanned', data.scanned_at || ''],
-            ['Duration', data.duration_ms != null ? formatMs(data.duration_ms) : ''],
-            ['Error', data.error || ''],
-          ].filter(Boolean), { tone: statusKind(status) });
+        const statusBadge = badgeValue(statusKind(status), status);
+        block('Scan', [
+          ['Status', statusBadge],
+          ['Job id', data.job_id ? codeValue(String(data.job_id), { copy: true, copyLabel: 'Copy job id' }) : ''],
+          ['Submitted', data.submitted_at || ''],
+          ['Scanned', data.scanned_at || ''],
+          ['Duration', data.duration_ms != null ? formatMs(data.duration_ms) : ''],
+          ['Error', data.error || ''],
+        ].filter(Boolean), { tone: statusKind(status) });
 
-          block('Destination', [
-            ['Destination', finalUrl ? linkValue(finalUrl, { copy: true, copyLabel: 'Copy destination url' }) : ''],
-            (requestedUrl && finalUrl && requestedUrl !== finalUrl)
-              ? ['Original URL', linkValue(requestedUrl, { copy: true, copyLabel: 'Copy original url' })]
-              : null,
-            ['HTTP status', (dl && dl.status_code != null) ? codeValue(String(dl.status_code)) : ''],
-            ['Content type', (dl && dl.content_type) ? codeValue(String(dl.content_type)) : ''],
-            ['Redirects', (dl && dl.redirect_count != null) ? codeValue(String(dl.redirect_count)) : ''],
-          ].filter(Boolean), { tone: 'info' });
+        block('Destination', [
+          ['Destination', finalUrl ? linkValue(finalUrl, { copy: true, copyLabel: 'Copy destination url' }) : ''],
+          (requestedUrl && finalUrl && requestedUrl !== finalUrl)
+            ? ['Original URL', linkValue(requestedUrl, { copy: true, copyLabel: 'Copy original url' })]
+            : null,
+          ['HTTP status', (dl && dl.status_code != null) ? codeValue(String(dl.status_code)) : ''],
+          ['Content type', (dl && dl.content_type) ? codeValue(String(dl.content_type)) : ''],
+          ['Redirects', (dl && dl.redirect_count != null) ? codeValue(String(dl.redirect_count)) : ''],
+        ].filter(Boolean), { tone: 'info' });
 
-          // --- Security Analysis (cards) ---
-	          if (isTerminal && sec && Object.keys(sec).length) {
-	            const conn = (sec.connection_security && typeof sec.connection_security === 'object') ? sec.connection_security : {};
-	            const mixed = (conn.mixed_content && typeof conn.mixed_content === 'object') ? conn.mixed_content : {};
-	            const mixedDetected = mixed.detected === true;
-	            const proto = conn.protocol ? String(conn.protocol) : 'HTTPS';
+        // --- Security Analysis (cards) ---
+        if (isTerminal && sec && Object.keys(sec).length) {
+          const conn = (sec.connection_security && typeof sec.connection_security === 'object') ? sec.connection_security : {};
+          const mixed = (conn.mixed_content && typeof conn.mixed_content === 'object') ? conn.mixed_content : {};
+          const mixedDetected = mixed.detected === true;
+          const proto = conn.protocol ? String(conn.protocol) : 'HTTPS';
 
-            const headers = (sec.security_headers && typeof sec.security_headers === 'object') ? sec.security_headers : {};
-            const cspPresent = headers.content_security_policy && headers.content_security_policy.present === true;
-            const xfoPresent = headers.x_frame_options && headers.x_frame_options.present === true;
-            const xssPresent = headers.x_xss_protection && headers.x_xss_protection.present === true;
+          const headers = (sec.security_headers && typeof sec.security_headers === 'object') ? sec.security_headers : {};
+          const cspPresent = headers.content_security_policy && headers.content_security_policy.present === true;
+          const xfoPresent = headers.x_frame_options && headers.x_frame_options.present === true;
+          const xssPresent = headers.x_xss_protection && headers.x_xss_protection.present === true;
 
-            const forms = (sec.forms_and_input && typeof sec.forms_and_input === 'object') ? sec.forms_and_input : {};
-            const loginForms = Number(forms.login_forms || 0);
-            const passwordFields = Number(forms.password_fields || 0);
-            const csrfOk = forms.csrf_protection === true;
+          const forms = (sec.forms_and_input && typeof sec.forms_and_input === 'object') ? sec.forms_and_input : {};
+          const loginForms = Number(forms.login_forms || 0);
+          const passwordFields = Number(forms.password_fields || 0);
+          const csrfOk = forms.csrf_protection === true;
 
-            const scripts = (sec.suspicious_scripts && typeof sec.suspicious_scripts === 'object') ? sec.suspicious_scripts : {};
-            const suspiciousScripts = Number(scripts.suspicious_scripts || 0);
-            const externalScripts = Number(scripts.external_scripts || 0);
-            const apiSuspicious = scripts.suspicious_api_calls === true;
+          const scripts = (sec.suspicious_scripts && typeof sec.suspicious_scripts === 'object') ? sec.suspicious_scripts : {};
+          const suspiciousScripts = Number(scripts.suspicious_scripts || 0);
+          const externalScripts = Number(scripts.external_scripts || 0);
+          const apiSuspicious = scripts.suspicious_api_calls === true;
 
-            const cookies = (sec.cookies && typeof sec.cookies === 'object') ? sec.cookies : {};
-            const insecureCookies = Number(cookies.insecure_cookies || 0);
-            const cookieDetails = Array.isArray(cookies.details) ? cookies.details : [];
-            let cookieExtra = null;
-            if (cookieDetails.length) {
-              const details = el('details', { class: 'mini-toggle' });
-              const summary = el('summary', { text: 'Details' });
-              details.appendChild(summary);
-              const list = el('div', { class: 'headers-list' });
-              for (const c of cookieDetails.slice(0, 20)) {
-                if (!c || typeof c !== 'object') continue;
-                const name = c.name ? String(c.name) : '';
-                const issues = Array.isArray(c.issues) ? c.issues.map(x => String(x)).filter(Boolean) : [];
-                if (!name) continue;
-                list.appendChild(el('div', { class: 'header-row' },
-                  el('div', { class: 'header-name', text: name }),
-                  el('div', { class: 'header-value', text: issues.length ? issues.join(' • ') : '' })
-                ));
-              }
-              details.appendChild(list);
-              cookieExtra = details;
-            }
-
-            const vulns = (sec.detectable_vulnerabilities && typeof sec.detectable_vulnerabilities === 'object') ? sec.detectable_vulnerabilities : {};
-            const openRedirects = vulns.open_redirects === true;
-            const innerHtml = vulns.inner_html_usage === true;
-            const evalUsage = vulns.eval_usage === true;
-            const openRedirectExamples = Array.isArray(vulns.open_redirect_examples) ? vulns.open_redirect_examples : [];
-            let openRedirectExtra = null;
-            if (openRedirectExamples.length) {
-              const details = el('details', { class: 'mini-toggle' });
-              const summary = el('summary', { text: 'Examples' });
-              details.appendChild(summary);
-              const list = el('div', { class: 'headers-list' });
-              for (const ex of openRedirectExamples.slice(0, 10)) {
-                const u = String(ex || '');
-                if (!u) continue;
-                list.appendChild(el('div', { class: 'header-row' },
-                  el('div', { class: 'header-name', text: 'url' }),
-                  el('div', { class: 'header-value', text: u })
-                ));
-              }
-              details.appendChild(list);
-              openRedirectExtra = details;
-            }
-
-            const tracking = (sec.tracking_features && typeof sec.tracking_features === 'object') ? sec.tracking_features : {};
-            const trackingScripts = tracking.tracking_scripts === true;
-            const fingerprinting = tracking.fingerprinting === true;
-
-            const cards = el('div', { class: 'analysis-grid' },
-              analysisCard('Connection Security', [
-                checkLine('Protocol', proto, (String(proto || '').toLowerCase() === 'https') ? 'ok' : 'warn'),
-                checkLine('Mixed Content', mixedDetected ? 'Detected' : 'Not detected', mixedDetected ? 'bad' : 'ok'),
-              ], { tone: mixedDetected ? 'bad' : 'ok' }),
-              analysisCard('Security Headers', [
-                checkLine('Content Security Policy', cspPresent ? 'Present' : 'Missing', cspPresent ? 'ok' : 'bad'),
-                checkLine('X Frame Options', xfoPresent ? 'Present' : 'Missing', xfoPresent ? 'ok' : 'warn'),
-                checkLine('Xss Protection', xssPresent ? 'Present' : 'Missing', xssPresent ? 'ok' : 'warn'),
-              ], { tone: cspPresent ? 'ok' : 'warn' }),
-              analysisCard('Forms and Input', [
-                checkLine('Login Forms', String(loginForms), loginForms > 0 ? 'warn' : 'ok'),
-                checkLine('Password Fields', String(passwordFields), passwordFields > 0 ? 'warn' : 'ok'),
-                checkLine('Csrf Protection', csrfOk ? 'Yes' : 'No', (loginForms > 0 && !csrfOk) ? 'warn' : (csrfOk ? 'ok' : 'info')),
-              ], { tone: (loginForms > 0 && !csrfOk) ? 'warn' : 'info' }),
-              analysisCard('Suspicious Scripts', [
-                checkLine('Suspicious Scripts', String(suspiciousScripts), suspiciousScripts > 0 ? 'warn' : 'ok'),
-                checkLine('External Scripts', String(externalScripts), externalScripts > 0 ? 'info' : 'ok'),
-                checkLine('Suspicious Api Calls', apiSuspicious ? 'true' : 'false', apiSuspicious ? 'warn' : 'ok'),
-              ], { tone: (suspiciousScripts > 0 || apiSuspicious) ? 'warn' : 'ok' }),
-              analysisCard('Cookies', [
-                checkLine('Insecure Cookies', String(insecureCookies), insecureCookies > 0 ? 'bad' : 'ok'),
-              ], { tone: insecureCookies > 0 ? 'warn' : 'ok', extra: cookieExtra }),
-              analysisCard('Detectable Vulnerabilities', [
-                checkLine('Open Redirects', openRedirects ? 'Possible' : 'None detected', openRedirects ? 'warn' : 'ok'),
-                checkLine('Inner Html Usage', innerHtml ? 'Detected' : 'None detected', innerHtml ? 'warn' : 'ok'),
-                checkLine('Eval Usage', evalUsage ? 'Detected' : 'None detected', evalUsage ? 'warn' : 'ok'),
-              ], { tone: (openRedirects || innerHtml || evalUsage) ? 'warn' : 'ok', extra: openRedirectExtra }),
-              analysisCard('Tracking Features', [
-                checkLine('Tracking Scripts', trackingScripts ? 'Detected' : 'None detected', trackingScripts ? 'warn' : 'ok'),
-                checkLine('Fingerprinting', fingerprinting ? 'Detected' : 'None detected', fingerprinting ? 'warn' : 'ok'),
-              ], { tone: (trackingScripts || fingerprinting) ? 'warn' : 'ok' }),
-            );
-
-            const urlscanQ = urlscanQuery(finalUrl);
-            const urlscanDomain = registrableDomain(hostnameFromUrl(finalUrl));
-            const urlscanHref = urlscanDomain
-              ? ('https://urlscan.io/domain/' + encodeURIComponent(urlscanDomain))
-              : (urlscanQ ? ('https://urlscan.io/search/#' + encodeURIComponent(urlscanQ)) : 'https://urlscan.io/');
-            const vtId = vtUrlId(finalUrl);
-            const vtHost = hostnameFromUrl(finalUrl);
-            const vtHref = vtId
-              ? ('https://www.virustotal.com/gui/url/' + vtId)
-              : (vtHost ? ('https://www.virustotal.com/gui/domain/' + encodeURIComponent(vtHost)) : 'https://www.virustotal.com/');
-            const actions = el('div', { class: 'analysis-actions' },
-              el('a', { class: 'btn primary', href: urlscanHref, target: '_blank', rel: 'noreferrer', text: 'Check on URLScan.io' }),
-              el('a', { class: 'btn success', href: vtHref, target: '_blank', rel: 'noreferrer', text: 'Check on VirusTotal' }),
-            );
-
-            section('Security Analysis', el('div', null, cards, actions));
-          }
-
-          // --- Page Information ---
-          const headerPairs = Array.isArray(dl && dl.response_headers) ? dl.response_headers : [];
-          const screenshotUrl = pageInfo && pageInfo.screenshot_url ? String(pageInfo.screenshot_url) : '';
-          const screenshotMeta = (pageInfo && typeof pageInfo.screenshot === 'object' && pageInfo.screenshot) ? pageInfo.screenshot : null;
-          const title = pageInfo && pageInfo.title ? String(pageInfo.title) : '';
-          const description = pageInfo && pageInfo.description ? String(pageInfo.description) : '';
-
-          function screenshotPlaceholder(meta) {
-            const m = (meta && typeof meta === 'object') ? meta : null;
-            const status = (m && m.status) ? String(m.status) : '';
-            const errRaw = (m && m.error) ? String(m.error) : '';
-            const err = errRaw.replace(/\s+/g, ' ').trim();
-            const shortErr = err.length > 140 ? (err.slice(0, 137) + '...') : err;
-
-            if (status === 'disabled') return 'Screenshot capture is disabled (set CAPTURE_SCREENSHOTS=true)';
-            if (status === 'failed') return shortErr ? ('Screenshot capture failed: ' + shortErr) : 'Screenshot capture failed';
-            if (status === 'store_failed') return shortErr ? ('Screenshot store failed: ' + shortErr) : 'Screenshot store failed';
-            return 'Screenshot not available';
-          }
-
-	          if (isTerminal && (headerPairs.length || screenshotUrl || title || description || screenshotMeta)) {
-	            const headerList = el('div', { class: 'headers-list' });
-	            for (const h of headerPairs.slice(0, 60)) {
-	              if (!h || typeof h !== 'object') continue;
-	              const name = h.name ? String(h.name) : '';
-              const value = h.value != null ? String(h.value) : '';
+          const cookies = (sec.cookies && typeof sec.cookies === 'object') ? sec.cookies : {};
+          const insecureCookies = Number(cookies.insecure_cookies || 0);
+          const cookieDetails = Array.isArray(cookies.details) ? cookies.details : [];
+          let cookieExtra = null;
+          if (cookieDetails.length) {
+            const details = el('details', { class: 'mini-toggle' });
+            const summary = el('summary', { text: 'Details' });
+            details.appendChild(summary);
+            const list = el('div', { class: 'headers-list' });
+            for (const c of cookieDetails.slice(0, 20)) {
+              if (!c || typeof c !== 'object') continue;
+              const name = c.name ? String(c.name) : '';
+              const issues = Array.isArray(c.issues) ? c.issues.map(x => String(x)).filter(Boolean) : [];
               if (!name) continue;
-              headerList.appendChild(el('div', { class: 'header-row' },
-                el('div', { class: 'header-name', text: name + ':' }),
-                el('div', { class: 'header-value', text: value })
+              list.appendChild(el('div', { class: 'header-row' },
+                el('div', { class: 'header-name', text: name }),
+                el('div', { class: 'header-value', text: issues.length ? issues.join(' • ') : '' })
               ));
             }
-
-            const headersToggle = el('details', { class: 'mini-toggle', open: true });
-            const headersSummary = el('summary', { text: 'Hide Details' });
-            headersToggle.addEventListener('toggle', () => {
-              headersSummary.textContent = headersToggle.open ? 'Hide Details' : 'Show Details';
-            });
-            headersToggle.appendChild(headersSummary);
-            headersToggle.appendChild(headerList);
-
-            const left = el('div', null,
-              title ? el('div', { class: 'muted small', text: 'Title: ' + title }) : null,
-              description ? el('div', { class: 'muted small', text: 'Description: ' + description }) : null,
-              headersToggle
-            );
-
-            const right = el('div', { class: 'screenshot' },
-              el('div', { class: 'muted small', text: 'Page Screenshot (Desktop View)' }),
-              screenshotUrl
-                ? (() => {
-                    const holder = el('div', { class: 'placeholder', text: 'Loading screenshot…' });
-                    const img = el('img', { alt: 'Page screenshot', style: 'display:none' });
-
-                    getScreenshotObjectUrl(screenshotUrl).then(objectUrl => {
-                      if (!objectUrl) throw new Error('no object url');
-                      if (!img.isConnected) return;
-                      img.src = objectUrl;
-                      img.style.display = '';
-                      if (holder.isConnected) holder.remove();
-                    }).catch(() => {
-                      if (!holder.isConnected) return;
-                      holder.textContent = 'Screenshot not available';
-                    });
-
-                    img.addEventListener('click', () => {
-                      if (img.src) openImageModal(img.src);
-                    });
-
-                    return el('div', null, holder, img);
-                  })()
-                : el('div', { class: 'placeholder', text: screenshotPlaceholder(screenshotMeta) })
-            );
-
-            section('Page Information', el('div', { class: 'split' }, left, right));
+            details.appendChild(list);
+            cookieExtra = details;
           }
 
-          // --- Network Information ---
-          const dns = Array.isArray(netInfo && netInfo.dns_addresses) ? netInfo.dns_addresses : [];
-          const whois = (netInfo && typeof netInfo.whois === 'object' && netInfo.whois) ? netInfo.whois : null;
-	          if (isTerminal && (dns.length || whois)) {
-	            const dnsGrid = el('div', { class: 'dns-grid' }, ...dns.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) })));
-
-	            const whoisRows = [];
-	            if (whois) {
-              if (whois.registrar) whoisRows.push(['Registrar', String(whois.registrar)]);
-              if (whois.creation_date) whoisRows.push(['Creation Date', String(whois.creation_date)]);
-              if (whois.expiration_date) whoisRows.push(['Expiration Date', String(whois.expiration_date)]);
-              if (whois.error) whoisRows.push(['WHOIS Error', String(whois.error)]);
+          const vulns = (sec.detectable_vulnerabilities && typeof sec.detectable_vulnerabilities === 'object') ? sec.detectable_vulnerabilities : {};
+          const openRedirects = vulns.open_redirects === true;
+          const innerHtml = vulns.inner_html_usage === true;
+          const evalUsage = vulns.eval_usage === true;
+          const openRedirectExamples = Array.isArray(vulns.open_redirect_examples) ? vulns.open_redirect_examples : [];
+          let openRedirectExtra = null;
+          if (openRedirectExamples.length) {
+            const details = el('details', { class: 'mini-toggle' });
+            const summary = el('summary', { text: 'Examples' });
+            details.appendChild(summary);
+            const list = el('div', { class: 'headers-list' });
+            for (const ex of openRedirectExamples.slice(0, 10)) {
+              const u = String(ex || '');
+              if (!u) continue;
+              list.appendChild(el('div', { class: 'header-row' },
+                el('div', { class: 'header-name', text: 'url' }),
+                el('div', { class: 'header-value', text: u })
+              ));
             }
-
-            const whoisDl = el('dl', { class: 'kv' });
-            for (const [k, v] of whoisRows) {
-              const row = el('div', { class: 'kv-row' });
-              row.appendChild(el('dt', { text: k }));
-              row.appendChild(el('dd', { text: v }));
-              whoisDl.appendChild(row);
-            }
-
-            const body = el('div', null,
-              dns.length ? el('div', null, el('div', { class: 'muted small', text: 'DNS Addresses' }), dnsGrid) : null,
-              whoisRows.length ? el('div', { style: 'margin-top:0.85rem' }, el('div', { class: 'muted small', text: 'WHOIS Information' }), whoisDl) : null
-            );
-            section('Network Information', body);
+            details.appendChild(list);
+            openRedirectExtra = details;
           }
 
-	          if (blocks.length === 0) {
-	            summaryOutEl.appendChild(el('div', { class: 'muted', text: 'No data yet.' }));
-	            return;
-	          }
-          for (const b of blocks) summaryOutEl.appendChild(b);
+          const tracking = (sec.tracking_features && typeof sec.tracking_features === 'object') ? sec.tracking_features : {};
+          const trackingScripts = tracking.tracking_scripts === true;
+          const fingerprinting = tracking.fingerprinting === true;
+
+          const cards = el('div', { class: 'analysis-grid' },
+            analysisCard('Connection Security', [
+              checkLine('Protocol', proto, (String(proto || '').toLowerCase() === 'https') ? 'ok' : 'warn'),
+              checkLine('Mixed Content', mixedDetected ? 'Detected' : 'Not detected', mixedDetected ? 'bad' : 'ok'),
+            ], { tone: mixedDetected ? 'bad' : 'ok' }),
+            analysisCard('Security Headers', [
+              checkLine('Content Security Policy', cspPresent ? 'Present' : 'Missing', cspPresent ? 'ok' : 'bad'),
+              checkLine('X Frame Options', xfoPresent ? 'Present' : 'Missing', xfoPresent ? 'ok' : 'warn'),
+              checkLine('Xss Protection', xssPresent ? 'Present' : 'Missing', xssPresent ? 'ok' : 'warn'),
+            ], { tone: cspPresent ? 'ok' : 'warn' }),
+            analysisCard('Forms and Input', [
+              checkLine('Login Forms', String(loginForms), loginForms > 0 ? 'warn' : 'ok'),
+              checkLine('Password Fields', String(passwordFields), passwordFields > 0 ? 'warn' : 'ok'),
+              checkLine('Csrf Protection', csrfOk ? 'Yes' : 'No', (loginForms > 0 && !csrfOk) ? 'warn' : (csrfOk ? 'ok' : 'info')),
+            ], { tone: (loginForms > 0 && !csrfOk) ? 'warn' : 'info' }),
+            analysisCard('Suspicious Scripts', [
+              checkLine('Suspicious Scripts', String(suspiciousScripts), suspiciousScripts > 0 ? 'warn' : 'ok'),
+              checkLine('External Scripts', String(externalScripts), externalScripts > 0 ? 'info' : 'ok'),
+              checkLine('Suspicious Api Calls', apiSuspicious ? 'true' : 'false', apiSuspicious ? 'warn' : 'ok'),
+            ], { tone: (suspiciousScripts > 0 || apiSuspicious) ? 'warn' : 'ok' }),
+            analysisCard('Cookies', [
+              checkLine('Insecure Cookies', String(insecureCookies), insecureCookies > 0 ? 'bad' : 'ok'),
+            ], { tone: insecureCookies > 0 ? 'warn' : 'ok', extra: cookieExtra }),
+            analysisCard('Detectable Vulnerabilities', [
+              checkLine('Open Redirects', openRedirects ? 'Possible' : 'None detected', openRedirects ? 'warn' : 'ok'),
+              checkLine('Inner Html Usage', innerHtml ? 'Detected' : 'None detected', innerHtml ? 'warn' : 'ok'),
+              checkLine('Eval Usage', evalUsage ? 'Detected' : 'None detected', evalUsage ? 'warn' : 'ok'),
+            ], { tone: (openRedirects || innerHtml || evalUsage) ? 'warn' : 'ok', extra: openRedirectExtra }),
+            analysisCard('Tracking Features', [
+              checkLine('Tracking Scripts', trackingScripts ? 'Detected' : 'None detected', trackingScripts ? 'warn' : 'ok'),
+              checkLine('Fingerprinting', fingerprinting ? 'Detected' : 'None detected', fingerprinting ? 'warn' : 'ok'),
+            ], { tone: (trackingScripts || fingerprinting) ? 'warn' : 'ok' }),
+          );
+
+          const urlscanQ = urlscanQuery(finalUrl);
+          const urlscanDomain = registrableDomain(hostnameFromUrl(finalUrl));
+          const urlscanHref = urlscanDomain
+            ? ('https://urlscan.io/domain/' + encodeURIComponent(urlscanDomain))
+            : (urlscanQ ? ('https://urlscan.io/search/#' + encodeURIComponent(urlscanQ)) : 'https://urlscan.io/');
+          const vtId = vtUrlId(finalUrl);
+          const vtHost = hostnameFromUrl(finalUrl);
+          const vtHref = vtId
+            ? ('https://www.virustotal.com/gui/url/' + vtId)
+            : (vtHost ? ('https://www.virustotal.com/gui/domain/' + encodeURIComponent(vtHost)) : 'https://www.virustotal.com/');
+          const actions = el('div', { class: 'analysis-actions' },
+            el('a', { class: 'btn primary', href: urlscanHref, target: '_blank', rel: 'noreferrer', text: 'Check on URLScan.io' }),
+            el('a', { class: 'btn success', href: vtHref, target: '_blank', rel: 'noreferrer', text: 'Check on VirusTotal' }),
+          );
+
+          section('Security Analysis', el('div', null, cards, actions));
         }
 
-        function renderRaw(resp) {
-          const obj = resp || {};
-          outEl.textContent = JSON.stringify(obj, null, 2);
+        // --- Page Information ---
+        const headerPairs = Array.isArray(dl && dl.response_headers) ? dl.response_headers : [];
+        const screenshotUrl = pageInfo && pageInfo.screenshot_url ? String(pageInfo.screenshot_url) : '';
+        const screenshotMeta = (pageInfo && typeof pageInfo.screenshot === 'object' && pageInfo.screenshot) ? pageInfo.screenshot : null;
+        const title = pageInfo && pageInfo.title ? String(pageInfo.title) : '';
+        const description = pageInfo && pageInfo.description ? String(pageInfo.description) : '';
+
+        function screenshotPlaceholder(meta) {
+          const m = (meta && typeof meta === 'object') ? meta : null;
+          const status = (m && m.status) ? String(m.status) : '';
+          const errRaw = (m && m.error) ? String(m.error) : '';
+          const err = errRaw.replace(/\s+/g, ' ').trim();
+          const shortErr = err.length > 140 ? (err.slice(0, 137) + '...') : err;
+
+          if (status === 'disabled') return 'Screenshot capture is disabled (set CAPTURE_SCREENSHOTS=true)';
+          if (status === 'failed') return shortErr ? ('Screenshot capture failed: ' + shortErr) : 'Screenshot capture failed';
+          if (status === 'store_failed') return shortErr ? ('Screenshot store failed: ' + shortErr) : 'Screenshot store failed';
+          return 'Screenshot not available';
         }
 
-        function showSummary(obj) {
-          lastSummary = obj;
-          lastSummaryJobId = (obj && obj.job_id) ? obj.job_id : null;
-          renderSummary(obj);
-          setButtonsEnabled(true);
+        if (isTerminal && (headerPairs.length || screenshotUrl || title || description || screenshotMeta)) {
+          const headerList = el('div', { class: 'headers-list' });
+          for (const h of headerPairs.slice(0, 60)) {
+            if (!h || typeof h !== 'object') continue;
+            const name = h.name ? String(h.name) : '';
+            const value = h.value != null ? String(h.value) : '';
+            if (!name) continue;
+            headerList.appendChild(el('div', { class: 'header-row' },
+              el('div', { class: 'header-name', text: name + ':' }),
+              el('div', { class: 'header-value', text: value })
+            ));
+          }
+
+          const headersToggle = el('details', { class: 'mini-toggle', open: true });
+          const headersSummary = el('summary', { text: 'Hide Details' });
+          headersToggle.addEventListener('toggle', () => {
+            headersSummary.textContent = headersToggle.open ? 'Hide Details' : 'Show Details';
+          });
+          headersToggle.appendChild(headersSummary);
+          headersToggle.appendChild(headerList);
+
+          const left = el('div', null,
+            title ? el('div', { class: 'muted small', text: 'Title: ' + title }) : null,
+            description ? el('div', { class: 'muted small', text: 'Description: ' + description }) : null,
+            headersToggle
+          );
+
+          const right = el('div', { class: 'screenshot' },
+            el('div', { class: 'muted small', text: 'Page Screenshot (Desktop View)' }),
+            screenshotUrl
+              ? (() => {
+                const holder = el('div', { class: 'placeholder', text: 'Loading screenshot…' });
+                const img = el('img', { alt: 'Page screenshot', style: 'display:none' });
+
+                getScreenshotObjectUrl(screenshotUrl).then(objectUrl => {
+                  if (!objectUrl) throw new Error('no object url');
+                  if (!img.isConnected) return;
+                  img.src = objectUrl;
+                  img.style.display = '';
+                  if (holder.isConnected) holder.remove();
+                }).catch(() => {
+                  if (!holder.isConnected) return;
+                  holder.textContent = 'Screenshot not available';
+                });
+
+                img.addEventListener('click', () => {
+                  if (img.src) openImageModal(img.src);
+                });
+
+                return el('div', null, holder, img);
+              })()
+              : el('div', { class: 'placeholder', text: screenshotPlaceholder(screenshotMeta) })
+          );
+
+          section('Page Information', el('div', { class: 'split' }, left, right));
         }
 
-        function showFull(obj) {
-          lastFull = obj;
-          lastSummary = obj;
-          lastFullJobId = (obj && obj.job_id) ? obj.job_id : null;
-          lastSummaryJobId = lastFullJobId;
-          renderSummary(obj);
-          if (activeTab === 'raw') renderRaw(obj);
-          setButtonsEnabled(true);
+        // --- Network Information ---
+        const dns = Array.isArray(netInfo && netInfo.dns_addresses) ? netInfo.dns_addresses : [];
+        const whois = (netInfo && typeof netInfo.whois === 'object' && netInfo.whois) ? netInfo.whois : null;
+        if (isTerminal && (dns.length || whois)) {
+          const dnsGrid = el('div', { class: 'dns-grid' }, ...dns.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) })));
+
+          const whoisRows = [];
+          if (whois) {
+            if (whois.registrar) whoisRows.push(['Registrar', String(whois.registrar)]);
+            if (whois.creation_date) whoisRows.push(['Creation Date', String(whois.creation_date)]);
+            if (whois.expiration_date) whoisRows.push(['Expiration Date', String(whois.expiration_date)]);
+            if (whois.error) whoisRows.push(['WHOIS Error', String(whois.error)]);
+          }
+
+          const whoisDl = el('dl', { class: 'kv' });
+          for (const [k, v] of whoisRows) {
+            const row = el('div', { class: 'kv-row' });
+            row.appendChild(el('dt', { text: k }));
+            row.appendChild(el('dd', { text: v }));
+            whoisDl.appendChild(row);
+          }
+
+          const body = el('div', null,
+            dns.length ? el('div', null, el('div', { class: 'muted small', text: 'DNS Addresses' }), dnsGrid) : null,
+            whoisRows.length ? el('div', { style: 'margin-top:0.85rem' }, el('div', { class: 'muted small', text: 'WHOIS Information' }), whoisDl) : null
+          );
+          section('Network Information', body);
         }
 
-        function showPlaceholder() {
+        if (blocks.length === 0) {
+          summaryOutEl.appendChild(el('div', { class: 'muted', text: 'No data yet.' }));
+          return;
+        }
+        for (const b of blocks) summaryOutEl.appendChild(b);
+      }
+
+      function renderRaw(resp) {
+        const obj = resp || {};
+        outEl.textContent = JSON.stringify(obj, null, 2);
+      }
+
+      function showSummary(obj) {
+        lastSummary = obj;
+        lastSummaryJobId = (obj && obj.job_id) ? obj.job_id : null;
+        renderSummary(obj);
+        setButtonsEnabled(true);
+      }
+
+      function showFull(obj) {
+        lastFull = obj;
+        lastSummary = obj;
+        lastFullJobId = (obj && obj.job_id) ? obj.job_id : null;
+        lastSummaryJobId = lastFullJobId;
+        renderSummary(obj);
+        if (activeTab === 'raw') renderRaw(obj);
+        setButtonsEnabled(true);
+      }
+
+      function showPlaceholder() {
+        renderSummary(lastSummary || lastFull || {});
+        if (activeTab === 'raw') {
+          outEl.textContent = JSON.stringify({ message: 'Raw JSON not loaded yet. Click "Check job" or switch tabs.' }, null, 2);
+        }
+        setButtonsEnabled(Boolean(lastSummary || lastFull));
+      }
+
+      function setActiveTab(next) {
+        activeTab = next;
+        const isSummary = next === 'summary';
+        tabSummaryEl.setAttribute('aria-selected', isSummary ? 'true' : 'false');
+        tabRawEl.setAttribute('aria-selected', isSummary ? 'false' : 'true');
+        panelSummaryEl.classList.toggle('hidden', !isSummary);
+        panelRawEl.classList.toggle('hidden', isSummary);
+
+        if (!isSummary) {
+          if (lastFull && (!currentJobId || lastFullJobId === currentJobId)) renderRaw(lastFull);
+          else showPlaceholder();
+        } else {
           renderSummary(lastSummary || lastFull || {});
-          if (activeTab === 'raw') {
-            outEl.textContent = JSON.stringify({ message: 'Raw JSON not loaded yet. Click "Check job" or switch tabs.' }, null, 2);
-          }
-          setButtonsEnabled(Boolean(lastSummary || lastFull));
         }
+      }
 
-        function setActiveTab(next) {
-          activeTab = next;
-          const isSummary = next === 'summary';
-          tabSummaryEl.setAttribute('aria-selected', isSummary ? 'true' : 'false');
-          tabRawEl.setAttribute('aria-selected', isSummary ? 'false' : 'true');
-          panelSummaryEl.classList.toggle('hidden', !isSummary);
-          panelRawEl.classList.toggle('hidden', isSummary);
+      let _resizeTimer = null;
+      window.addEventListener('resize', () => {
+        if (_resizeTimer) clearTimeout(_resizeTimer);
+        _resizeTimer = setTimeout(() => {
+          renderSummary(lastSummary || lastFull || {});
+        }, 120);
+      });
 
-          if (!isSummary) {
-            if (lastFull && (!currentJobId || lastFullJobId === currentJobId)) renderRaw(lastFull);
-            else showPlaceholder();
-          } else {
-            renderSummary(lastSummary || lastFull || {});
-          }
+      async function copyText(text) {
+        try {
+          await navigator.clipboard.writeText(text);
+          setStatus('ok', 'Copied to clipboard');
+        } catch (_) {
+          const ta = el('textarea', { style: 'position:fixed;left:-1000px;top:-1000px;' });
+          ta.value = text;
+          document.body.appendChild(ta);
+          ta.select();
+          document.execCommand('copy');
+          ta.remove();
+          setStatus('ok', 'Copied to clipboard');
         }
+      }
 
-        let _resizeTimer = null;
-        window.addEventListener('resize', () => {
-          if (_resizeTimer) clearTimeout(_resizeTimer);
-          _resizeTimer = setTimeout(() => {
-            renderSummary(lastSummary || lastFull || {});
-          }, 120);
+      function isProblemDetails(obj) {
+        if (!obj || typeof obj !== 'object') return false;
+        return typeof obj.type === 'string'
+          && typeof obj.title === 'string'
+          && (typeof obj.status === 'number' || typeof obj.status === 'string');
+      }
+
+      function hintForProblemCode(code) {
+        const c = String(code || '').trim().toLowerCase();
+        if (!c) return '';
+        if (c === 'https_only') return 'Enter a valid HTTPS URL (e.g. https://example.com).';
+        if (c === 'host_required') return 'Enter a valid URL (e.g. https://example.com).';
+        if (c === 'dns_failed' || c === 'no_records') return 'Enter a valid public HTTPS URL (e.g. https://example.com).';
+        if (c === 'localhost_not_allowed') return 'Use a public HTTPS URL (localhost is blocked).';
+        if (c === 'non_public_ip' || c === 'direct_ip_not_public') return 'Use a publicly routable HTTPS URL (private IPs are blocked).';
+        if (c === 'port_not_allowed') return 'Use the default HTTPS port (443).';
+        if (c === 'userinfo_not_allowed') return 'Remove credentials from the URL.';
+        return '';
+      }
+
+      function formatProblemMessage(problem) {
+        const code = (problem && typeof problem.code === 'string') ? problem.code : '';
+        const detailRaw = (problem && typeof problem.detail === 'string') ? problem.detail : '';
+        const titleRaw = (problem && typeof problem.title === 'string') ? problem.title : '';
+        let message = String(detailRaw || titleRaw || 'Request failed').trim();
+        const hint = hintForProblemCode(code);
+        if (hint && !message.toLowerCase().includes(hint.toLowerCase())) {
+          if (!/[.?!]$/.test(message)) message += '.';
+          message += ' ' + hint;
+        }
+        return message;
+      }
+
+      function formatApiError(err) {
+        const data = err && err.data ? err.data : null;
+        if (isProblemDetails(data)) {
+          return { message: formatProblemMessage(data), problem: data };
+        }
+        const raw = data != null ? JSON.stringify(data) : '';
+        return { message: raw || (err ? err.message : 'Unknown error'), problem: null };
+      }
+
+      async function api(path, method, body) {
+        const headers = { 'content-type': 'application/json', 'accept': 'application/problem+json, application/json' };
+        const key = apiKeyEl.value.trim();
+        if (key) headers[API_KEY_HEADER] = key;
+        const res = await fetch(path, {
+          method: method,
+          headers: headers,
+          body: body ? JSON.stringify(body) : undefined
         });
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = { raw: text }; }
+        if (!res.ok) {
+          const err = new Error('HTTP ' + res.status);
+          err.status = res.status;
+          err.data = data;
+          throw err;
+        }
+        return data;
+      }
 
-        async function copyText(text) {
+      async function apiBlob(path) {
+        const headers = {};
+        const key = apiKeyEl.value.trim();
+        if (key) headers[API_KEY_HEADER] = key;
+        const res = await fetch(path, { method: 'GET', headers });
+        if (!res.ok) {
+          const err = new Error('HTTP ' + res.status);
+          err.status = res.status;
+          throw err;
+        }
+        return await res.blob();
+      }
+
+      async function getScreenshotObjectUrl(screenshotUrl) {
+        const url = String(screenshotUrl || '').trim();
+        if (!url) return '';
+
+        if (screenshotCache.has(url)) return screenshotCache.get(url);
+        if (screenshotPending.has(url)) return await screenshotPending.get(url);
+
+        const promise = (async () => {
           try {
-            await navigator.clipboard.writeText(text);
-            setStatus('ok', 'Copied to clipboard');
-          } catch (_) {
-            const ta = el('textarea', { style: 'position:fixed;left:-1000px;top:-1000px;' });
-            ta.value = text;
-            document.body.appendChild(ta);
-            ta.select();
-            document.execCommand('copy');
-            ta.remove();
-            setStatus('ok', 'Copied to clipboard');
-          }
-        }
+            const blob = await apiBlob(url);
+            const objectUrl = URL.createObjectURL(blob);
+            screenshotCache.set(url, objectUrl);
 
-        function isProblemDetails(obj) {
-          if (!obj || typeof obj !== 'object') return false;
-          return typeof obj.type === 'string'
-            && typeof obj.title === 'string'
-            && (typeof obj.status === 'number' || typeof obj.status === 'string');
-        }
-
-        function hintForProblemCode(code) {
-          const c = String(code || '').trim().toLowerCase();
-          if (!c) return '';
-          if (c === 'https_only') return 'Enter a valid HTTPS URL (e.g. https://example.com).';
-          if (c === 'host_required') return 'Enter a valid URL (e.g. https://example.com).';
-          if (c === 'dns_failed' || c === 'no_records') return 'Enter a valid public HTTPS URL (e.g. https://example.com).';
-          if (c === 'localhost_not_allowed') return 'Use a public HTTPS URL (localhost is blocked).';
-          if (c === 'non_public_ip' || c === 'direct_ip_not_public') return 'Use a publicly routable HTTPS URL (private IPs are blocked).';
-          if (c === 'port_not_allowed') return 'Use the default HTTPS port (443).';
-          if (c === 'userinfo_not_allowed') return 'Remove credentials from the URL.';
-          return '';
-        }
-
-        function formatProblemMessage(problem) {
-          const code = (problem && typeof problem.code === 'string') ? problem.code : '';
-          const detailRaw = (problem && typeof problem.detail === 'string') ? problem.detail : '';
-          const titleRaw = (problem && typeof problem.title === 'string') ? problem.title : '';
-          let message = String(detailRaw || titleRaw || 'Request failed').trim();
-          const hint = hintForProblemCode(code);
-          if (hint && !message.toLowerCase().includes(hint.toLowerCase())) {
-            if (!/[.?!]$/.test(message)) message += '.';
-            message += ' ' + hint;
-          }
-          return message;
-        }
-
-        function formatApiError(err) {
-          const data = err && err.data ? err.data : null;
-          if (isProblemDetails(data)) {
-            return { message: formatProblemMessage(data), problem: data };
-          }
-          const raw = data != null ? JSON.stringify(data) : '';
-          return { message: raw || (err ? err.message : 'Unknown error'), problem: null };
-        }
-
-        async function api(path, method, body) {
-          const headers = { 'content-type': 'application/json', 'accept': 'application/problem+json, application/json' };
-          const key = apiKeyEl.value.trim();
-          if (key) headers[API_KEY_HEADER] = key;
-          const res = await fetch(path, {
-            method: method,
-            headers: headers,
-            body: body ? JSON.stringify(body) : undefined
-          });
-          const text = await res.text();
-          let data;
-          try { data = JSON.parse(text); } catch (_) { data = { raw: text }; }
-          if (!res.ok) {
-            const err = new Error('HTTP ' + res.status);
-            err.status = res.status;
-            err.data = data;
-            throw err;
-          }
-          return data;
-        }
-
-        async function apiBlob(path) {
-          const headers = {};
-          const key = apiKeyEl.value.trim();
-          if (key) headers[API_KEY_HEADER] = key;
-          const res = await fetch(path, { method: 'GET', headers });
-          if (!res.ok) {
-            const err = new Error('HTTP ' + res.status);
-            err.status = res.status;
-            throw err;
-          }
-          return await res.blob();
-        }
-
-        async function getScreenshotObjectUrl(screenshotUrl) {
-          const url = String(screenshotUrl || '').trim();
-          if (!url) return '';
-
-          if (screenshotCache.has(url)) return screenshotCache.get(url);
-          if (screenshotPending.has(url)) return await screenshotPending.get(url);
-
-          const promise = (async () => {
-            try {
-              const blob = await apiBlob(url);
-              const objectUrl = URL.createObjectURL(blob);
-              screenshotCache.set(url, objectUrl);
-
-              // Keep memory bounded.
-              while (screenshotCache.size > 25) {
-                const oldestKey = screenshotCache.keys().next().value;
-                const oldestUrl = screenshotCache.get(oldestKey);
-                if (oldestUrl) {
-                  try { URL.revokeObjectURL(oldestUrl); } catch (_) {}
-                }
-                screenshotCache.delete(oldestKey);
+            // Keep memory bounded.
+            while (screenshotCache.size > 25) {
+              const oldestKey = screenshotCache.keys().next().value;
+              const oldestUrl = screenshotCache.get(oldestKey);
+              if (oldestUrl) {
+                try { URL.revokeObjectURL(oldestUrl); } catch (_) { }
               }
-
-              return objectUrl;
-            } finally {
-              screenshotPending.delete(url);
-            }
-          })();
-
-          screenshotPending.set(url, promise);
-          return await promise;
-        }
-
-        function formatWhen(iso) {
-          if (!iso) return '';
-          try { return dtf.format(new Date(iso)); } catch (_) { return iso; }
-        }
-
-        function statusKind(status) {
-          if (status === 'completed') return 'ok';
-          if (status === 'error') return 'warn';
-          return 'info';
-        }
-
-        function historyStatus(status) {
-          const s = String(status || '').toLowerCase();
-          if (s === 'completed') return { label: 'completed', kind: 'ok', title: 'completed' };
-          if (s === 'error') return { label: 'error', kind: 'warn', title: 'error' };
-          const title = s ? s : 'pending';
-          return { label: 'pending', kind: 'info', title };
-        }
-
-        function renderHistory() {
-          const filter = (historyFilterEl.value || '').trim().toLowerCase();
-          historyBodyEl.textContent = '';
-
-          const items = history.filter(item => {
-            if (!item) return false;
-            if (!filter) return true;
-            const hay = (String(item.url || '') + ' ' + String(item.job_id || '')).toLowerCase();
-            return hay.indexOf(filter) >= 0;
-          });
-
-          if (items.length === 0) {
-            const msg = filter ? 'No matching scans.' : 'No scans yet. Start one to see it here.';
-            const td = el('td', { class: 'muted', text: msg });
-            td.colSpan = 5;
-            historyBodyEl.appendChild(el('tr', null, td));
-            return;
-          }
-
-          for (const item of items) {
-            const when = formatWhen(item.submitted_at || item.last_checked_at);
-            const job = item.job_id || '';
-            const shortJob = job ? (job.slice(0, 8) + '…') : '';
-            const rawStatus = String(item.status || '');
-            const hs = historyStatus(rawStatus);
-
-            const whenTd = el('td', { class: 'nowrap', text: when });
-
-            const urlLink = el('a', { href: item.url || '#', target: '_blank', rel: 'noreferrer', text: item.url || '' });
-            const urlTd = el('td', { class: 'url-cell' }, urlLink);
-
-            const jobCode = el('code', { text: shortJob, title: job });
-            const jobTd = el('td', { class: 'nowrap' }, jobCode);
-
-            const statusTd = el('td', { class: 'nowrap' });
-            const badge = makeBadge(hs.kind, hs.label);
-            badge.title = hs.title;
-            statusTd.appendChild(badge);
-
-            const actionsTd = el('td', { class: 'nowrap' });
-            const useBtn = el('button', { type: 'button', text: 'Use URL' });
-            useBtn.addEventListener('click', () => {
-              if (!item.url) return;
-              urlEl.value = normalizeUrlInput(item.url);
-              urlEl.focus();
-              setStatus('info', 'Loaded URL from history');
-            });
-
-            const checkBtn = el('button', { type: 'button', text: 'Check' });
-            checkBtn.addEventListener('click', () => refreshJob(job, true));
-
-            const setCurrentBtn = el('button', { type: 'button', text: 'Set current' });
-            setCurrentBtn.addEventListener('click', () => {
-              currentJobId = job;
-              if (currentJobId && lastFullJobId && lastFullJobId !== currentJobId) {
-                lastFull = null;
-                lastFullJobId = null;
-              }
-              if (currentJobId && lastSummaryJobId && lastSummaryJobId !== currentJobId) {
-                lastSummary = null;
-                lastSummaryJobId = null;
-              }
-              setButtonsEnabled(true);
-              setStatus('info', 'Current job set to ' + job);
-              showPlaceholder();
-            });
-
-            actionsTd.appendChild(useBtn);
-            actionsTd.appendChild(checkBtn);
-            actionsTd.appendChild(setCurrentBtn);
-
-            historyBodyEl.appendChild(el('tr', null, whenTd, urlTd, jobTd, statusTd, actionsTd));
-          }
-        }
-
-        async function refreshJob(jobId, showOutput) {
-          if (!jobId) return null;
-          setStatus('info', 'Fetching status for ' + jobId + '...');
-          try {
-            const view = activeTab === 'raw' ? 'full' : 'summary';
-            const s = await api('/scan/' + jobId + '?view=' + encodeURIComponent(view), 'GET');
-            const now = new Date().toISOString();
-            patchHistory(jobId, {
-              status: s.status,
-              error: s.error || null,
-              submitted_at: s.submitted_at || undefined,
-              scanned_at: s.scanned_at || null,
-              last_checked_at: now
-            });
-            if (showOutput) {
-              if (view === 'full') showFull(s);
-              else showSummary(s);
-            } else {
-              // Still update summary so the UI stays current while polling.
-              showSummary(s);
-            }
-            setStatus(statusKind(s.status), 'Job ' + jobId + ' is ' + s.status);
-            return s;
-          } catch (e) {
-            const info = formatApiError(e);
-            setStatus('bad', info.message);
-            if (showOutput) showSummary({ status: 'error', error: info.message, problem: info.problem || null });
-            return null;
-          }
-        }
-
-        async function loadFull(jobId) {
-          if (!jobId) return null;
-          try {
-            const full = await api('/scan/' + jobId + '?view=full', 'GET');
-            lastFull = full;
-            lastFullJobId = (full && full.job_id) ? full.job_id : jobId;
-            if (activeTab === 'raw' && (!currentJobId || currentJobId === jobId)) {
-              renderRaw(full);
-              setButtonsEnabled(true);
-            }
-            return full;
-          } catch (_) {
-            return null;
-          }
-        }
-
-        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-        async function pollJob(jobId) {
-          const deadline = Date.now() + (MAX_POLL_SECONDS * 1000);
-          while (Date.now() < deadline) {
-            const s = await refreshJob(jobId, true);
-            if (s && (s.status === 'completed' || s.status === 'error')) {
-              // Preload full payload for the Raw JSON tab once the job is terminal.
-              if (!lastFull || lastFullJobId !== jobId) {
-                await loadFull(jobId);
-              }
-              return s;
-            }
-            await sleep(4000);
-          }
-          throw new Error('Timed out waiting for result');
-        }
-
-        async function startScan() {
-          if (isPolling) return;
-          let target = '';
-          try {
-            target = toHttpsUrl(urlEl.value);
-          } catch (e) {
-            setStatus('bad', e ? e.message : 'Only HTTPS URLs are allowed');
-            return;
-          }
-          if (!target) {
-            setStatus('bad', 'Enter a URL');
-            return;
-          }
-
-          setStatus('info', 'Submitting scan...');
-          showSummary({
-            status: 'submitting',
-            error: null,
-            submitted_at: new Date().toISOString(),
-            scanned_at: null,
-            summary: { url: target }
-          });
-          setButtonsEnabled(false);
-          startEl.disabled = true;
-          checkCurrentEl.disabled = true;
-
-          try {
-            const submit = await api('/scan', 'POST', { url: target, type: 'url' });
-            lastFull = null;
-            lastFullJobId = null;
-            showSummary(submit);
-
-            currentJobId = submit.job_id || null;
-            setButtonsEnabled(true);
-
-            if (currentJobId) {
-              const now = new Date().toISOString();
-              upsertHistory({
-                job_id: currentJobId,
-                url: target,
-                status: submit.status || 'queued',
-                error: null,
-                submitted_at: now,
-                scanned_at: null,
-                last_checked_at: null
-              });
+              screenshotCache.delete(oldestKey);
             }
 
-            if (!currentJobId) {
-              setStatus('bad', 'No job_id returned');
-              return;
-            }
-
-            isPolling = true;
-            setStatus('info', 'Job queued; polling for results...');
-            const result = await pollJob(currentJobId);
-            if (result && result.status === 'completed') setStatus('ok', 'Completed');
-            else setStatus('bad', 'Error');
-          } catch (e) {
-            const info = formatApiError(e);
-            setStatus('bad', info.message);
-            showSummary({ status: 'error', error: info.message, summary: { url: target }, problem: info.problem || null });
+            return objectUrl;
           } finally {
-            isPolling = false;
-            startEl.disabled = false;
+            screenshotPending.delete(url);
+          }
+        })();
+
+        screenshotPending.set(url, promise);
+        return await promise;
+      }
+
+      function formatWhen(iso) {
+        if (!iso) return '';
+        try { return dtf.format(new Date(iso)); } catch (_) { return iso; }
+      }
+
+      function statusKind(status) {
+        if (status === 'completed') return 'ok';
+        if (status === 'error') return 'warn';
+        return 'info';
+      }
+
+      function historyStatus(status) {
+        const s = String(status || '').toLowerCase();
+        if (s === 'completed') return { label: 'completed', kind: 'ok', title: 'completed' };
+        if (s === 'error') return { label: 'error', kind: 'warn', title: 'error' };
+        const title = s ? s : 'pending';
+        return { label: 'pending', kind: 'info', title };
+      }
+
+      function renderHistory() {
+        const filter = (historyFilterEl.value || '').trim().toLowerCase();
+        historyBodyEl.textContent = '';
+
+        const items = history.filter(item => {
+          if (!item) return false;
+          if (!filter) return true;
+          const hay = (String(item.url || '') + ' ' + String(item.job_id || '')).toLowerCase();
+          return hay.indexOf(filter) >= 0;
+        });
+
+        if (items.length === 0) {
+          const msg = filter ? 'No matching scans.' : 'No scans yet. Start one to see it here.';
+          const td = el('td', { class: 'muted', text: msg });
+          td.colSpan = 5;
+          historyBodyEl.appendChild(el('tr', null, td));
+          return;
+        }
+
+        for (const item of items) {
+          const when = formatWhen(item.submitted_at || item.last_checked_at);
+          const job = item.job_id || '';
+          const shortJob = job ? (job.slice(0, 8) + '…') : '';
+          const rawStatus = String(item.status || '');
+          const hs = historyStatus(rawStatus);
+
+          const whenTd = el('td', { class: 'nowrap', text: when });
+
+          const urlLink = el('a', { href: item.url || '#', target: '_blank', rel: 'noreferrer', text: item.url || '' });
+          const urlTd = el('td', { class: 'url-cell' }, urlLink);
+
+          const jobCode = el('code', { text: shortJob, title: job });
+          const jobTd = el('td', { class: 'nowrap' }, jobCode);
+
+          const statusTd = el('td', { class: 'nowrap' });
+          const badge = makeBadge(hs.kind, hs.label);
+          badge.title = hs.title;
+          statusTd.appendChild(badge);
+
+          const actionsTd = el('td', { class: 'nowrap' });
+          const useBtn = el('button', { type: 'button', text: 'Use URL' });
+          useBtn.addEventListener('click', () => {
+            if (!item.url) return;
+            urlEl.value = normalizeUrlInput(item.url);
+            urlEl.focus();
+            setStatus('info', 'Loaded URL from history');
+          });
+
+          const checkBtn = el('button', { type: 'button', text: 'Check' });
+          checkBtn.addEventListener('click', () => refreshJob(job, true));
+
+          const setCurrentBtn = el('button', { type: 'button', text: 'Set current' });
+          setCurrentBtn.addEventListener('click', () => {
+            currentJobId = job;
+            if (currentJobId && lastFullJobId && lastFullJobId !== currentJobId) {
+              lastFull = null;
+              lastFullJobId = null;
+            }
+            if (currentJobId && lastSummaryJobId && lastSummaryJobId !== currentJobId) {
+              lastSummary = null;
+              lastSummaryJobId = null;
+            }
+            setButtonsEnabled(true);
+            setStatus('info', 'Current job set to ' + job);
+            showPlaceholder();
+          });
+
+          actionsTd.appendChild(useBtn);
+          actionsTd.appendChild(checkBtn);
+          actionsTd.appendChild(setCurrentBtn);
+
+          historyBodyEl.appendChild(el('tr', null, whenTd, urlTd, jobTd, statusTd, actionsTd));
+        }
+      }
+
+      async function refreshJob(jobId, showOutput) {
+        if (!jobId) return null;
+        setStatus('info', 'Fetching status for ' + jobId + '...');
+        try {
+          const view = activeTab === 'raw' ? 'full' : 'summary';
+          const s = await api('/scan/' + jobId + '?view=' + encodeURIComponent(view), 'GET');
+          const now = new Date().toISOString();
+          // Use upsertHistory so it creates the entry if it doesn't exist (e.g., from deep-link)
+          upsertHistory({
+            job_id: jobId,
+            url: s.summary?.url || s.summary?.download?.requested_url || undefined,
+            status: s.status,
+            error: s.error || null,
+            submitted_at: s.submitted_at || undefined,
+            scanned_at: s.scanned_at || null,
+            last_checked_at: now
+          });
+          if (showOutput) {
+            if (view === 'full') showFull(s);
+            else showSummary(s);
+          } else {
+            // Still update summary so the UI stays current while polling.
+            showSummary(s);
+          }
+          setStatus(statusKind(s.status), 'Job ' + jobId + ' is ' + s.status);
+          return s;
+        } catch (e) {
+          const info = formatApiError(e);
+          setStatus('bad', info.message);
+          if (showOutput) showSummary({ status: 'error', error: info.message, problem: info.problem || null });
+          return null;
+        }
+      }
+
+      async function loadFull(jobId) {
+        if (!jobId) return null;
+        try {
+          const full = await api('/scan/' + jobId + '?view=full', 'GET');
+          lastFull = full;
+          lastFullJobId = (full && full.job_id) ? full.job_id : jobId;
+          if (activeTab === 'raw' && (!currentJobId || currentJobId === jobId)) {
+            renderRaw(full);
             setButtonsEnabled(true);
           }
+          return full;
+        } catch (_) {
+          return null;
         }
+      }
 
-        function init() {
-          const stored = localStorage.getItem(LS.apiKey) || localStorage.getItem(LS.legacyApiKey) || '';
-          apiKeyEl.value = stored;
-          if (stored && !localStorage.getItem(LS.apiKey)) localStorage.setItem(LS.apiKey, stored);
+      function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-          apiKeyEl.addEventListener('input', () => localStorage.setItem(LS.apiKey, apiKeyEl.value));
-          const stripSchemeIfPresent = () => {
-            const next = normalizeUrlInput(urlEl.value);
-            if (next !== urlEl.value) urlEl.value = next;
-          };
-          urlEl.addEventListener('blur', stripSchemeIfPresent);
-          urlEl.addEventListener('paste', () => setTimeout(stripSchemeIfPresent, 0));
-          history = loadHistory();
-          renderHistory();
-          lastSummary = {};
-          lastFull = null;
-          showPlaceholder();
-          setButtonsEnabled(false);
-        }
-
-        startEl.addEventListener('click', startScan);
-        checkCurrentEl.addEventListener('click', () => refreshJob(currentJobId, true));
-        clearHistoryEl.addEventListener('click', () => {
-          clearHistory();
-          setStatus('ok', 'History cleared');
-        });
-        historyFilterEl.addEventListener('input', renderHistory);
-        tabSummaryEl.addEventListener('click', () => setActiveTab('summary'));
-        tabRawEl.addEventListener('click', async () => {
-          setActiveTab('raw');
-          if (currentJobId && (!lastFull || lastFullJobId !== currentJobId)) {
-            await refreshJob(currentJobId, true);
+      async function pollJob(jobId) {
+        const deadline = Date.now() + (MAX_POLL_SECONDS * 1000);
+        while (Date.now() < deadline) {
+          const s = await refreshJob(jobId, true);
+          if (s && (s.status === 'completed' || s.status === 'error')) {
+            // Preload full payload for the Raw JSON tab once the job is terminal.
+            if (!lastFull || lastFullJobId !== jobId) {
+              await loadFull(jobId);
+            }
+            return s;
           }
-        });
+          await sleep(4000);
+        }
+        throw new Error('Timed out waiting for result');
+      }
 
-        copyJsonEl.addEventListener('click', async () => {
-          const text = activeTab === 'raw'
-            ? (outEl.textContent || '')
-            : JSON.stringify((lastSummary && lastSummary.problem) ? lastSummary.problem : ((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {})), null, 2);
-          if (text) await copyText(text);
-        });
-        copyJson2El.addEventListener('click', async () => {
-          const text = activeTab === 'raw'
-            ? (outEl.textContent || '')
-            : JSON.stringify((lastSummary && lastSummary.problem) ? lastSummary.problem : ((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {})), null, 2);
-          if (text) await copyText(text);
-        });
+      async function startScan() {
+        if (isPolling) return;
+        let target = '';
+        try {
+          target = toHttpsUrl(urlEl.value);
+        } catch (e) {
+          setStatus('bad', e ? e.message : 'Only HTTPS URLs are allowed');
+          return;
+        }
+        if (!target) {
+          setStatus('bad', 'Enter a URL');
+          return;
+        }
 
-        init();
-        setActiveTab('summary');
-      })();
-    </script>
-  </body>
+        setStatus('info', 'Submitting scan...');
+        showSummary({
+          status: 'submitting',
+          error: null,
+          submitted_at: new Date().toISOString(),
+          scanned_at: null,
+          summary: { url: target }
+        });
+        setButtonsEnabled(false);
+        startEl.disabled = true;
+        checkCurrentEl.disabled = true;
+
+        try {
+          const submit = await api('/scan', 'POST', { url: target, type: 'url' });
+          lastFull = null;
+          lastFullJobId = null;
+          showSummary(submit);
+
+          currentJobId = submit.job_id || null;
+          setButtonsEnabled(true);
+
+          if (currentJobId) {
+            const now = new Date().toISOString();
+            upsertHistory({
+              job_id: currentJobId,
+              url: target,
+              status: submit.status || 'queued',
+              error: null,
+              submitted_at: now,
+              scanned_at: null,
+              last_checked_at: null
+            });
+          }
+
+          if (!currentJobId) {
+            setStatus('bad', 'No job_id returned');
+            return;
+          }
+
+          isPolling = true;
+          setStatus('info', 'Job queued; polling for results...');
+          const result = await pollJob(currentJobId);
+          if (result && result.status === 'completed') setStatus('ok', 'Completed');
+          else setStatus('bad', 'Error');
+        } catch (e) {
+          const info = formatApiError(e);
+          setStatus('bad', info.message);
+          showSummary({ status: 'error', error: info.message, summary: { url: target }, problem: info.problem || null });
+        } finally {
+          isPolling = false;
+          startEl.disabled = false;
+          setButtonsEnabled(true);
+        }
+      }
+
+      function init() {
+        const stored = localStorage.getItem(LS.apiKey) || localStorage.getItem(LS.legacyApiKey) || '';
+        apiKeyEl.value = stored;
+        if (stored && !localStorage.getItem(LS.apiKey)) localStorage.setItem(LS.apiKey, stored);
+
+        apiKeyEl.addEventListener('input', () => localStorage.setItem(LS.apiKey, apiKeyEl.value));
+        const stripSchemeIfPresent = () => {
+          const next = normalizeUrlInput(urlEl.value);
+          if (next !== urlEl.value) urlEl.value = next;
+        };
+        urlEl.addEventListener('blur', stripSchemeIfPresent);
+        urlEl.addEventListener('paste', () => setTimeout(stripSchemeIfPresent, 0));
+        history = loadHistory();
+        renderHistory();
+        lastSummary = {};
+        lastFull = null;
+        showPlaceholder();
+        setButtonsEnabled(false);
+
+        // Check for ?job= parameter to deep-link to a specific scan
+        const urlParams = new URLSearchParams(window.location.search);
+        const jobParam = urlParams.get('job');
+        if (jobParam && jobParam.trim()) {
+          currentJobId = jobParam.trim();
+          // Check if API key is available
+          const apiKey = apiKeyEl.value.trim();
+          if (!apiKey) {
+            setStatus('warn', 'Enter your API key above, then click "Check job" to load job ' + currentJobId);
+            setButtonsEnabled(true);
+            return;
+          }
+          setStatus('info', 'Loading job ' + currentJobId + '...');
+          refreshJob(currentJobId, true).then(result => {
+            if (result) {
+              setButtonsEnabled(true);
+              if (result.status === 'completed' || result.status === 'error') {
+                loadFull(currentJobId);
+              }
+            }
+          });
+        }
+      }
+
+      startEl.addEventListener('click', startScan);
+      checkCurrentEl.addEventListener('click', () => refreshJob(currentJobId, true));
+      clearHistoryEl.addEventListener('click', () => {
+        clearHistory();
+        setStatus('ok', 'History cleared');
+      });
+      historyFilterEl.addEventListener('input', renderHistory);
+      tabSummaryEl.addEventListener('click', () => setActiveTab('summary'));
+      tabRawEl.addEventListener('click', async () => {
+        setActiveTab('raw');
+        if (currentJobId && (!lastFull || lastFullJobId !== currentJobId)) {
+          await refreshJob(currentJobId, true);
+        }
+      });
+
+      copyJsonEl.addEventListener('click', async () => {
+        const text = activeTab === 'raw'
+          ? (outEl.textContent || '')
+          : JSON.stringify((lastSummary && lastSummary.problem) ? lastSummary.problem : ((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {})), null, 2);
+        if (text) await copyText(text);
+      });
+      copyJson2El.addEventListener('click', async () => {
+        const text = activeTab === 'raw'
+          ? (outEl.textContent || '')
+          : JSON.stringify((lastSummary && lastSummary.problem) ? lastSummary.problem : ((lastSummary && lastSummary.summary) ? lastSummary.summary : (lastSummary || {})), null, 2);
+        if (text) await copyText(text);
+      });
+
+      init();
+      setActiveTab('summary');
+    })();
+  </script>
+</body>
+
 </html>

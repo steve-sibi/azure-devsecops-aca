@@ -1101,6 +1101,7 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
 @app.get("/scan/{job_id}")
 async def get_scan_status(
     job_id: str,
+    request: Request,
     view: str = Query("summary", description="Response view: summary or full"),
     _: None = Security(require_api_key),
 ):
@@ -1135,9 +1136,11 @@ async def get_scan_status(
         duration_ms=_safe_int(entity.get("duration_ms")),
     )
 
+    base_url = str(request.base_url).rstrip("/")
     response = {
         "job_id": job_id,
         "status": entity.get("status", "unknown"),
+        "dashboard_url": f"{base_url}/?job={job_id}",
         "error": entity.get("error") or None,
         "submitted_at": entity.get("submitted_at"),
         "scanned_at": entity.get("scanned_at"),
