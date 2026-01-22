@@ -141,11 +141,6 @@ _rate_lock = asyncio.Lock()
 _rate_buckets: dict[str, deque[float]] = {}
 
 
-class TaskIn(BaseModel):
-    # adjust fields to your real payload
-    payload: dict
-
-
 class ScanRequest(BaseModel):
     url: str = Field(
         ..., description="HTTPS URL to scan", max_length=SCAN_URL_MAX_LENGTH
@@ -988,23 +983,6 @@ async def scan_file(
         response["clamav"]["version"] = version
 
     return response
-
-
-@app.post("/tasks")
-async def enqueue_task(task: TaskIn, _: None = Security(require_api_key)):
-    try:
-        await _enqueue_json(task.payload, schema="task-v1", message_id=str(uuid4()))
-        return {"status": "queued", "item": task.payload}
-    except HTTPException:
-        raise
-    except ServiceBusError as e:
-        raise HTTPException(
-            status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
-        )
-    except Exception as e:
-        raise HTTPException(
-            status_code=502, detail=f"Queue send failed: {e.__class__.__name__}"
-        )
 
 
 @app.post("/scan")
