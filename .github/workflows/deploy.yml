@@ -66,7 +66,7 @@ jobs:
       - name: Cache Terraform plugins
         uses: actions/cache@v5.0.2
         with:
-          path: ~/.terraform.d/plugin-cache
+          path: ${{ runner.temp }}/.terraform-plugin-cache
           key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
           restore-keys: |
             terraform-${{ runner.os }}-
@@ -75,9 +75,9 @@ jobs:
         shell: bash
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/.terraform-plugin-cache
         run: |
-          mkdir -p ~/.terraform.d/plugin-cache
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
           bash scripts/gha/deploy_infra_bootstrap.sh
 
   build-and-push:
@@ -164,7 +164,7 @@ jobs:
       - name: Cache Terraform plugins
         uses: actions/cache@v5.0.2
         with:
-          path: ~/.terraform.d/plugin-cache
+          path: ${{ runner.temp }}/.terraform-plugin-cache
           key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
           restore-keys: |
             terraform-${{ runner.os }}-
@@ -174,9 +174,9 @@ jobs:
         shell: bash
         env:
           IMAGE_TAG: ${{ github.sha }}
-          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/.terraform-plugin-cache
         run: |
-          mkdir -p ~/.terraform.d/plugin-cache
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
           bash scripts/gha/deploy_create_apps_and_test.sh
 
       - name: Write workflow summary
