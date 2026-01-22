@@ -35,6 +35,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# NOTE: Keep inputs in sync with destroy.yml to avoid configuration drift
 env:
   REGION: ${{ inputs.region }}
   PREFIX: ${{ inputs.prefix }}
@@ -47,36 +48,54 @@ env:
 jobs:
   infra-bootstrap:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions: { id-token: write, contents: read }
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3.1.2
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v5.0.2
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-
 
       - name: Bootstrap infra (foundation + state + apply)
         shell: bash
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-        run: bash scripts/gha/deploy_infra_bootstrap.sh
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          bash scripts/gha/deploy_infra_bootstrap.sh
 
   build-and-push:
     needs: [infra-bootstrap]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions: { id-token: write, contents: read }
+    outputs:
+      acr_login_server: ${{ steps.acr.outputs.login_server }}
+      api_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
+      worker_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
+      clamav_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -92,10 +111,10 @@ jobs:
         run: az acr login --name $(echo "${{ steps.acr.outputs.login_server }}" | cut -d. -f1)
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v3.12.0
 
       - name: Build & push API
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6.18.0
         with:
           context: ./app
           file: app/api/Dockerfile
@@ -105,7 +124,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build & push Worker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6.18.0
         with:
           context: ./app
           file: app/worker/Dockerfile.sidecar
@@ -115,7 +134,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build & push ClamAV
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v6.18.0
         with:
           context: ./app
           file: app/clamav/Dockerfile
@@ -127,22 +146,53 @@ jobs:
   create-apps:
     needs: [build-and-push]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions: { id-token: write, contents: read }
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3.1.2
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v5.0.2
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-
 
       - name: Create/update apps + smoke/e2e tests
+        id: deploy
         shell: bash
         env:
           IMAGE_TAG: ${{ github.sha }}
-        run: bash scripts/gha/deploy_create_apps_and_test.sh
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          bash scripts/gha/deploy_create_apps_and_test.sh
+
+      - name: Write workflow summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## 🚀 Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Region** | ${{ env.REGION }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Resource Group** | ${{ env.RG }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Prefix** | ${{ env.PREFIX }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Image Tag** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### 📦 Container Images" >> $GITHUB_STEP_SUMMARY
+          echo "- API: \`${{ needs.build-and-push.outputs.api_image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- Worker: \`${{ needs.build-and-push.outputs.worker_image }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "- ClamAV: \`${{ needs.build-and-push.outputs.clamav_image }}\`" >> $GITHUB_STEP_SUMMARY

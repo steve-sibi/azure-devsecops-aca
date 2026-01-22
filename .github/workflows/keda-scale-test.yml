@@ -38,18 +38,19 @@ concurrency:
 jobs:
   keda-scale-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions: { id-token: write, contents: read }
     steps:
       - uses: actions/checkout@v4
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6.2.0
         with: { python-version: "3.11" }
 
       - name: Install deps (enqueue script)
@@ -68,4 +69,18 @@ jobs:
             --expected-min-replicas "${{ inputs.expected_min_replicas }}" \
             --scan-url "${{ inputs.scan_url }}" \
             --timeout-seconds "${{ inputs.timeout_seconds }}"
+
+      - name: Write workflow summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## 📊 KEDA Scale Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| **Resource Group** | ${{ inputs.resource_group }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Queue** | ${{ inputs.queue_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Messages Sent** | ${{ inputs.message_count }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Expected Min Replicas** | ${{ inputs.expected_min_replicas }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| **Scan URL** | ${{ inputs.scan_url }} |" >> $GITHUB_STEP_SUMMARY
 

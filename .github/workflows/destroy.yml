@@ -35,6 +35,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# NOTE: Keep inputs in sync with deploy.yml to avoid configuration drift
 env:
   REGION: ${{ inputs.region }}
   PREFIX: ${{ inputs.prefix }}
@@ -47,22 +48,34 @@ env:
 jobs:
   destroy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions: { id-token: write, contents: read }
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@v2.3.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3.1.2
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v5.0.2
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-
 
       - name: Destroy infra + resource group
         shell: bash
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-        run: bash scripts/gha/destroy.sh
+          TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          bash scripts/gha/destroy.sh

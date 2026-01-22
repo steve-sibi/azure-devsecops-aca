@@ -13,6 +13,41 @@ require_env() {
   fi
 }
 
+# Retry helper for transient Azure API failures
+retry() {
+  local max_attempts="${RETRY_MAX:-3}"
+  local delay="${RETRY_DELAY:-10}"
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [[ ${attempt} -ge ${max_attempts} ]]; then
+      echo "[retry] Command failed after ${max_attempts} attempts: $*" >&2
+      return 1
+    fi
+    echo "[retry] Attempt ${attempt}/${max_attempts} failed, retrying in ${delay}s..." >&2
+    sleep "${delay}"
+    ((attempt++))
+  done
+}
+
+# Curl wrapper with better error handling
+# Returns HTTP code, captures body to stdout, network errors return 000
+curl_with_code() {
+  local url="$1"
+  shift
+  local http_code body
+  # Use a temp file to capture body while getting status code
+  local tmp
+  tmp="$(mktemp)"
+  http_code="$(curl --connect-timeout 10 --max-time 30 -sS -w '%{http_code}' -o "${tmp}" "$@" "${url}" 2>/dev/null)" || http_code="000"
+  body="$(cat "${tmp}" 2>/dev/null || true)"
+  rm -f "${tmp}"
+  echo "${http_code}"
+  # Return body on fd 3 if needed, or callers can use separate calls
+}
+
 require_env RG
 require_env PREFIX
 require_env TFSTATE_SA
@@ -127,12 +162,17 @@ diagnose_e2e() {
 
 echo "[deploy] Smoke test API (/healthz)..."
 for i in {1..30}; do
-  code="$(curl --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "${API_URL}/healthz" || true)"
+  # Use --fail-with-body for better error detection; network failures return 000
+  code="$(curl --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "${API_URL}/healthz" 2>/dev/null)" || code="000"
   if [[ "${code}" == "200" ]]; then
     echo "[deploy] API is healthy."
     break
   fi
-  echo "[deploy] Waiting for API... (${i}/30) HTTP ${code}"
+  if [[ "${code}" == "000" ]]; then
+    echo "[deploy] Waiting for API... (${i}/30) - network error or timeout"
+  else
+    echo "[deploy] Waiting for API... (${i}/30) HTTP ${code}"
+  fi
   if [[ "${i}" == "1" || "${i}" == "10" || "${i}" == "20" ]]; then
     echo "---- ACA diagnostics (attempt ${i}) ----"
     diagnose_api
@@ -141,9 +181,9 @@ for i in {1..30}; do
   sleep 10
 done
 
-code="$(curl --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "${API_URL}/healthz" || true)"
+code="$(curl --connect-timeout 5 --max-time 10 -sS -o /dev/null -w '%{http_code}' "${API_URL}/healthz" 2>/dev/null)" || code="000"
 if [[ "${code}" != "200" ]]; then
-  echo "[deploy] API did not become healthy in time."
+  echo "[deploy] API did not become healthy in time (HTTP ${code})."
   diagnose_api
   exit 1
 fi

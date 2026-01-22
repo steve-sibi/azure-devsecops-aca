@@ -12,6 +12,25 @@ require_env() {
   fi
 }
 
+# Retry helper for transient Azure API failures
+retry() {
+  local max_attempts="${RETRY_MAX:-3}"
+  local delay="${RETRY_DELAY:-10}"
+  local attempt=1
+  while true; do
+    if "$@"; then
+      return 0
+    fi
+    if [[ ${attempt} -ge ${max_attempts} ]]; then
+      echo "[retry] Command failed after ${max_attempts} attempts: $*" >&2
+      return 1
+    fi
+    echo "[retry] Attempt ${attempt}/${max_attempts} failed, retrying in ${delay}s..." >&2
+    sleep "${delay}"
+    ((attempt++))
+  done
+}
+
 require_env RG
 require_env REGION
 require_env PREFIX
@@ -30,7 +49,7 @@ LA="${PREFIX}-la"
 
 echo "[deploy] Ensuring RG + foundation resources exist..."
 
-az group create -n "${RG}" -l "${REGION}" >/dev/null
+retry az group create -n "${RG}" -l "${REGION}" >/dev/null
 
 if az keyvault show -g "${RG}" -n "${KV}" >/dev/null 2>&1; then
   echo "[deploy] Key Vault ${KV} exists"
@@ -50,25 +69,25 @@ else
 fi
 
 az acr show -g "${RG}" -n "${ACR}" >/dev/null 2>&1 || \
-  az acr create -g "${RG}" -n "${ACR}" -l "${REGION}" --sku Basic >/dev/null
+  retry az acr create -g "${RG}" -n "${ACR}" -l "${REGION}" --sku Basic >/dev/null
 
 az monitor log-analytics workspace show -g "${RG}" -n "${LA}" >/dev/null 2>&1 || \
-  az monitor log-analytics workspace create -g "${RG}" -n "${LA}" -l "${REGION}" >/dev/null
+  retry az monitor log-analytics workspace create -g "${RG}" -n "${LA}" -l "${REGION}" >/dev/null
 
 echo "[deploy] Ensuring Terraform state storage exists..."
 
 if az storage account show -g "${RG}" -n "${TFSTATE_SA}" >/dev/null 2>&1; then
-  az storage account update \
+  retry az storage account update \
     -g "${RG}" -n "${TFSTATE_SA}" \
     --min-tls-version TLS1_2 >/dev/null
 else
-  az storage account create \
+  retry az storage account create \
     -g "${RG}" -n "${TFSTATE_SA}" -l "${REGION}" \
     --sku Standard_LRS --kind StorageV2 \
     --min-tls-version TLS1_2 >/dev/null
 fi
 
-az storage container create \
+retry az storage container create \
   --account-name "${TFSTATE_SA}" \
   --name "${TFSTATE_CONTAINER}" \
   --auth-mode login >/dev/null
