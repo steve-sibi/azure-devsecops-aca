@@ -175,7 +175,7 @@ jobs:
         id: checkov
         run: |
           set -euo pipefail
-          checkov -d infra --framework terraform --quiet -o sarif --output-file checkov.sarif 2>&1 | tee "$LOG_DIR/checkov.log" || true
+          checkov -d infra --framework terraform --config-file checkov.yml --skip-download --quiet -o sarif --output-file checkov.sarif 2>&1 | tee "$LOG_DIR/checkov.log" || true
 
       - name: Prepare Checkov SARIF
         id: checkov_sarif

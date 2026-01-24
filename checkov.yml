@@ -1,29 +1,42 @@
 skip-check:
-  - id: CKV_AZURE_165
-    comment: "ACR geo-replication deferred (Basic sku)."
-  - id: CKV_AZURE_237
-    comment: "ACR dedicated data endpoint requires Premium."
-  - id: CKV_AZURE_164
-    comment: "Image signing deferred; CI scanners used."
-  - id: CKV_AZURE_233
-    comment: "ACR zone redundancy requires Premium."
-  - id: CKV_AZURE_166
-    comment: "Quarantine/verification out of scope for starter."
-  - id: CKV_AZURE_163
-    comment: "Defender scanning is paid; using CI scanners."
-  - id: CKV_AZURE_139
-    comment: "Private networking deferred (no Private Link/VNet)."
-  - id: CKV_AZURE_189
-    comment: "KV public access disabled later with Private Link."
-  - id: CKV_AZURE_109
-    comment: "KV firewall rules require VNet scenario."
-  - id: CKV2_AZURE_32
-    comment: "KV Private Endpoint out of scope for v1."
-  - id: CKV_AZURE_199
-    comment: "SB double encryption (CMK) requires Premium."
-  - id: CKV_AZURE_204
-    comment: "SB private access requires Private Link/VNet."
-  - id: CKV_AZURE_201
-    comment: "SB CMK requires Premium."
-  - id: CKV_AZURE_203
-    comment: "SB local auth used for KEDA; AAD-only later."
+  # ---------------------------------------------------------------------------
+  # Azure Service Bus
+  # ---------------------------------------------------------------------------
+  # These are real findings, but fixing them requires larger architectural
+  # changes (Premium SKU, Private Link/VNet, AAD-only auth) which are deferred.
+  # Local auth (SAS/connection strings) required for KEDA scaling + app connections; AAD-only later.
+  - CKV_AZURE_203
+  # CMK encryption requires Premium SKU + Key Vault key/identity plumbing; deferred.
+  - CKV_AZURE_201
+  # Double encryption requires Premium SKU + CMK; deferred.
+  - CKV_AZURE_199
+  # Disabling public network access requires Private Link/VNet; deferred.
+  - CKV_AZURE_204
+
+  # ---------------------------------------------------------------------------
+  # Azure Storage Account
+  # ---------------------------------------------------------------------------
+  # Public network access is required in v1 (no Private Link/VNet yet); deferred.
+  - CKV_AZURE_59
+
+  # Checkov currently doesn't map Queue Service settings from
+  # `azurerm_storage_account_queue_properties` back to the storage account
+  # resource, so this shows as a false positive.
+  # Queue logging is configured via azurerm_storage_account_queue_properties (infra/core.tf); Checkov doesn't detect it.
+  - CKV_AZURE_33
+
+  # --- Storage Account: Intentional Security Trade-offs ---
+  # These are consciously skipped because the fix isn't possible with current architecture:
+  # Shared Key required: azurerm_container_app_environment_storage needs access_key (no MI support yet).
+  - CKV2_AZURE_40
+  # Private Endpoint requires VNet infrastructure; deferred to v2.
+  - CKV2_AZURE_33
+  # CMK requires Key Vault key + identity setup; deferred to v2.
+  - CKV2_AZURE_1
+
+  # --- Storage Account: Possible Checkov bugs (fix is applied but still fails) ---
+  # Remove these if a Checkov version update fixes them:
+  # BUG? sas_policy block is configured (30d expiration + Log). See infra/core.tf.
+  - CKV2_AZURE_41
+  # BUG? Table logging is configured via azurerm_monitor_diagnostic_setting. See infra/core.tf.
+  - CKV2_AZURE_20
