@@ -100,27 +100,30 @@ resource "azurerm_storage_account" "results" {
     }
   }
 
-  queue_properties {
-    logging {
-      delete                = true
-      read                  = true
-      retention_policy_days = 7
-      version               = "1.0"
-      write                 = true
-    }
-
-    minute_metrics {
-      enabled               = true
-      include_apis          = true
-      retention_policy_days = 7
-      version               = "1.0"
-    }
-  }
 }
 
 resource "azurerm_storage_table" "results" {
   name                 = local.results_table
   storage_account_name = azurerm_storage_account.results.name
+}
+
+resource "azurerm_storage_account_queue_properties" "results" {
+  storage_account_id = azurerm_storage_account.results.id
+
+  logging {
+    delete                = true
+    read                  = true
+    retention_policy_days = 7
+    version               = "1.0"
+    write                 = true
+  }
+
+  minute_metrics {
+    enabled               = true
+    include_apis          = true
+    retention_policy_days = 7
+    version               = "1.0"
+  }
 }
 
 # ---------- Least-privilege authorization rules at QUEUE scope ----------

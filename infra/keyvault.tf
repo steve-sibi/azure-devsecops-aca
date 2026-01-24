@@ -8,13 +8,6 @@ resource "azurerm_role_assignment" "kv_tf" {
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = coalesce(var.terraform_principal_object_id, data.azurerm_client_config.current.object_id)
 
-  lifecycle {
-    precondition {
-      condition     = data.azurerm_key_vault.kv.enable_rbac_authorization
-      error_message = "Key Vault must have Azure RBAC enabled for secrets (enable_rbac_authorization=true). See scripts/gha/deploy_infra_bootstrap.sh."
-    }
-  }
-
   # RBAC propagation can lag just long enough to cause flaky 403s when Terraform
   # immediately performs data-plane secret operations. A short delay here makes
   # applies more reliable without requiring extra providers.
@@ -147,13 +140,6 @@ resource "azurerm_role_assignment" "kv_secrets_uami" {
   scope                = data.azurerm_key_vault.kv.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.uami.principal_id
-
-  lifecycle {
-    precondition {
-      condition     = data.azurerm_key_vault.kv.enable_rbac_authorization
-      error_message = "Key Vault must have Azure RBAC enabled for secrets (enable_rbac_authorization=true). See scripts/gha/deploy_infra_bootstrap.sh."
-    }
-  }
 
   provisioner "local-exec" {
     command = "sleep 30"
