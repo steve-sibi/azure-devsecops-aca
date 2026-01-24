@@ -19,11 +19,16 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
+    env:
+      LOG_DIR: .ci-logs
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v6
         with: { python-version: "3.11" }
+
+      - name: Prepare logs
+        run: mkdir -p "$LOG_DIR"
 
       - name: Install ruff + pytest
         run: |
@@ -32,13 +37,93 @@ jobs:
             azure-servicebus azure-identity azure-data-tables azure-storage-blob azure-core
 
       - name: Ruff (syntax/undefined names)
-        run: ruff check . --select E9,F63,F7,F82
+        id: ruff
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          ruff check . --select E9,F63,F7,F82 2>&1 | tee "$LOG_DIR/ruff.log"
 
       - name: Python compile check
-        run: python -m compileall app scripts .github
+        id: py_compile
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m compileall app scripts .github 2>&1 | tee "$LOG_DIR/compile.log"
 
       - name: Pytest
-        run: pytest
+        id: pytest
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          pytest 2>&1 | tee "$LOG_DIR/pytest.log"
+
+      - name: Job summary (python-quality)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "## Python quality"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Ruff | ${{ steps.ruff.outcome }} |"
+            echo "| Compile | ${{ steps.py_compile.outcome }} |"
+            echo "| Pytest | ${{ steps.pytest.outcome }} |"
+            echo ""
+
+            echo "### Recommended fixes"
+            ruff_outcome="${{ steps.ruff.outcome }}"
+            compile_outcome="${{ steps.py_compile.outcome }}"
+            pytest_outcome="${{ steps.pytest.outcome }}"
+
+            if [ "$ruff_outcome" != "success" ]; then
+              echo "- Run \`ruff check . --fix\` for safe autofixes (then \`ruff format\` if enabled)."
+            fi
+            if [ "$compile_outcome" != "success" ]; then
+              echo "- Fix Python syntax errors (see \`compile.log\`)."
+            fi
+            if [ "$pytest_outcome" != "success" ]; then
+              echo "- Re-run \`pytest -q\` locally and fix failing tests."
+            fi
+            if [ "$ruff_outcome$compile_outcome$pytest_outcome" = "successsuccesssuccess" ]; then
+              echo "- No action needed."
+            fi
+            echo ""
+
+            for f in ruff.log compile.log pytest.log; do
+              p="$LOG_DIR/$f"
+              if [ -f "$p" ]; then
+                echo "<details><summary>$f</summary>"
+                echo ""
+                echo '```text'
+                tail -n 200 "$p"
+                echo '```'
+                echo "</details>"
+                echo ""
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs (python-quality)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-python-quality
+          path: ${{ env.LOG_DIR }}
+          if-no-files-found: ignore
+
+      - name: Fail if quality checks failed
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [ "${{ steps.ruff.outcome }}" != "success" ] || \
+             [ "${{ steps.py_compile.outcome }}" != "success" ] || \
+             [ "${{ steps.pytest.outcome }}" != "success" ]; then
+            exit 1
+          fi
 
   iac-and-docker-lint:
     runs-on: ubuntu-latest
@@ -46,6 +131,8 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    env:
+      LOG_DIR: .ci-logs
     steps:
       - uses: actions/checkout@v4
 
@@ -54,18 +141,41 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform fmt + validate
+      - name: Prepare logs
+        run: mkdir -p "$LOG_DIR"
+
+      - name: Terraform fmt (check)
+        id: terraform_fmt
+        continue-on-error: true
+        shell: bash
         run: |
-          terraform fmt -check -recursive infra
-          terraform -chdir=infra init -backend=false
-          terraform -chdir=infra validate -no-color
+          set -euo pipefail
+          terraform fmt -check -recursive infra 2>&1 | tee "$LOG_DIR/terraform-fmt.log"
+
+      - name: Terraform init (backend disabled)
+        id: terraform_init
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra init -backend=false 2>&1 | tee "$LOG_DIR/terraform-init.log"
+
+      - name: Terraform validate
+        id: terraform_validate
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          terraform -chdir=infra validate -no-color 2>&1 | tee "$LOG_DIR/terraform-validate.log"
 
       - name: Install Checkov
         run: pip install checkov
 
       - name: Checkov (Terraform → SARIF)
+        id: checkov
         run: |
-          checkov -d infra --framework terraform --quiet -o sarif --output-file checkov.sarif || true
+          set -euo pipefail
+          checkov -d infra --framework terraform --quiet -o sarif --output-file checkov.sarif 2>&1 | tee "$LOG_DIR/checkov.log" || true
       - name: Upload Checkov SARIF
         if: ${{ always() && hashFiles('checkov.sarif') != '' }}
         uses: github/codeql-action/upload-sarif@v4
@@ -74,19 +184,132 @@ jobs:
           category: checkov-terraform
 
       - name: Hadolint (API)
+        id: hadolint_api
+        continue-on-error: true
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/api/Dockerfile
 
       - name: Hadolint (Worker)
+        id: hadolint_worker
+        continue-on-error: true
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/worker/Dockerfile.sidecar
 
       - name: Hadolint (ClamAV)
+        id: hadolint_clamav
+        continue-on-error: true
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/clamav/Dockerfile
+
+      - name: Job summary (iac-and-docker-lint)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "## IaC & Docker lint"
+            echo ""
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Terraform fmt | ${{ steps.terraform_fmt.outcome }} |"
+            echo "| Terraform init | ${{ steps.terraform_init.outcome }} |"
+            echo "| Terraform validate | ${{ steps.terraform_validate.outcome }} |"
+            echo "| Checkov | ${{ steps.checkov.outcome }} |"
+            echo "| Hadolint (API) | ${{ steps.hadolint_api.outcome }} |"
+            echo "| Hadolint (Worker) | ${{ steps.hadolint_worker.outcome }} |"
+            echo "| Hadolint (ClamAV) | ${{ steps.hadolint_clamav.outcome }} |"
+            echo ""
+
+            tf_validate_log="$LOG_DIR/terraform-validate.log"
+            if [ -f "$tf_validate_log" ]; then
+              warn_count="$(grep -c '^Warning:' "$tf_validate_log" || true)"
+              err_count="$(grep -c '^Error:' "$tf_validate_log" || true)"
+              echo "### Terraform diagnostics"
+              echo "- Warnings: $warn_count"
+              echo "- Errors: $err_count"
+
+              deprecated_lines="$(grep -n 'deprecated' "$tf_validate_log" | head -n 20 || true)"
+              if [ -n "$deprecated_lines" ]; then
+                echo ""
+                echo "<details><summary>Terraform deprecations (first 20 matches)</summary>"
+                echo ""
+                echo '```text'
+                printf '%s\n' "$deprecated_lines"
+                echo '```'
+                echo "</details>"
+              fi
+              echo ""
+            fi
+
+            echo "### Checkov findings"
+            python - <<'PY'
+          import json
+          from pathlib import Path
+
+          sarif = Path("checkov.sarif")
+          if not sarif.exists():
+            print("- checkov.sarif not found")
+            raise SystemExit(0)
+
+          data = json.loads(sarif.read_text(encoding="utf-8"))
+          runs = data.get("runs") or []
+          results = (runs[0].get("results") if runs else []) or []
+          print(f"- Results: {len(results)}")
+          PY
+            echo ""
+
+            echo "### Recommended fixes"
+            if [ "${{ steps.terraform_fmt.outcome }}" != "success" ]; then
+              echo "- Run \`terraform fmt -recursive infra\` (then re-run CI)."
+            fi
+            if [ "${{ steps.terraform_validate.outcome }}" != "success" ]; then
+              echo "- Run \`terraform -chdir=infra init -backend=false\` then \`terraform -chdir=infra validate\` locally."
+            fi
+            if [ "${{ steps.hadolint_api.outcome }}" != "success" ] || \
+               [ "${{ steps.hadolint_worker.outcome }}" != "success" ] || \
+               [ "${{ steps.hadolint_clamav.outcome }}" != "success" ]; then
+              echo "- Fix Dockerfile lint violations (see Hadolint step logs)."
+            fi
+            echo ""
+
+            for f in terraform-fmt.log terraform-init.log terraform-validate.log checkov.log; do
+              p="$LOG_DIR/$f"
+              if [ -f "$p" ]; then
+                echo "<details><summary>$f</summary>"
+                echo ""
+                echo '```text'
+                tail -n 200 "$p"
+                echo '```'
+                echo "</details>"
+                echo ""
+              fi
+            done
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs (iac-and-docker-lint)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-iac-and-docker-lint
+          path: |
+            ${{ env.LOG_DIR }}
+            checkov.sarif
+          if-no-files-found: ignore
+
+      - name: Fail if required checks failed
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [ "${{ steps.terraform_fmt.outcome }}" != "success" ] || \
+             [ "${{ steps.terraform_init.outcome }}" != "success" ] || \
+             [ "${{ steps.terraform_validate.outcome }}" != "success" ] || \
+             [ "${{ steps.hadolint_api.outcome }}" != "success" ] || \
+             [ "${{ steps.hadolint_worker.outcome }}" != "success" ] || \
+             [ "${{ steps.hadolint_clamav.outcome }}" != "success" ]; then
+            exit 1
+          fi
 
   build-and-scan:
     needs: [python-quality, iac-and-docker-lint]
@@ -95,6 +318,8 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    env:
+      LOG_DIR: .ci-logs
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +337,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build ${{ matrix.name }} (cache)
+        id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: ./app
@@ -167,3 +393,59 @@ jobs:
         with:
           sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}
           category: trivy-${{ matrix.name }}
+
+      - name: Prepare logs
+        if: ${{ always() }}
+        run: mkdir -p "$LOG_DIR"
+
+      - name: Job summary (build-and-scan)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "## Build & scan (${{ matrix.name }})"
+            echo ""
+            echo "| Step | Result |"
+            echo "|---|---|"
+            echo "| Docker build | ${{ steps.docker_build.outcome }} |"
+            echo "| Trivy scan | ${{ steps.trivy_scan.outcome }} |"
+            echo ""
+
+            sarif_file="trivy-${{ matrix.name }}.sarif"
+            if [ -f "$sarif_file" ]; then
+              echo "### Trivy findings"
+              python3 - <<PY
+          import json
+          from pathlib import Path
+
+          sarif = Path("$sarif_file")
+          data = json.loads(sarif.read_text(encoding="utf-8"))
+          runs = data.get("runs") or []
+          results = (runs[0].get("results") if runs else []) or []
+          by_level = {}
+          for r in results:
+            level = r.get("level") or "unknown"
+            by_level[level] = by_level.get(level, 0) + 1
+
+          total = len(results)
+          print(f"- Results: {total}")
+          for level, count in sorted(by_level.items()):
+            print(f"- {level}: {count}")
+          PY
+              echo ""
+            fi
+
+            echo "### Recommended fixes"
+            echo "- Review GitHub Code Scanning results for details (Trivy SARIF upload)."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs (build-and-scan)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-build-and-scan-${{ matrix.name }}
+          path: |
+            ${{ env.LOG_DIR }}
+            trivy-${{ matrix.name }}.sarif
+          if-no-files-found: ignore
