@@ -389,7 +389,9 @@ jobs:
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           format: sarif
-          output: ${{ github.workspace }}/trivy-${{ matrix.name }}.sarif
+          # Use a workspace-relative path (the Trivy action runs in a container, so host-absolute
+          # paths like ${{ github.workspace }} may not be writable/visible).
+          output: trivy-${{ matrix.name }}.sarif
           exit-code: '0' # keep pipeline green; review SARIF for issues
       - name: Prepare Trivy SARIF (${{ matrix.name }})
         id: trivy_sarif
