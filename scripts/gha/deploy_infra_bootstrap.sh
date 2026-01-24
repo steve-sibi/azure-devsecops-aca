@@ -64,8 +64,15 @@ else
     done
   else
     echo "[deploy] Creating Key Vault ${KV}"
-    az keyvault create -g "${RG}" -n "${KV}" -l "${REGION}" >/dev/null
+    retry az keyvault create -g "${RG}" -n "${KV}" -l "${REGION}" --enable-rbac-authorization true >/dev/null
   fi
+fi
+
+echo "[deploy] Ensuring Key Vault ${KV} uses Azure RBAC authorization..."
+KV_RBAC="$(az keyvault show -g "${RG}" -n "${KV}" --query "properties.enableRbacAuthorization" -o tsv 2>/dev/null || echo "")"
+if [[ "${KV_RBAC,,}" != "true" ]]; then
+  echo "[deploy] Enabling RBAC authorization on Key Vault ${KV}"
+  retry az keyvault update -g "${RG}" -n "${KV}" --enable-rbac-authorization true >/dev/null
 fi
 
 az acr show -g "${RG}" -n "${ACR}" >/dev/null 2>&1 || \

@@ -655,9 +655,9 @@ curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}"
 - **`Failed to provision revision: '<secret>' unable to get value using Managed identity`**
     
     - In `azurerm_container_app.secret` blocks, ensure `identity` points at the **UAMI resource ID** (or `"System"` if you intentionally use system-assigned MI).
-    - Ensure the app identity has Key Vault secret **Get/List** (via access policy or RBAC).
+    - Ensure the app identity has **Key Vault Secrets User** on the vault (RBAC) so it can **Get/List** secrets.
         
-    - Ensure the CI principal had permission to initially **create** `ServiceBusConnection` (policy `kv_ci`).
+    - Ensure the CI principal has **Key Vault Secrets Officer** on the vault (RBAC) so Terraform can **create/update** the secrets.
         
 - **KEDA not scaling**
     

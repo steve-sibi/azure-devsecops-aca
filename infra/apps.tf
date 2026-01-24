@@ -187,7 +187,6 @@ resource "azurerm_container_app" "api" {
   }
 
   depends_on = [
-    azurerm_key_vault_access_policy.kv_uami,
     azurerm_role_assignment.kv_secrets_uami,
     azurerm_role_assignment.acr_pull_uami,
   ]
@@ -328,7 +327,6 @@ resource "azurerm_container_app" "fetcher" {
   }
 
   depends_on = [
-    azurerm_key_vault_access_policy.kv_uami,
     azurerm_role_assignment.kv_secrets_uami,
     azurerm_role_assignment.acr_pull_uami,
   ]
@@ -471,7 +469,6 @@ resource "azurerm_container_app" "worker" {
   }
 
   depends_on = [
-    azurerm_key_vault_access_policy.kv_uami,
     azurerm_role_assignment.kv_secrets_uami,
     azurerm_role_assignment.acr_pull_uami,
   ]

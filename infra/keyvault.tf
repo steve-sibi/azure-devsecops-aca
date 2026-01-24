@@ -1,17 +1,26 @@
 # ---------- Key Vault access & secrets ----------
-# CI principal can manage secrets (used to create/update secrets & allow destroy)
-resource "azurerm_key_vault_access_policy" "kv_ci" {
-  key_vault_id       = data.azurerm_key_vault.kv.id
-  tenant_id          = data.azurerm_client_config.current.tenant_id
-  object_id          = coalesce(var.terraform_principal_object_id, data.azurerm_client_config.current.object_id)
-  secret_permissions = ["Get", "Set", "List", "Delete", "Purge"]
-}
-
-# Ensure the principal running Terraform can use Key Vault when RBAC is enabled
+# This project standardizes on Key Vault *data-plane* authorization via Azure RBAC.
+# The vault is created/updated in scripts/gha/deploy_infra_bootstrap.sh to enable RBAC.
+#
+# Ensure the principal running Terraform can manage Key Vault secrets.
 resource "azurerm_role_assignment" "kv_tf" {
   scope                = data.azurerm_key_vault.kv.id
   role_definition_name = "Key Vault Secrets Officer"
   principal_id         = coalesce(var.terraform_principal_object_id, data.azurerm_client_config.current.object_id)
+
+  lifecycle {
+    precondition {
+      condition     = data.azurerm_key_vault.kv.enable_rbac_authorization
+      error_message = "Key Vault must have Azure RBAC enabled for secrets (enable_rbac_authorization=true). See scripts/gha/deploy_infra_bootstrap.sh."
+    }
+  }
+
+  # RBAC propagation can lag just long enough to cause flaky 403s when Terraform
+  # immediately performs data-plane secret operations. A short delay here makes
+  # applies more reliable without requiring extra providers.
+  provisioner "local-exec" {
+    command = "sleep 30"
+  }
 }
 
 # Generate and store an API key for the public API (KV-backed)
@@ -31,7 +40,7 @@ resource "azurerm_key_vault_secret" "api_key" {
     ignore_changes = [expiration_date]
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+  depends_on = [azurerm_role_assignment.kv_tf]
 }
 
 # Store distinct SB connection strings in KV
@@ -46,7 +55,7 @@ resource "azurerm_key_vault_secret" "sb_send" {
     ignore_changes = [expiration_date]
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+  depends_on = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_listen" {
@@ -60,7 +69,7 @@ resource "azurerm_key_vault_secret" "sb_listen" {
     ignore_changes = [expiration_date]
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+  depends_on = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_manage" {
@@ -74,7 +83,7 @@ resource "azurerm_key_vault_secret" "sb_manage" {
     ignore_changes = [expiration_date]
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+  depends_on = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_scan_send" {
@@ -88,7 +97,7 @@ resource "azurerm_key_vault_secret" "sb_scan_send" {
     ignore_changes = [expiration_date]
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+  depends_on = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_scan_listen" {
@@ -102,7 +111,7 @@ resource "azurerm_key_vault_secret" "sb_scan_listen" {
     ignore_changes = [expiration_date]
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+  depends_on = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "sb_scan_manage" {
@@ -116,7 +125,7 @@ resource "azurerm_key_vault_secret" "sb_scan_manage" {
     ignore_changes = [expiration_date]
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
+  depends_on = [azurerm_role_assignment.kv_tf]
 }
 
 resource "azurerm_key_vault_secret" "results_conn" {
@@ -130,15 +139,7 @@ resource "azurerm_key_vault_secret" "results_conn" {
     ignore_changes = [expiration_date]
   }
 
-  depends_on = [azurerm_key_vault_access_policy.kv_ci, azurerm_role_assignment.kv_tf]
-}
-
-# Give the UAMI read on KV so apps can resolve secrets at creation time
-resource "azurerm_key_vault_access_policy" "kv_uami" {
-  key_vault_id       = data.azurerm_key_vault.kv.id
-  tenant_id          = data.azurerm_client_config.current.tenant_id
-  object_id          = azurerm_user_assigned_identity.uami.principal_id
-  secret_permissions = ["Get", "List"]
+  depends_on = [azurerm_role_assignment.kv_tf]
 }
 
 # RBAC (preferred for KV): allow UAMI to read secrets
@@ -146,4 +147,15 @@ resource "azurerm_role_assignment" "kv_secrets_uami" {
   scope                = data.azurerm_key_vault.kv.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = azurerm_user_assigned_identity.uami.principal_id
+
+  lifecycle {
+    precondition {
+      condition     = data.azurerm_key_vault.kv.enable_rbac_authorization
+      error_message = "Key Vault must have Azure RBAC enabled for secrets (enable_rbac_authorization=true). See scripts/gha/deploy_infra_bootstrap.sh."
+    }
+  }
+
+  provisioner "local-exec" {
+    command = "sleep 30"
+  }
 }
