@@ -119,7 +119,6 @@ resource "azurerm_storage_account_queue_properties" "results" {
   }
 
   minute_metrics {
-    enabled               = true
     include_apis          = true
     retention_policy_days = 7
     version               = "1.0"
@@ -213,9 +212,8 @@ resource "azurerm_monitor_diagnostic_setting" "sb_diag" {
   target_resource_id         = azurerm_servicebus_namespace.sb.id
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
 
-  metric {
+  enabled_metric {
     category = "AllMetrics"
-    enabled  = true
   }
 }
 
@@ -224,9 +222,8 @@ resource "azurerm_monitor_diagnostic_setting" "aca_env_diag" {
   target_resource_id         = azurerm_container_app_environment.env.id
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
 
-  metric {
+  enabled_metric {
     category = "AllMetrics"
-    enabled  = true
   }
 }
 
@@ -247,14 +244,12 @@ resource "azurerm_monitor_diagnostic_setting" "results_sa_table_diag" {
     category = "StorageDelete"
   }
 
-  metric {
+  enabled_metric {
     category = "Capacity"
-    enabled  = true
   }
 
-  metric {
+  enabled_metric {
     category = "Transaction"
-    enabled  = true
   }
 }
 
@@ -275,13 +270,11 @@ resource "azurerm_monitor_diagnostic_setting" "results_sa_queue_diag" {
     category = "StorageDelete"
   }
 
-  metric {
+  enabled_metric {
     category = "Capacity"
-    enabled  = true
   }
 
-  metric {
+  enabled_metric {
     category = "Transaction"
-    enabled  = true
   }
 }
