@@ -176,11 +176,40 @@ jobs:
         run: |
           set -euo pipefail
           checkov -d infra --framework terraform --quiet -o sarif --output-file checkov.sarif 2>&1 | tee "$LOG_DIR/checkov.log" || true
+
+      - name: Prepare Checkov SARIF
+        id: checkov_sarif
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sarif_file=""
+
+          if [ -f "checkov.sarif" ]; then
+            sarif_file="checkov.sarif"
+          elif [ -d "checkov.sarif" ]; then
+            sarif_file="$(find checkov.sarif -type f -name '*.sarif' | head -n 1 || true)"
+          elif [ -f "results_sarif.sarif" ]; then
+            sarif_file="results_sarif.sarif"
+          fi
+
+          if [ -n "$sarif_file" ] && [ -s "$sarif_file" ]; then
+            cp "$sarif_file" "checkov-results.sarif"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=checkov-results.sarif" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::Checkov did not create a SARIF file."
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+
       - name: Upload Checkov SARIF
-        if: ${{ always() && hashFiles('checkov.sarif') != '' }}
+        if: ${{ always() && steps.checkov_sarif.outputs.found == 'true' }}
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: checkov.sarif
+          sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
           category: checkov-terraform
 
       - name: Hadolint (API)
@@ -244,20 +273,22 @@ jobs:
             fi
 
             echo "### Checkov findings"
-            python - <<'PY'
+            checkov_sarif="${{ steps.checkov_sarif.outputs.sarif_file }}"
+            if [ -n "$checkov_sarif" ] && [ -f "$checkov_sarif" ]; then
+              SARIF_FILE="$checkov_sarif" python - <<'PY'
           import json
+          import os
           from pathlib import Path
 
-          sarif = Path("checkov.sarif")
-          if not sarif.exists():
-            print("- checkov.sarif not found")
-            raise SystemExit(0)
-
+          sarif = Path(os.environ["SARIF_FILE"])
           data = json.loads(sarif.read_text(encoding="utf-8"))
           runs = data.get("runs") or []
           results = (runs[0].get("results") if runs else []) or []
           print(f"- Results: {len(results)}")
           PY
+            else
+              echo "- SARIF output not found"
+            fi
             echo ""
 
             echo "### Recommended fixes"
@@ -295,7 +326,7 @@ jobs:
           name: ci-logs-iac-and-docker-lint
           path: |
             ${{ env.LOG_DIR }}
-            checkov.sarif
+            checkov-results.sarif
           if-no-files-found: ignore
 
       - name: Fail if required checks failed
