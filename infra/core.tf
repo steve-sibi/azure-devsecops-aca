@@ -181,10 +181,10 @@ resource "azurerm_container_app_environment" "env" {
 }
 
 resource "azurerm_storage_share" "artifacts" {
-  count                = var.create_apps ? 1 : 0
-  name                 = local.artifacts_share
-  storage_account_name = azurerm_storage_account.results.name
-  quota                = var.artifacts_share_quota_gb
+  count              = var.create_apps ? 1 : 0
+  name               = local.artifacts_share
+  storage_account_id = azurerm_storage_account.results.id
+  quota              = var.artifacts_share_quota_gb
 }
 
 resource "azurerm_container_app_environment_storage" "artifacts" {
