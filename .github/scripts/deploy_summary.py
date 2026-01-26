@@ -3,7 +3,7 @@
 Generate rich markdown summaries for the deploy workflow.
 
 This script is called by the deploy.yml workflow to produce GitHub Step Summary
-output with Azure Portal links, status badges, resource tables, and troubleshooting info.
+output with status badges, resource tables, and troubleshooting info.
 
 Usage:
     python deploy_summary.py <command> [options]
@@ -12,6 +12,10 @@ Commands:
     infra-bootstrap   Generate summary for infrastructure bootstrap job
     build-push        Generate summary for container image build/push job
     create-apps       Generate summary for app deployment and E2E tests
+
+Security Note:
+    This script intentionally does NOT include Azure subscription IDs or
+    portal links to avoid exposing infrastructure details in public repos.
 """
 
 from __future__ import annotations
@@ -20,79 +24,10 @@ import argparse
 import json
 import os
 import sys
-import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-
-# ---------------------------------------------------------------------------
-# Azure Portal URL builders
-# ---------------------------------------------------------------------------
-
-AZURE_PORTAL = "https://portal.azure.com"
-
-
-def portal_resource_group_url(subscription_id: str, rg: str) -> str:
-    """Direct link to a Resource Group in Azure Portal."""
-    return (
-        f"{AZURE_PORTAL}/#@/resource/subscriptions/{subscription_id}"
-        f"/resourceGroups/{rg}/overview"
-    )
-
-
-def portal_container_app_url(subscription_id: str, rg: str, app_name: str) -> str:
-    """Direct link to a Container App in Azure Portal."""
-    resource_id = (
-        f"/subscriptions/{subscription_id}/resourceGroups/{rg}"
-        f"/providers/Microsoft.App/containerApps/{app_name}"
-    )
-    return f"{AZURE_PORTAL}/#@/resource{resource_id}/containerapp"
-
-
-def portal_container_app_logs_url(subscription_id: str, rg: str, app_name: str) -> str:
-    """Direct link to Container App log stream."""
-    resource_id = (
-        f"/subscriptions/{subscription_id}/resourceGroups/{rg}"
-        f"/providers/Microsoft.App/containerApps/{app_name}"
-    )
-    return f"{AZURE_PORTAL}/#@/resource{resource_id}/logStream"
-
-
-def portal_acr_url(subscription_id: str, rg: str, acr_name: str) -> str:
-    """Direct link to Azure Container Registry."""
-    resource_id = (
-        f"/subscriptions/{subscription_id}/resourceGroups/{rg}"
-        f"/providers/Microsoft.ContainerRegistry/registries/{acr_name}"
-    )
-    return f"{AZURE_PORTAL}/#@/resource{resource_id}/overview"
-
-
-def portal_service_bus_url(subscription_id: str, rg: str, ns_name: str) -> str:
-    """Direct link to Service Bus namespace."""
-    resource_id = (
-        f"/subscriptions/{subscription_id}/resourceGroups/{rg}"
-        f"/providers/Microsoft.ServiceBus/namespaces/{ns_name}"
-    )
-    return f"{AZURE_PORTAL}/#@/resource{resource_id}/overview"
-
-
-def portal_app_insights_url(subscription_id: str, rg: str, appi_name: str) -> str:
-    """Direct link to Application Insights."""
-    resource_id = (
-        f"/subscriptions/{subscription_id}/resourceGroups/{rg}"
-        f"/providers/Microsoft.Insights/components/{appi_name}"
-    )
-    return f"{AZURE_PORTAL}/#@/resource{resource_id}/overview"
-
-
-def portal_key_vault_url(subscription_id: str, rg: str, kv_name: str) -> str:
-    """Direct link to Key Vault."""
-    resource_id = (
-        f"/subscriptions/{subscription_id}/resourceGroups/{rg}"
-        f"/providers/Microsoft.KeyVault/vaults/{kv_name}"
-    )
-    return f"{AZURE_PORTAL}/#@/resource{resource_id}/overview"
 
 
 # ---------------------------------------------------------------------------
@@ -140,11 +75,6 @@ def md_code_block(content: str, lang: str = "") -> str:
     return f"```{lang}\n{content}\n```"
 
 
-def md_link(text: str, url: str) -> str:
-    """Create a markdown link."""
-    return f"[{text}]({url})"
-
-
 # ---------------------------------------------------------------------------
 # Environment helpers
 # ---------------------------------------------------------------------------
@@ -178,7 +108,6 @@ def get_timestamp() -> str:
 class DeployContext:
     """Common deployment context from environment."""
 
-    subscription_id: str
     resource_group: str
     prefix: str
     region: str
@@ -191,9 +120,6 @@ class DeployContext:
     @classmethod
     def from_env(cls) -> "DeployContext":
         return cls(
-            subscription_id=get_env(
-                "AZURE_SUBSCRIPTION_ID", get_env("ARM_SUBSCRIPTION_ID")
-            ),
             resource_group=get_env("RG"),
             prefix=get_env("PREFIX"),
             region=get_env("REGION"),
@@ -213,7 +139,6 @@ def generate_infra_bootstrap_summary() -> str:
     kv_name = f"{ctx.prefix}-kv"
     acr_name = f"{ctx.prefix}acr"
     la_name = f"{ctx.prefix}-la"
-    sbns_name = f"{ctx.prefix}-sbns"
     tfstate_sa = get_env("TFSTATE_SA")
 
     lines = [
@@ -241,33 +166,13 @@ def generate_infra_bootstrap_summary() -> str:
     lines.append("### Resources Created/Verified")
     lines.append("")
 
-    # Resources with portal links
-    if ctx.subscription_id:
-        resource_rows = [
-            [
-                "Key Vault",
-                f"`{kv_name}`",
-                md_link(
-                    "Portal",
-                    portal_key_vault_url(
-                        ctx.subscription_id, ctx.resource_group, kv_name
-                    ),
-                ),
-            ],
-            [
-                "Container Registry",
-                f"`{acr_name}`",
-                md_link(
-                    "Portal",
-                    portal_acr_url(ctx.subscription_id, ctx.resource_group, acr_name),
-                ),
-            ],
-            ["Log Analytics", f"`{la_name}`", "--"],
-            ["Terraform State SA", f"`{tfstate_sa}`", "--"],
-        ]
-        lines.append(md_table(["Resource", "Name", "Link"], resource_rows))
-    else:
-        lines.append("_Subscription ID not available for Portal links._")
+    resource_rows = [
+        ["Key Vault", f"`{kv_name}`"],
+        ["Container Registry", f"`{acr_name}`"],
+        ["Log Analytics", f"`{la_name}`"],
+        ["Terraform State SA", f"`{tfstate_sa}`"],
+    ]
+    lines.append(md_table(["Resource", "Name"], resource_rows))
 
     lines.append("")
     lines.append("### Next Steps")
@@ -308,24 +213,12 @@ def generate_build_push_summary() -> str:
     lines.append("### Build Details")
     lines.append("")
 
-    acr_name = (
-        acr_login_server.split(".")[0] if acr_login_server else f"{ctx.prefix}acr"
-    )
     details_rows = [
         ["ACR", f"`{acr_login_server}`"],
         ["Image Tag", f"`{ctx.image_tag}`"],
         ["Git SHA", f"`{ctx.sha}`"],
     ]
     lines.append(md_table(["Property", "Value"], details_rows))
-
-    if ctx.subscription_id:
-        lines.append("")
-        lines.append(
-            md_link(
-                "View images in Azure Portal",
-                portal_acr_url(ctx.subscription_id, ctx.resource_group, acr_name),
-            )
-        )
 
     lines.append("")
     lines.append("### Next Steps")
@@ -347,15 +240,15 @@ def generate_create_apps_summary() -> str:
     e2e_duration = get_env("E2E_DURATION_SECONDS", "")
 
     # Queue depths (set by deploy script)
-    tasks_queue_active = get_env("TASKS_QUEUE_ACTIVE", "—")
-    tasks_queue_dead = get_env("TASKS_QUEUE_DEAD", "—")
-    scan_queue_active = get_env("SCAN_QUEUE_ACTIVE", "—")
-    scan_queue_dead = get_env("SCAN_QUEUE_DEAD", "—")
+    tasks_queue_active = get_env("TASKS_QUEUE_ACTIVE", "--")
+    tasks_queue_dead = get_env("TASKS_QUEUE_DEAD", "--")
+    scan_queue_active = get_env("SCAN_QUEUE_ACTIVE", "--")
+    scan_queue_dead = get_env("SCAN_QUEUE_DEAD", "--")
 
     # Replica counts
-    api_replicas = get_env("API_REPLICAS", "—")
-    fetcher_replicas = get_env("FETCHER_REPLICAS", "—")
-    worker_replicas = get_env("WORKER_REPLICAS", "—")
+    api_replicas = get_env("API_REPLICAS", "--")
+    fetcher_replicas = get_env("FETCHER_REPLICAS", "--")
+    worker_replicas = get_env("WORKER_REPLICAS", "--")
 
     lines = [
         "## Deployment Complete",
@@ -424,69 +317,12 @@ def generate_create_apps_summary() -> str:
     lines.append("### Container Apps")
     lines.append("")
 
-    api_name = f"{ctx.prefix}-api"
-    fetcher_name = f"{ctx.prefix}-fetcher"
-    worker_name = f"{ctx.prefix}-worker"
-
-    if ctx.subscription_id:
-        apps_rows = [
-            [
-                "API",
-                api_replicas,
-                md_link(
-                    "Portal",
-                    portal_container_app_url(
-                        ctx.subscription_id, ctx.resource_group, api_name
-                    ),
-                ),
-                md_link(
-                    "Logs",
-                    portal_container_app_logs_url(
-                        ctx.subscription_id, ctx.resource_group, api_name
-                    ),
-                ),
-            ],
-            [
-                "Fetcher",
-                fetcher_replicas,
-                md_link(
-                    "Portal",
-                    portal_container_app_url(
-                        ctx.subscription_id, ctx.resource_group, fetcher_name
-                    ),
-                ),
-                md_link(
-                    "Logs",
-                    portal_container_app_logs_url(
-                        ctx.subscription_id, ctx.resource_group, fetcher_name
-                    ),
-                ),
-            ],
-            [
-                "Worker",
-                worker_replicas,
-                md_link(
-                    "Portal",
-                    portal_container_app_url(
-                        ctx.subscription_id, ctx.resource_group, worker_name
-                    ),
-                ),
-                md_link(
-                    "Logs",
-                    portal_container_app_logs_url(
-                        ctx.subscription_id, ctx.resource_group, worker_name
-                    ),
-                ),
-            ],
-        ]
-        lines.append(md_table(["App", "Replicas", "Portal", "Logs"], apps_rows))
-    else:
-        apps_rows = [
-            ["API", api_replicas],
-            ["Fetcher", fetcher_replicas],
-            ["Worker", worker_replicas],
-        ]
-        lines.append(md_table(["App", "Replicas"], apps_rows))
+    apps_rows = [
+        ["API", api_replicas],
+        ["Fetcher", fetcher_replicas],
+        ["Worker", worker_replicas],
+    ]
+    lines.append(md_table(["App", "Replicas"], apps_rows))
 
     # Queue Status
     lines.append("")
@@ -499,24 +335,6 @@ def generate_create_apps_summary() -> str:
     ]
     lines.append(md_table(["Queue", "Active", "Dead Letter"], queue_rows))
 
-    # Portal Quick Links
-    if ctx.subscription_id:
-        lines.append("")
-        lines.append("### Azure Portal Quick Links")
-        lines.append("")
-        lines.append(
-            f"- {md_link('Resource Group', portal_resource_group_url(ctx.subscription_id, ctx.resource_group))}"
-        )
-        lines.append(
-            f"- {md_link('Application Insights', portal_app_insights_url(ctx.subscription_id, ctx.resource_group, f'{ctx.prefix}-appi'))}"
-        )
-        lines.append(
-            f"- {md_link('Service Bus', portal_service_bus_url(ctx.subscription_id, ctx.resource_group, f'{ctx.prefix}-sbns'))}"
-        )
-        lines.append(
-            f"- {md_link('Key Vault', portal_key_vault_url(ctx.subscription_id, ctx.resource_group, f'{ctx.prefix}-kv'))}"
-        )
-
     # Troubleshooting section (if issues)
     if not all_success:
         lines.append("")
@@ -525,6 +343,7 @@ def generate_create_apps_summary() -> str:
         lines.append("If the deployment failed, try these commands locally:")
         lines.append("")
 
+        api_name = f"{ctx.prefix}-api"
         troubleshooting = f"""# Check container app status
 az containerapp show -g {ctx.resource_group} -n {api_name} -o table
 

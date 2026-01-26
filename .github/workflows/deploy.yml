@@ -83,8 +83,6 @@ jobs:
       - name: Write infra-bootstrap summary
         if: always()
         shell: bash
-        env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           python3 .github/scripts/deploy_summary.py infra-bootstrap
 
@@ -155,7 +153,6 @@ jobs:
         if: always()
         shell: bash
         env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ACR_LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
           API_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
           WORKER_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
@@ -196,7 +193,6 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/.terraform-plugin-cache
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
           # Run deploy script and capture outputs for summary
@@ -262,7 +258,6 @@ jobs:
         if: always()
         shell: bash
         env:
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           python3 .github/scripts/deploy_summary.py create-apps
