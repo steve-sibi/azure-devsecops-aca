@@ -218,21 +218,21 @@ jobs:
       - name: Hadolint (API)
         id: hadolint_api
         continue-on-error: true
-        uses: hadolint/hadolint-action@v3
+        uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/api/Dockerfile
 
       - name: Hadolint (Worker)
         id: hadolint_worker
         continue-on-error: true
-        uses: hadolint/hadolint-action@v3
+        uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/worker/Dockerfile.sidecar
 
       - name: Hadolint (ClamAV)
         id: hadolint_clamav
         continue-on-error: true
-        uses: hadolint/hadolint-action@v3
+        uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/clamav/Dockerfile
 
