@@ -80,6 +80,14 @@ jobs:
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
           bash scripts/gha/deploy_infra_bootstrap.sh
 
+      - name: Write infra-bootstrap summary
+        if: always()
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          python3 .github/scripts/deploy_summary.py infra-bootstrap
+
   build-and-push:
     needs: [infra-bootstrap]
     runs-on: ubuntu-latest
@@ -143,6 +151,19 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Write build-push summary
+        if: always()
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          ACR_LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+          API_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
+          WORKER_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
+          CLAMAV_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          python3 .github/scripts/deploy_summary.py build-push
+
   create-apps:
     needs: [build-and-push]
     runs-on: ubuntu-latest
@@ -175,24 +196,73 @@ jobs:
         env:
           IMAGE_TAG: ${{ github.sha }}
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/.terraform-plugin-cache
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
-          bash scripts/gha/deploy_create_apps_and_test.sh
+          # Run deploy script and capture outputs for summary
+          bash scripts/gha/deploy_create_apps_and_test.sh | tee deploy_output.log
+          
+          # Extract key values from Terraform and Azure CLI for summary
+          API_URL="$(terraform -chdir=infra output -raw fastapi_url 2>/dev/null || echo "")"
+          echo "API_URL=${API_URL}" >> "$GITHUB_ENV"
+          
+          # Get replica counts
+          API_REPLICAS="$(az containerapp replica list -g "$RG" -n "${PREFIX}-api" --query "length(@)" -o tsv 2>/dev/null || echo "—")"
+          FETCHER_REPLICAS="$(az containerapp replica list -g "$RG" -n "${PREFIX}-fetcher" --query "length(@)" -o tsv 2>/dev/null || echo "—")"
+          WORKER_REPLICAS="$(az containerapp replica list -g "$RG" -n "${PREFIX}-worker" --query "length(@)" -o tsv 2>/dev/null || echo "—")"
+          echo "API_REPLICAS=${API_REPLICAS}" >> "$GITHUB_ENV"
+          echo "FETCHER_REPLICAS=${FETCHER_REPLICAS}" >> "$GITHUB_ENV"
+          echo "WORKER_REPLICAS=${WORKER_REPLICAS}" >> "$GITHUB_ENV"
+          
+          # Get queue depths
+          SBNS="${PREFIX}-sbns"
+          TASKS_QUEUE_ACTIVE="$(az servicebus queue show -g "$RG" --namespace-name "$SBNS" -n "$QUEUE_NAME" --query "countDetails.activeMessageCount" -o tsv 2>/dev/null || echo "—")"
+          TASKS_QUEUE_DEAD="$(az servicebus queue show -g "$RG" --namespace-name "$SBNS" -n "$QUEUE_NAME" --query "countDetails.deadLetterMessageCount" -o tsv 2>/dev/null || echo "—")"
+          SCAN_QUEUE_ACTIVE="$(az servicebus queue show -g "$RG" --namespace-name "$SBNS" -n "${QUEUE_NAME}-scan" --query "countDetails.activeMessageCount" -o tsv 2>/dev/null || echo "—")"
+          SCAN_QUEUE_DEAD="$(az servicebus queue show -g "$RG" --namespace-name "$SBNS" -n "${QUEUE_NAME}-scan" --query "countDetails.deadLetterMessageCount" -o tsv 2>/dev/null || echo "—")"
+          echo "TASKS_QUEUE_ACTIVE=${TASKS_QUEUE_ACTIVE}" >> "$GITHUB_ENV"
+          echo "TASKS_QUEUE_DEAD=${TASKS_QUEUE_DEAD}" >> "$GITHUB_ENV"
+          echo "SCAN_QUEUE_ACTIVE=${SCAN_QUEUE_ACTIVE}" >> "$GITHUB_ENV"
+          echo "SCAN_QUEUE_DEAD=${SCAN_QUEUE_DEAD}" >> "$GITHUB_ENV"
+
+      - name: Determine test status
+        id: test_status
+        if: always()
+        shell: bash
+        run: |
+          # Parse deploy output for health and E2E status
+          HEALTH_STATUS="unknown"
+          E2E_STATUS="unknown"
+          E2E_JOB_ID=""
+          
+          if [ -f deploy_output.log ]; then
+            if grep -q "API is healthy" deploy_output.log; then
+              HEALTH_STATUS="healthy"
+            elif grep -q "API did not become healthy" deploy_output.log; then
+              HEALTH_STATUS="failed"
+            fi
+            
+            if grep -q "E2E scan completed" deploy_output.log; then
+              E2E_STATUS="completed"
+            elif grep -q "E2E scan failed" deploy_output.log; then
+              E2E_STATUS="error"
+            elif grep -q "Timed out waiting for scan" deploy_output.log; then
+              E2E_STATUS="timeout"
+            fi
+            
+            # Extract job_id if present
+            E2E_JOB_ID="$(grep -o 'job_id=[^ ]*' deploy_output.log | head -1 | cut -d= -f2 || true)"
+          fi
+          
+          echo "HEALTH_STATUS=${HEALTH_STATUS}" >> "$GITHUB_ENV"
+          echo "E2E_STATUS=${E2E_STATUS}" >> "$GITHUB_ENV"
+          echo "E2E_JOB_ID=${E2E_JOB_ID}" >> "$GITHUB_ENV"
 
       - name: Write workflow summary
         if: always()
         shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "## Deploy Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Region** | ${{ env.REGION }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Resource Group** | ${{ env.RG }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Prefix** | ${{ env.PREFIX }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Image Tag** | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Container Images" >> $GITHUB_STEP_SUMMARY
-          echo "- API: \`${{ needs.build-and-push.outputs.api_image }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Worker: \`${{ needs.build-and-push.outputs.worker_image }}\`" >> $GITHUB_STEP_SUMMARY
-          echo "- ClamAV: \`${{ needs.build-and-push.outputs.clamav_image }}\`" >> $GITHUB_STEP_SUMMARY
+          python3 .github/scripts/deploy_summary.py create-apps
