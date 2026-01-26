@@ -32,8 +32,9 @@ on:
         default: "600"
 
 concurrency:
-  group: keda-scale-test-${{ github.ref }}
-  cancel-in-progress: true
+  # Prevent deploy/destroy/keda runs from overlapping for the same environment
+  group: aca-${{ inputs.prefix }}-${{ inputs.resource_group }}
+  cancel-in-progress: false
 
 jobs:
   keda-scale-test:
@@ -74,13 +75,19 @@ jobs:
         if: always()
         shell: bash
         run: |
-          echo "## KEDA Scale Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Parameter | Value |" >> $GITHUB_STEP_SUMMARY
-          echo "|-----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| **Resource Group** | ${{ inputs.resource_group }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Queue** | ${{ inputs.queue_name }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Messages Sent** | ${{ inputs.message_count }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Expected Min Replicas** | ${{ inputs.expected_min_replicas }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| **Scan URL** | ${{ inputs.scan_url }} |" >> $GITHUB_STEP_SUMMARY
+          esc_cell() {
+            # Keep markdown tables safe: escape pipes and newlines.
+            printf '%s' "$1" | tr '\n' ' ' | sed 's/|/\\\\|/g'
+          }
 
+          {
+            echo "## KEDA Scale Test Summary"
+            echo ""
+            echo "| Parameter | Value |"
+            echo "|-----------|-------|"
+            echo "| **Resource Group** | \`$(esc_cell \"${{ inputs.resource_group }}\")\` |"
+            echo "| **Queue** | \`$(esc_cell \"${{ inputs.queue_name }}\")\` |"
+            echo "| **Messages Sent** | \`$(esc_cell \"${{ inputs.message_count }}\")\` |"
+            echo "| **Expected Min Replicas** | \`$(esc_cell \"${{ inputs.expected_min_replicas }}\")\` |"
+            echo "| **Scan URL** | \`$(esc_cell \"${{ inputs.scan_url }}\")\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

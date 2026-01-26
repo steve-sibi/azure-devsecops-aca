@@ -34,6 +34,15 @@ from typing import Any
 # Markdown helpers
 # ---------------------------------------------------------------------------
 
+def md_escape_cell(value: Any) -> str:
+    """Escape values for safe markdown table cells."""
+    if value is None:
+        return ""
+    text = str(value)
+    text = text.replace("\r\n", "\n").replace("\n", " ")
+    text = text.replace("|", "\\|")
+    return text
+
 
 def status_icon(status: str) -> str:
     """Map status strings to ASCII icons."""
@@ -48,6 +57,7 @@ def status_icon(status: str) -> str:
         "failure": "[FAIL]",
         "error": "[FAIL]",
         "failed": "[FAIL]",
+        "timeout": "[TIME]",
         "cancelled": "[SKIP]",
         "skipped": "[SKIP]",
         "unknown": "[?]",
@@ -58,10 +68,10 @@ def status_icon(status: str) -> str:
 def md_table(headers: list[str], rows: list[list[str]]) -> str:
     """Generate a markdown table."""
     lines = []
-    lines.append("| " + " | ".join(headers) + " |")
+    lines.append("| " + " | ".join(md_escape_cell(h) for h in headers) + " |")
     lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
     for row in rows:
-        lines.append("| " + " | ".join(str(c) for c in row) + " |")
+        lines.append("| " + " | ".join(md_escape_cell(c) for c in row) + " |")
     return "\n".join(lines)
 
 
@@ -289,11 +299,12 @@ def generate_create_apps_summary() -> str:
     lines.append("### API Endpoint")
     lines.append("")
     if api_url:
-        lines.append(f"**URL:** {api_url}")
+        safe_url = api_url.strip().replace("\n", "").replace("\r", "")
+        lines.append(f"**URL:** <{safe_url}>")
         lines.append("")
-        lines.append(f"- Health check: `GET {api_url}/healthz`")
-        lines.append(f"- Submit scan: `POST {api_url}/scan`")
-        lines.append(f"- Dashboard: `{api_url}/dashboard`")
+        lines.append(f"- Health check: `GET {safe_url}/healthz`")
+        lines.append(f"- Submit scan: `POST {safe_url}/scan`")
+        lines.append(f"- Dashboard: `{safe_url}/dashboard`")
     else:
         lines.append("_API URL not available._")
 
@@ -303,8 +314,14 @@ def generate_create_apps_summary() -> str:
     lines.append("")
 
     test_rows = [
-        [f"{status_icon(health_status)} Health Check", health_status.title()],
-        [f"{status_icon(e2e_status)} E2E Scan Test", e2e_status.title()],
+        [
+            f"{status_icon(health_status)} Health Check",
+            health_status.replace("_", " ").title(),
+        ],
+        [
+            f"{status_icon(e2e_status)} E2E Scan Test",
+            e2e_status.replace("_", " ").title(),
+        ],
     ]
     if e2e_job_id:
         test_rows.append(["Job ID", f"`{e2e_job_id}`"])

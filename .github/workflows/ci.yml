@@ -206,7 +206,10 @@ jobs:
           echo "sarif_file=" >> "$GITHUB_OUTPUT"
 
       - name: Upload Checkov SARIF
-        if: ${{ always() && steps.checkov_sarif.outputs.found == 'true' }}
+        if: >-
+          ${{ always()
+            && steps.checkov_sarif.outputs.found == 'true'
+            && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
@@ -215,21 +218,21 @@ jobs:
       - name: Hadolint (API)
         id: hadolint_api
         continue-on-error: true
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3
         with:
           dockerfile: app/api/Dockerfile
 
       - name: Hadolint (Worker)
         id: hadolint_worker
         continue-on-error: true
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3
         with:
           dockerfile: app/worker/Dockerfile.sidecar
 
       - name: Hadolint (ClamAV)
         id: hadolint_clamav
         continue-on-error: true
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@v3
         with:
           dockerfile: app/clamav/Dockerfile
 
@@ -421,7 +424,10 @@ jobs:
           echo "found=false" >> "$GITHUB_OUTPUT"
           echo "sarif_file=" >> "$GITHUB_OUTPUT"
       - name: Upload Trivy SARIF (${{ matrix.name }})
-        if: ${{ always() && steps.trivy_sarif.outputs.found == 'true' }}
+        if: >-
+          ${{ always()
+            && steps.trivy_sarif.outputs.found == 'true'
+            && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}

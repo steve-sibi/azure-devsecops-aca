@@ -2,6 +2,10 @@ name: Destroy
 on:
   workflow_dispatch:
     inputs:
+      confirm_destroy:
+        description: Type DESTROY to confirm (this will delete the entire RG)
+        required: true
+        default: "NO"
       region:
         description: Azure region (e.g. eastus)
         required: true
@@ -32,8 +36,9 @@ on:
         default: tasks
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Prevent deploy/destroy/keda runs from overlapping for the same environment
+  group: aca-${{ inputs.prefix }}-${{ inputs.resource_group }}
+  cancel-in-progress: false
 
 # NOTE: Keep inputs in sync with deploy.yml to avoid configuration drift
 env:
@@ -53,6 +58,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Confirm destroy (required)
+        shell: bash
+        env:
+          CONFIRM_DESTROY: ${{ inputs.confirm_destroy }}
+        run: |
+          if [ "${CONFIRM_DESTROY}" != "DESTROY" ]; then
+            echo "::error::Refusing to run. Set confirm_destroy=DESTROY to proceed."
+            exit 2
+          fi
 
       - name: Azure Login (OIDC)
         uses: azure/login@v2
