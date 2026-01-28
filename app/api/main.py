@@ -49,7 +49,7 @@ from common.screenshot_store import (
     redis_screenshot_key,
 )
 from common.job_index import ALLOWED_JOB_STATUSES, api_key_hash as hash_api_key
-from common.job_index import list_jobs_async, upsert_job_index_record_async
+from common.job_index import job_index_partition_key, list_jobs_async, upsert_job_index_record_async
 from common.job_index import build_job_index_record as build_job_record
 from common.url_dedupe import (
     UrlDedupeConfig,
@@ -93,6 +93,8 @@ REDIS_URL = _CONSUMER_CFG.redis_url
 REDIS_QUEUE_KEY = _CONSUMER_CFG.redis_queue_key
 REDIS_RESULT_PREFIX = _CONSUMER_CFG.redis_result_prefix
 REDIS_RESULT_TTL_SECONDS = _CONSUMER_CFG.redis_result_ttl_seconds
+REDIS_JOB_INDEX_ZSET_PREFIX = (os.getenv("REDIS_JOB_INDEX_ZSET_PREFIX", "jobsidx:") or "jobsidx:").strip()
+REDIS_JOB_INDEX_HASH_PREFIX = (os.getenv("REDIS_JOB_INDEX_HASH_PREFIX", "jobs:") or "jobs:").strip()
 
 # API-specific settings
 APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
@@ -121,6 +123,9 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
 )
 MAX_DASHBOARD_POLL_SECONDS = _API_LIMITS.max_dashboard_poll_seconds
 _URL_DEDUPE = UrlDedupeConfig.from_env()
+_DEFAULT_URL_VISIBILITY = (os.getenv("URL_RESULT_VISIBILITY_DEFAULT", "shared") or "shared").strip().lower()
+if _DEFAULT_URL_VISIBILITY not in ("shared", "private"):
+    _DEFAULT_URL_VISIBILITY = "shared"
 
 # File scanning (ClamAV)
 CLAMAV_HOST = (os.getenv("CLAMAV_HOST", "127.0.0.1") or "127.0.0.1").strip()
@@ -166,6 +171,12 @@ class ScanRequest(BaseModel):
     metadata: Optional[dict] = Field(None, description="Optional metadata")
     force: bool = Field(
         False, description="Force a re-scan (ignore URL dedupe cache)"
+    )
+    visibility: Optional[str] = Field(
+        None,
+        description="URL scan visibility: 'shared' (cacheable) or 'private' (no cache reuse)",
+        max_length=16,
+        pattern="^(shared|private)$",
     )
 
 
@@ -385,6 +396,34 @@ def _safe_int(value) -> Optional[int]:
             return int(str(value))
         except Exception:
             return None
+
+
+def _coerce_bool(value) -> Optional[bool]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            value = value.decode("utf-8", "replace")
+        except Exception:
+            value = str(value)
+    if isinstance(value, str):
+        v = value.strip().lower()
+        if v in ("1", "true", "yes", "y", "on"):
+            return True
+        if v in ("0", "false", "no", "n", "off"):
+            return False
+    return None
+
+
+def _normalize_visibility(value: Optional[str]) -> str:
+    v = (value or "").strip().lower()
+    if v in ("shared", "private"):
+        return v
+    return _DEFAULT_URL_VISIBILITY
 
 
 def _parse_details(raw) -> Optional[dict]:
@@ -989,12 +1028,17 @@ async def enqueue_scan(
     if RESULT_BACKEND == "redis" and not redis_client:
         raise HTTPException(status_code=503, detail="Result store not initialized")
 
-    job_id = str(uuid4())
+    request_id = str(uuid4())
+    run_id = str(uuid4())
     correlation_id = str(uuid4())
     submitted_at = datetime.now(timezone.utc).isoformat()
+    visibility = _normalize_visibility(getattr(req, "visibility", None))
+    if str(getattr(req, "type", "url") or "url").strip().lower() != "url":
+        # Never treat non-URL scans as shared/cacheable.
+        visibility = "private"
 
-    payload = {
-        "job_id": job_id,
+    run_payload = {
+        "job_id": run_id,
         "correlation_id": correlation_id,
         "url": req.url,
         "type": req.type,
@@ -1002,22 +1046,23 @@ async def enqueue_scan(
         "metadata": req.metadata or {},
         "submitted_at": submitted_at,
         "api_key_hash": api_key_hash or "",
+        "visibility": visibility,
     }
     try:
-        payload = validate_scan_task_v1(payload)
+        run_payload = validate_scan_task_v1(run_payload)
     except ScanMessageValidationError as e:
         log_with_context(
             logger, logging.WARNING, "Invalid scan request", url=req.url, error=str(e)
         )
         raise HTTPException(status_code=400, detail=str(e))
 
-    await _validate_scan_url(payload["url"])
+    await _validate_scan_url(run_payload["url"])
 
     url_index_key = None
-    if _URL_DEDUPE.enabled and payload.get("type") == "url":
+    if _URL_DEDUPE.enabled and visibility == "shared" and run_payload.get("type") == "url":
         try:
             url_index_key = make_url_index_key(
-                url=payload["url"], api_key_hash=api_key_hash, cfg=_URL_DEDUPE
+                url=run_payload["url"], api_key_hash=api_key_hash, cfg=_URL_DEDUPE
             )
         except Exception:
             url_index_key = None
@@ -1026,7 +1071,8 @@ async def enqueue_scan(
         _URL_DEDUPE.enabled
         and url_index_key
         and not bool(getattr(req, "force", False))
-        and payload.get("type") == "url"
+        and run_payload.get("type") == "url"
+        and visibility == "shared"
     ):
         existing = await get_url_index_entry_async(
             backend=RESULT_BACKEND,
@@ -1036,71 +1082,151 @@ async def enqueue_scan(
             redis_client=redis_client,
         )
         if existing and url_index_entry_is_fresh(existing, cfg=_URL_DEDUPE):
-            existing_job_id = str(existing.get("job_id") or "").strip()
-            if existing_job_id:
-                entity = await _get_result_entity(existing_job_id)
-                if entity:
-                    owner_hash = str(entity.get("api_key_hash") or "").strip()
-                    if owner_hash and api_key_hash and not secrets.compare_digest(
-                        owner_hash, api_key_hash
-                    ):
-                        # Cache hit points at a job owned by a different API key.
-                        entity = None
-                    else:
-                        existing_status = str(
-                            entity.get("status") or existing.get("status") or "unknown"
-                        )
-                        log_with_context(
-                            logger,
-                            logging.INFO,
-                            "Scan deduped (cache hit)",
-                            job_id=existing_job_id,
-                            url=payload["url"],
-                            canonical_url=url_index_key.canonical_url,
-                            status=existing_status,
-                        )
-                        return {
-                            "job_id": existing_job_id,
-                            "status": existing_status,
+            existing_run_id = str(existing.get("job_id") or "").strip()
+            if existing_run_id:
+                run_entity = await _get_result_entity(existing_run_id)
+                if run_entity:
+                    run_visibility = str(run_entity.get("visibility") or "").strip().lower()
+                    if run_visibility != "shared":
+                        # Do not reuse "private" (or legacy) runs across API keys.
+                        run_entity = None
+                if run_entity:
+                    run_status = str(
+                        run_entity.get("status") or existing.get("status") or "unknown"
+                    )
+                    run_scanned_at = run_entity.get("scanned_at") or None
+                    run_error = run_entity.get("error") or None
+                    run_correlation_id = run_entity.get("correlation_id") or correlation_id
+
+                    # Create a per-request result record that resolves to the cached run.
+                    await _upsert_result(
+                        request_id,
+                        status=run_status,
+                        details={
+                            "url": run_payload["url"],
+                            "type": run_payload.get("type"),
+                            "source": run_payload.get("source"),
+                            "run_id": existing_run_id,
                             "deduped": True,
-                        }
+                        },
+                        extra={
+                            "submitted_at": submitted_at,
+                            "api_key_hash": api_key_hash or "",
+                            "correlation_id": run_correlation_id or "",
+                            "run_id": existing_run_id,
+                            "deduped": True,
+                            "url": run_payload["url"],
+                            "visibility": visibility,
+                        },
+                    )
+                    if api_key_hash:
+                        job_record = build_job_record(
+                            api_key_hash_value=api_key_hash,
+                            job_id=request_id,
+                            submitted_at=submitted_at,
+                            status=run_status,
+                            url=run_payload.get("url"),
+                            scanned_at=run_scanned_at,
+                            updated_at=submitted_at,
+                            correlation_id=run_correlation_id,
+                            error=run_error,
+                        )
+                        job_record["run_id"] = existing_run_id
+                        job_record["deduped"] = True
+                        job_record["visibility"] = visibility
+                        await upsert_job_index_record_async(
+                            backend=RESULT_BACKEND,
+                            api_key_hash_value=api_key_hash,
+                            record=job_record,
+                            table_client=table_client,
+                            redis_client=redis_client,
+                            redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
+                        )
+
+                    log_with_context(
+                        logger,
+                        logging.INFO,
+                        "Scan deduped (cache hit)",
+                        request_id=request_id,
+                        run_id=existing_run_id,
+                        url=run_payload["url"],
+                        canonical_url=url_index_key.canonical_url,
+                        status=run_status,
+                    )
+                    return {
+                        "job_id": request_id,
+                        "status": run_status,
+                        "deduped": True,
+                    }
     try:
         await _enqueue_json(
-            payload,
+            run_payload,
             schema="scan-v1",
-            message_id=job_id,
+            message_id=run_id,
             application_properties={"correlation_id": correlation_id},
         )
         await _upsert_result(
-            job_id,
+            run_id,
             status="queued",
             details={
-                "url": payload["url"],
-                "type": payload.get("type"),
-                "source": payload.get("source"),
+                "url": run_payload["url"],
+                "type": run_payload.get("type"),
+                "source": run_payload.get("source"),
             },
-            extra={"submitted_at": submitted_at, "api_key_hash": api_key_hash or ""},
+            extra={
+                "submitted_at": submitted_at,
+                "api_key_hash": api_key_hash or "",
+                "correlation_id": correlation_id,
+                "visibility": visibility,
+            },
         )
+
+        # Create a per-request result record that resolves to this run.
+        await _upsert_result(
+            request_id,
+            status="queued",
+            details={
+                "url": run_payload["url"],
+                "type": run_payload.get("type"),
+                "source": run_payload.get("source"),
+                "run_id": run_id,
+                "deduped": False,
+            },
+            extra={
+                "submitted_at": submitted_at,
+                "api_key_hash": api_key_hash or "",
+                "correlation_id": correlation_id,
+                "run_id": run_id,
+                "deduped": False,
+                "url": run_payload["url"],
+                "visibility": visibility,
+            },
+        )
+
         log_with_context(
             logger,
             logging.INFO,
             "Scan queued successfully",
-            job_id=job_id,
+            request_id=request_id,
+            run_id=run_id,
             url=req.url,
             scan_type=req.type,
         )
         if api_key_hash:
             job_record = build_job_record(
                 api_key_hash_value=api_key_hash,
-                job_id=job_id,
+                job_id=request_id,
                 submitted_at=submitted_at,
                 status="queued",
-                url=payload.get("url"),
+                url=run_payload.get("url"),
                 scanned_at=None,
                 updated_at=submitted_at,
                 correlation_id=correlation_id,
                 error=None,
             )
+            job_record["run_id"] = run_id
+            job_record["deduped"] = False
+            job_record["visibility"] = visibility
             await upsert_job_index_record_async(
                 backend=RESULT_BACKEND,
                 api_key_hash_value=api_key_hash,
@@ -1109,10 +1235,15 @@ async def enqueue_scan(
                 redis_client=redis_client,
                 redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
             )
-        if _URL_DEDUPE.enabled and url_index_key and payload.get("type") == "url":
+        if (
+            _URL_DEDUPE.enabled
+            and visibility == "shared"
+            and url_index_key
+            and run_payload.get("type") == "url"
+        ):
             record = build_url_index_record(
                 key=url_index_key,
-                job_id=job_id,
+                job_id=run_id,
                 status="queued",
                 submitted_at=submitted_at,
                 scanned_at=None,
@@ -1127,7 +1258,7 @@ async def enqueue_scan(
                 redis_client=redis_client,
                 result_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
             )
-        return {"job_id": job_id, "status": "queued"}
+        return {"job_id": request_id, "status": "queued", "deduped": False}
     except HTTPException:
         raise
     except ServiceBusError as e:
@@ -1135,7 +1266,8 @@ async def enqueue_scan(
             logger,
             logging.ERROR,
             "Queue send failed",
-            job_id=job_id,
+            request_id=request_id,
+            run_id=run_id,
             error=str(e),
             error_type=e.__class__.__name__,
         )
@@ -1147,7 +1279,8 @@ async def enqueue_scan(
             logger,
             logging.ERROR,
             "Queue send failed",
-            job_id=job_id,
+            request_id=request_id,
+            run_id=run_id,
             error=str(e),
             error_type=e.__class__.__name__,
         )
@@ -1199,20 +1332,131 @@ async def list_jobs(
         job_id = str(item.get("job_id") or "").strip()
         if not job_id:
             continue
+
+        run_id = str(item.get("run_id") or "").strip()
+        status_out = item.get("status") or "unknown"
+        scanned_at_out = item.get("scanned_at") or None
+        error_out = item.get("error") or None
+        correlation_id_out = item.get("correlation_id") or None
+        deduped_out = _coerce_bool(item.get("deduped"))
+        visibility_out = (item.get("visibility") or None) if isinstance(item.get("visibility"), str) else None
+
+        if run_id:
+            run_entity = await _get_result_entity(run_id)
+            if isinstance(run_entity, dict) and run_entity:
+                status_out = run_entity.get("status") or status_out
+                scanned_at_out = run_entity.get("scanned_at") or scanned_at_out
+                error_out = run_entity.get("error") or error_out
+                correlation_id_out = run_entity.get("correlation_id") or correlation_id_out
+
         out.append(
             {
                 "job_id": job_id,
-                "status": (item.get("status") or "unknown"),
+                "status": status_out,
                 "submitted_at": item.get("submitted_at") or None,
-                "scanned_at": item.get("scanned_at") or None,
+                "scanned_at": scanned_at_out,
                 "url": item.get("url") or None,
-                "error": item.get("error") or None,
-                "correlation_id": item.get("correlation_id") or None,
+                "error": error_out,
+                "correlation_id": correlation_id_out,
+                "deduped": deduped_out,
+                "visibility": visibility_out,
                 "dashboard_url": f"{base_url}/?job={job_id}",
             }
         )
 
     return {"jobs": out}
+
+
+@app.delete("/jobs")
+async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
+    if RESULT_BACKEND == "table" and not table_client:
+        raise HTTPException(status_code=503, detail="Result store not initialized")
+    if RESULT_BACKEND == "redis" and not redis_client:
+        raise HTTPException(status_code=503, detail="Result store not initialized")
+    if not api_key_hash:
+        raise HTTPException(status_code=401, detail="Missing API key")
+
+    deleted_job_index = 0
+    deleted_request_results = 0
+
+    if RESULT_BACKEND == "redis":
+        zkey = f"{REDIS_JOB_INDEX_ZSET_PREFIX}{api_key_hash}"
+        try:
+            job_ids = await redis_client.zrange(zkey, 0, -1)
+        except Exception:
+            job_ids = []
+
+        job_ids_norm: list[str] = []
+        for jid in job_ids or []:
+            s = str(jid or "").strip()
+            if s:
+                job_ids_norm.append(s)
+
+        try:
+            pipe = redis_client.pipeline()
+            for jid_s in job_ids_norm:
+                pipe.delete(f"{REDIS_JOB_INDEX_HASH_PREFIX}{api_key_hash}:{jid_s}")
+                pipe.delete(f"{REDIS_RESULT_PREFIX}{jid_s}")
+            pipe.delete(zkey)
+            results = await pipe.execute()
+        except Exception:
+            results = []
+
+        # Each DEL returns the number of keys removed (0/1).
+        n = len(job_ids_norm)
+        if isinstance(results, list) and len(results) >= (2 * n):
+            try:
+                deleted_job_index = sum(int(x or 0) for x in results[0 : 2 * n : 2])
+                deleted_request_results = sum(int(x or 0) for x in results[1 : 2 * n : 2])
+            except Exception:
+                deleted_job_index = 0
+                deleted_request_results = 0
+        return {
+            "backend": "redis",
+            "api_key_hash": api_key_hash,
+            "deleted_job_index_records": deleted_job_index,
+            "deleted_request_results": deleted_request_results,
+        }
+
+    if RESULT_BACKEND == "table":
+        pk = job_index_partition_key(api_key_hash_value=api_key_hash)
+        filt = f"PartitionKey eq '{pk}'"
+        try:
+            pager = table_client.query_entities(query_filter=filt, results_per_page=200)
+            async for entity in pager:
+                if not isinstance(entity, dict):
+                    continue
+                row_key = str(entity.get("RowKey") or "").strip()
+                request_id = str(entity.get("job_id") or "").strip()
+
+                if row_key:
+                    try:
+                        await table_client.delete_entity(partition_key=pk, row_key=row_key)
+                        deleted_job_index += 1
+                    except Exception:
+                        pass
+
+                if request_id:
+                    try:
+                        await table_client.delete_entity(
+                            partition_key=RESULT_PARTITION, row_key=request_id
+                        )
+                        deleted_request_results += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        return {
+            "backend": "table",
+            "api_key_hash": api_key_hash,
+            "job_index_partition_key": pk,
+            "result_partition_key": RESULT_PARTITION,
+            "deleted_job_index_records": deleted_job_index,
+            "deleted_request_results": deleted_request_results,
+        }
+
+    raise HTTPException(status_code=500, detail=f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
 
 
 @app.get("/scan/{job_id}")
@@ -1240,6 +1484,55 @@ async def get_scan_status(
             status="pending",
         )
         return {"job_id": job_id, "status": "pending", "summary": None}
+
+    run_id = str(entity.get("run_id") or "").strip()
+    if run_id:
+        # This is a per-request record pointing at an underlying scan run.
+        owner_hash = str(entity.get("api_key_hash") or "").strip()
+        if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+            raise HTTPException(status_code=404, detail="Scan result not found")
+
+        run_entity = await _get_result_entity(run_id)
+        if not run_entity:
+            return {
+                "job_id": job_id,
+                "status": "pending",
+                "summary": {"url": entity.get("url") or None} if entity.get("url") else None,
+                "deduped": _coerce_bool(entity.get("deduped")),
+                "visibility": (entity.get("visibility") or None),
+            }
+
+        details = _parse_details(run_entity.get("details"))
+        summary = _build_summary(run_entity, details)
+
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Scan result retrieved (request)",
+            job_id=job_id,
+            run_id=run_id,
+            status=run_entity.get("status"),
+            duration_ms=_safe_int(run_entity.get("duration_ms")),
+        )
+
+        base_url = str(request.base_url).rstrip("/")
+        response = {
+            "job_id": job_id,
+            "status": run_entity.get("status", "unknown"),
+            "dashboard_url": f"{base_url}/?job={job_id}",
+            "error": run_entity.get("error") or None,
+            "submitted_at": entity.get("submitted_at"),
+            "scanned_at": run_entity.get("scanned_at"),
+            "size_bytes": _safe_int(run_entity.get("size_bytes")),
+            "duration_ms": _safe_int(run_entity.get("duration_ms")),
+            "correlation_id": run_entity.get("correlation_id") or None,
+            "deduped": _coerce_bool(entity.get("deduped")),
+            "visibility": (entity.get("visibility") or None),
+            "summary": summary,
+        }
+        if view == "full":
+            response["details"] = details
+        return response
 
     owner_hash = str(entity.get("api_key_hash") or "").strip()
     if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
@@ -1296,14 +1589,24 @@ async def get_scan_screenshot(
     entity = await _get_result_entity(job_id)
     if not entity:
         raise HTTPException(status_code=404, detail="Screenshot not found")
-    owner_hash = str(entity.get("api_key_hash") or "").strip()
-    if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
-        raise HTTPException(status_code=404, detail="Screenshot not found")
+
+    target_job_id = job_id
+    run_id = str(entity.get("run_id") or "").strip()
+    if run_id:
+        # Request record: enforce access on the request, then resolve to the run for storage.
+        owner_hash = str(entity.get("api_key_hash") or "").strip()
+        if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+            raise HTTPException(status_code=404, detail="Screenshot not found")
+        target_job_id = run_id
+    else:
+        owner_hash = str(entity.get("api_key_hash") or "").strip()
+        if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+            raise HTTPException(status_code=404, detail="Screenshot not found")
 
     if RESULT_BACKEND == "redis":
         if not redis_client:
             raise HTTPException(status_code=503, detail="Result store not initialized")
-        key = redis_screenshot_key(SCREENSHOT_REDIS_PREFIX, job_id)
+        key = redis_screenshot_key(SCREENSHOT_REDIS_PREFIX, target_job_id)
         data = await get_screenshot_redis_async(redis_client=redis_client, key=key)
         if not data or not data.bytes:
             log_with_context(
@@ -1311,6 +1614,7 @@ async def get_scan_screenshot(
                 logging.WARNING,
                 "Screenshot not found",
                 job_id=job_id,
+                target_job_id=target_job_id,
                 backend="redis",
             )
             raise HTTPException(status_code=404, detail="Screenshot not found")
@@ -1319,6 +1623,7 @@ async def get_scan_screenshot(
             logging.INFO,
             "Screenshot retrieved",
             job_id=job_id,
+            target_job_id=target_job_id,
             backend="redis",
             size_bytes=len(data.bytes),
         )
@@ -1332,7 +1637,7 @@ async def get_scan_screenshot(
         data = await get_screenshot_blob_async(
             blob_service_client=blob_service,
             container=SCREENSHOT_CONTAINER,
-            blob_name=_screenshot_blob_name(job_id),
+            blob_name=_screenshot_blob_name(target_job_id),
         )
         if not data or not data.bytes:
             log_with_context(
@@ -1340,6 +1645,7 @@ async def get_scan_screenshot(
                 logging.WARNING,
                 "Screenshot not found",
                 job_id=job_id,
+                target_job_id=target_job_id,
                 backend="blob",
             )
             raise HTTPException(status_code=404, detail="Screenshot not found")
@@ -1348,6 +1654,7 @@ async def get_scan_screenshot(
             logging.INFO,
             "Screenshot retrieved",
             job_id=job_id,
+            target_job_id=target_job_id,
             backend="blob",
             size_bytes=len(data.bytes),
         )

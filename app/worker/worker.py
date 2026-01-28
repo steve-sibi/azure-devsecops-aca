@@ -119,6 +119,7 @@ def process(task: dict):
     url = task.get("url")
     correlation_id = task.get("correlation_id")
     api_key_hash = task.get("api_key_hash")
+    visibility = task.get("visibility")
 
     # Set correlation ID in context for all logs in this request
     if correlation_id:
@@ -189,10 +190,12 @@ def process(task: dict):
         size_bytes=size_bytes,
         correlation_id=correlation_id,
         api_key_hash=api_key_hash,
+        visibility=visibility,
         duration_ms=duration_ms,
         submitted_at=task.get("submitted_at"),
         error=None,
         url=url,
+        index_job=False,
     ):
         raise RuntimeError("failed to persist scan result")
     if ARTIFACT_DELETE_ON_SUCCESS:
@@ -600,9 +603,11 @@ def main():
             },
             correlation_id=correlation_id,
             api_key_hash=api_key_hash,
+            visibility=(task.get("visibility") if isinstance(task, dict) else None),
             duration_ms=duration_ms,
             submitted_at=submitted_at,
             url=task.get("url") if isinstance(task, dict) else None,
+            index_job=False,
         )
 
     if QUEUE_BACKEND == "redis":

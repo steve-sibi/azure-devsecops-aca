@@ -177,6 +177,18 @@ def validate_scan_task_v1(payload: Any) -> dict[str, Any]:
         required=False,
     )
 
+    visibility = _normalize_str(
+        payload.get("visibility"),
+        field="visibility",
+        max_length=16,
+        required=False,
+    )
+    visibility_l = (visibility or "").strip().lower()
+    if visibility_l and visibility_l not in ("shared", "private"):
+        raise ScanMessageValidationError(
+            field="visibility", message="must be 'shared' or 'private'"
+        )
+
     metadata = normalize_metadata(payload.get("metadata"))
 
     out: dict[str, Any] = {
@@ -193,6 +205,8 @@ def validate_scan_task_v1(payload: Any) -> dict[str, Any]:
         out["source"] = source
     if submitted_at:
         out["submitted_at"] = submitted_at
+    if visibility_l:
+        out["visibility"] = visibility_l
     return out
 
 

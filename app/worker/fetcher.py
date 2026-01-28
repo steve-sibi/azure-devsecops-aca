@@ -117,6 +117,7 @@ def process(task: dict):
     url = task.get("url")
     correlation_id = task.get("correlation_id")
     api_key_hash = task.get("api_key_hash")
+    visibility = task.get("visibility")
     submitted_at = task.get("submitted_at")
 
     if not url or not job_id:
@@ -130,8 +131,10 @@ def process(task: dict):
         details={"url": url, "stage": "fetching", "engines": engines},
         correlation_id=correlation_id,
         api_key_hash=api_key_hash,
+        visibility=visibility,
         submitted_at=submitted_at,
         url=url,
+        index_job=False,
     ):
         raise RuntimeError("failed to persist fetcher status")
 
@@ -152,6 +155,7 @@ def process(task: dict):
         "url": url,
         "type": task.get("type"),
         "source": task.get("source"),
+        "visibility": task.get("visibility"),
         "metadata": (
             task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
         ),
@@ -177,10 +181,12 @@ def process(task: dict):
         size_bytes=size_bytes,
         correlation_id=correlation_id,
         api_key_hash=api_key_hash,
+        visibility=visibility,
         duration_ms=duration_ms,
         submitted_at=submitted_at,
         error=None,
         url=url,
+        index_job=False,
     ):
         raise RuntimeError("failed to persist queued_scan status")
 
@@ -262,9 +268,11 @@ def main() -> None:
             },
             correlation_id=correlation_id,
             api_key_hash=api_key_hash,
+            visibility=(task.get("visibility") if isinstance(task, dict) else None),
             duration_ms=duration_ms,
             submitted_at=submitted_at,
             url=task.get("url") if isinstance(task, dict) else None,
+            index_job=False,
         )
 
     if QUEUE_BACKEND == "redis":

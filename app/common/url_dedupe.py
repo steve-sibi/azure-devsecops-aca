@@ -387,10 +387,11 @@ async def update_url_index_if_job_matches_async(
         if not etag:
             return False
 
-        entity = dict(existing)
+        # Only send the fields we want to merge. The entity returned by get_entity may
+        # include metadata keys (e.g., @odata.etag / metadata) that are not valid
+        # Table Storage properties and can cause update_entity to fail.
+        entity: dict[str, Any] = {"PartitionKey": key.partition_key, "RowKey": key.row_key}
         entity.update({str(k): v for k, v in fields.items()})
-        entity["PartitionKey"] = key.partition_key
-        entity["RowKey"] = key.row_key
 
         try:
             from azure.core.match_conditions import MatchConditions
@@ -456,10 +457,11 @@ def update_url_index_if_job_matches_sync(
         if not etag:
             return False
 
-        entity = dict(existing)
+        # Only send the fields we want to merge. The entity returned by get_entity may
+        # include metadata keys (e.g., @odata.etag / metadata) that are not valid
+        # Table Storage properties and can cause update_entity to fail.
+        entity: dict[str, Any] = {"PartitionKey": key.partition_key, "RowKey": key.row_key}
         entity.update({str(k): v for k, v in fields.items()})
-        entity["PartitionKey"] = key.partition_key
-        entity["RowKey"] = key.row_key
 
         try:
             from azure.core.match_conditions import MatchConditions

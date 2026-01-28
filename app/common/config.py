@@ -155,12 +155,20 @@ class ResultPersister:
         size_bytes: Optional[int] = None,
         correlation_id: Optional[str] = None,
         api_key_hash: Optional[str] = None,
+        visibility: Optional[str] = None,
         duration_ms: Optional[int] = None,
         submitted_at: Optional[str] = None,
         error: Optional[str] = None,
         url: Optional[str] = None,
+        index_job: bool = True,
     ) -> bool:
         scanned_at = datetime.now(timezone.utc).isoformat()
+
+        visibility_norm = None
+        if isinstance(visibility, str) and visibility.strip():
+            v = visibility.strip().lower()
+            if v in ("shared", "private"):
+                visibility_norm = v
 
         extra = {
             "size_bytes": size_bytes or 0,
@@ -173,6 +181,8 @@ class ResultPersister:
             extra["url"] = url
         if api_key_hash:
             extra["api_key_hash"] = api_key_hash
+        if visibility_norm:
+            extra["visibility"] = visibility_norm
 
         details_out: dict = dict(details or {})
         if url and "url" not in details_out:
@@ -196,7 +206,7 @@ class ResultPersister:
                 redis_prefix=self._redis_prefix,
                 redis_ttl_seconds=self._redis_ttl_seconds,
             )
-            if api_key_hash and submitted_at:
+            if bool(index_job) and api_key_hash and submitted_at:
                 try:
                     job_record = build_job_index_record(
                         api_key_hash_value=api_key_hash,
@@ -220,7 +230,7 @@ class ResultPersister:
                 except Exception:
                     pass
 
-            if _URL_DEDUPE.enabled and url:
+            if _URL_DEDUPE.enabled and url and visibility_norm != "private":
                 dedupe_key_hash = api_key_hash if _URL_DEDUPE.scope == "apikey" else None
                 if _URL_DEDUPE.scope != "apikey" or dedupe_key_hash:
                     try:

@@ -216,7 +216,9 @@ def _build_redis_mapping(
     if details is not None:
         mapping["details"] = json.dumps(details)
     if extra:
-        mapping.update({str(k): v for k, v in extra.items()})
+        # Redis hash values must be bytes/str/int/float; redis-py rejects bool and other
+        # non-scalar types, so normalize to strings here.
+        mapping.update({str(k): "" if v is None else str(v) for k, v in extra.items()})
     return mapping
 
 
