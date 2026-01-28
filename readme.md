@@ -276,6 +276,7 @@ azure-devsecops-aca/
 │  │  ├─ deploy_infra_bootstrap.sh
 │  │  ├─ deploy_create_apps_and_test.sh
 │  │  └─ destroy.sh
+│  ├─ aca_api.sh          # helper CLI for calling the API
 │  ├─ docker_cleanup.sh
 │  ├─ keda_scale_test.sh
 │  └─ send_servicebus_messages.py
@@ -316,7 +317,7 @@ azure-devsecops-aca/
 ├─ docs/
 ├─ tests/
 ├─ checkov.yml
-└─ README.md
+└─ readme.md
 ```
 
 ## 5) CI/CD workflow
@@ -426,6 +427,29 @@ terraform apply \
 - **Rate limiting**: `60` requests/minute per API key (configure via Terraform var `api_rate_limit_rpm`).
 - **Defense in depth**: the worker re-validates targets and validates every redirect hop.
 
+### URL dedupe / cache (optional)
+
+To avoid wasting resources re-scanning the same URL, `POST /scan` can **reuse an existing job** when the **canonical URL** was scanned recently (or is still in progress). The URL canonicalization normalizes host casing, dot-segments, default ports, and strips fragments.
+
+Configure with env vars (set TTLs to `0` to disable):
+
+- `URL_DEDUPE_TTL_SECONDS`: cache window for `completed`/`error` jobs
+- `URL_DEDUPE_IN_PROGRESS_TTL_SECONDS`: dedupe window for `queued`/`fetching`/`queued_scan`/`retrying`
+- `URL_DEDUPE_SCOPE`: `global` (default) or `apikey` (recommended for multi-user)
+- `URL_DEDUPE_INDEX_PARTITION`: Table Storage partition key for the URL index (default `urlidx`)
+- `REDIS_URL_INDEX_PREFIX`: Redis key prefix for the URL index (default `urlidx:`)
+
+To force a re-scan, pass `"force": true` in the `POST /scan` body.
+
+### Per-user job history (API keys)
+
+The API stores a lightweight job index keyed by a **hash of the caller’s API key**:
+
+- `GET /jobs` lists only jobs created with *your* API key.
+- `GET /scan/{job_id}` and `GET /scan/{job_id}/screenshot` are owner-protected (a different API key won’t be able to fetch another user’s results).
+
+To enable multiple API keys (simple multi-user), set `ACA_API_KEYS` (comma-separated) in addition to `ACA_API_KEY`.
+
 ## 7) Running it
 
 ### Local (Docker Compose)
@@ -441,7 +465,7 @@ docker compose up --build
 - Web UI: `http://localhost:8000/`
 - Swagger: `http://localhost:8000/docs`
 
-Default API key: `local-dev-key` (change via `.env`).
+Default API key: `local-dev-key` (change via `.env` using `ACA_API_KEY`).
 
 > Note: URL scanning runs built-in web analysis only. The dashboard provides external links to URLScan.io and VirusTotal for optional follow-up checks.
 
@@ -497,8 +521,8 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `GET /` (no auth; dashboard UI)
 - `GET /healthz` (no auth)
 - `GET /file` (no auth; file scanner UI)
-- `POST /tasks` (requires API key)
 - `POST /scan` (requires API key)
+- `GET /jobs?limit=N&status=csv` (requires API key; lists your recent jobs)
 - `GET /scan/{job_id}?view=summary|full` (requires API key; `summary` is default)
 - `GET /scan/{job_id}/screenshot` (requires API key; only if a screenshot was captured)
 - `POST /file/scan` (requires API key; ClamAV scan)
@@ -516,6 +540,26 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `error`: failed; check `error` + `details`
 
 ### Try it (CLI)
+
+The included helper script wraps these calls (works locally or on Azure):
+
+```bash
+# Local default: http://localhost:8000 (reads ACA_API_KEY or API_KEY from .env if present)
+./scripts/aca_api.sh scan-url https://example.com --wait
+./scripts/aca_api.sh jobs --limit 50
+./scripts/aca_api.sh scan-file ./readme.md
+
+# Azure: set API_URL + API_KEY (see "Azure quickstart" above)
+API_URL="https://<api-fqdn>" API_KEY="..." ./scripts/aca_api.sh scan-url https://example.com --wait
+```
+
+The script also keeps a local job history (default `./.aca_api_history`) so you can list the most recent jobs you submitted from your machine:
+
+```bash
+./scripts/aca_api.sh jobs --limit 20
+./scripts/aca_api.sh jobs --status queued,fetching,queued_scan,retrying --limit 50
+./scripts/aca_api.sh history --limit 10
+```
 
 Submit a scan:
 
@@ -546,7 +590,7 @@ Example (scan a file):
 ```bash
 curl -sS -X POST "${API_URL}/file/scan" \
   -H "X-API-Key: ${API_KEY}" \
-  -F "file=@./README.md" | python3 -m json.tool
+  -F "file=@./readme.md" | python3 -m json.tool
 ```
 
 Example (scan a text payload):
@@ -673,7 +717,7 @@ curl -sS "${API_URL}/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}"
     - Check queue dead-letter count and logs for the `job_id`/`correlation_id`.
 
 - **401/403 from the API**
-    - Include `X-API-Key` on `/tasks`, `/scan`, `/scan/{job_id}`, `/scan/{job_id}/screenshot`, and `/file/scan`.
+    - Include `X-API-Key` on `/scan`, `/scan/{job_id}`, `/scan/{job_id}/screenshot`, and `/file/scan`.
     - Retrieve the key from Key Vault secret `ApiKey`.
 
 - **503 from `/file/scan`**
@@ -749,8 +793,6 @@ To restart later, just re-run the **Deploy** workflow.
 
 ## 13) How the app code works (quick tour)
 **API (`app/api/main.py`)**
-
-- `POST /tasks` -> validates JSON, sends to the configured queue backend (`QUEUE_BACKEND=servicebus` on Azure; `QUEUE_BACKEND=redis` in `docker-compose.yml`).
     
 - `POST /scan` -> requires `X-API-Key`, enforces SSRF protections, enqueues a scan job, and records a queued status in the configured result backend (`RESULT_BACKEND=table` on Azure; `RESULT_BACKEND=redis` locally).
     
