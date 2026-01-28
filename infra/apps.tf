@@ -7,6 +7,10 @@ locals {
     { name = "REQUEST_TIMEOUT", value = "10" },
     { name = "WEB_MAX_HEADERS", value = "40" },
     { name = "WEB_MAX_HEADER_VALUE_LEN", value = "600" },
+    { name = "URL_DEDUPE_TTL_SECONDS", value = tostring(var.url_dedupe_ttl_seconds) },
+    { name = "URL_DEDUPE_IN_PROGRESS_TTL_SECONDS", value = tostring(var.url_dedupe_in_progress_ttl_seconds) },
+    { name = "URL_DEDUPE_SCOPE", value = lower(var.url_dedupe_scope) },
+    { name = "URL_DEDUPE_INDEX_PARTITION", value = var.url_dedupe_index_partition },
   ]
 
   consumer_tuning_env = [

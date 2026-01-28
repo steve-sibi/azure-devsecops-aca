@@ -113,3 +113,32 @@ variable "screenshot_format" {
     error_message = "screenshot_format must be 'jpeg' or 'png'."
   }
 }
+
+variable "url_dedupe_ttl_seconds" {
+  type        = number
+  default     = 0
+  description = "If >0, cache window for reusing completed/error URL scans (seconds)."
+}
+
+variable "url_dedupe_in_progress_ttl_seconds" {
+  type        = number
+  default     = 0
+  description = "If >0, reuse in-progress URL scans to avoid duplicate work (seconds)."
+}
+
+variable "url_dedupe_scope" {
+  type        = string
+  default     = "global"
+  description = "URL dedupe scope ('global' or 'apikey'). 'apikey' requires propagating a key hash through the queue."
+
+  validation {
+    condition     = contains(["global", "apikey"], lower(var.url_dedupe_scope))
+    error_message = "url_dedupe_scope must be 'global' or 'apikey'."
+  }
+}
+
+variable "url_dedupe_index_partition" {
+  type        = string
+  default     = "urlidx"
+  description = "Table Storage partition key used for the URL->job index."
+}
