@@ -385,6 +385,108 @@
       min-width: 220px;
     }
 
+    .history-controls {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      flex: 1;
+      min-width: min(560px, 100%);
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    select.select {
+      width: auto;
+      min-width: 170px;
+      padding: 0.65rem 0.75rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(148, 163, 184, 0.06);
+      color: var(--text);
+      transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    select.select:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px var(--ring);
+      background: rgba(148, 163, 184, 0.04);
+    }
+
+    .history-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.65rem;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: rgba(148, 163, 184, 0.03);
+      padding: 0.65rem;
+      min-height: 148px;
+    }
+
+    .job-card {
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      border-radius: 12px;
+      background: rgba(148, 163, 184, 0.05);
+      padding: 0.6rem 0.65rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      min-height: 120px;
+    }
+
+    .job-card-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    .job-url {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      text-decoration: none;
+      color: var(--text);
+      font-weight: 650;
+    }
+
+    .job-url:hover {
+      text-decoration: underline;
+      color: var(--primary);
+    }
+
+    .job-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      font-size: 0.8rem;
+    }
+
+    .job-actions {
+      display: flex;
+      gap: 0.45rem;
+      flex-wrap: wrap;
+    }
+
+    .job-actions button {
+      padding: 0.35rem 0.55rem;
+      font-size: 0.82rem;
+    }
+
+    .history-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-top: 0.75rem;
+      flex-wrap: wrap;
+    }
+
     .tabs {
       display: flex;
       gap: 0.5rem;
@@ -981,7 +1083,7 @@
       <div class="actions">
         <a class="tab" aria-current="page" href="/">URL scanner</a>
         <a class="tab" href="/file">File scanner</a>
-        <button id="clearHistory" type="button">Clear history</button>
+        <button id="clearHistory" type="button">Refresh history</button>
       </div>
     </header>
 
@@ -1012,23 +1114,21 @@
       <section class="card">
         <div class="card-head">
           <h2>History</h2>
-          <input id="historyFilter" class="filter" placeholder="Filter by URL or job id" />
+          <div class="history-controls">
+            <input id="historyFilter" class="filter" placeholder="Filter by URL or job id" />
+            <select id="historyOrder" class="select" aria-label="Order history">
+              <option value="recent" selected>Most recent</option>
+              <option value="oldest">Oldest</option>
+            </select>
+          </div>
         </div>
-        <div class="table-wrap" role="region" aria-label="Scan history">
-          <table>
-            <thead>
-              <tr>
-                <th class="nowrap">When</th>
-                <th>URL</th>
-                <th class="nowrap">Job</th>
-                <th class="nowrap">Status</th>
-                <th class="nowrap">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="historyBody"></tbody>
-          </table>
+        <div id="historyGrid" class="history-grid" role="region" aria-label="Scan history"></div>
+        <div class="history-pager" aria-label="History pagination">
+          <button id="historyPrev" type="button">Prev</button>
+          <span id="historyPageInfo" class="muted small"></span>
+          <button id="historyNext" type="button">Next</button>
         </div>
-        <p class="muted small">History is stored locally in your browser.</p>
+        <p class="muted small">History is tied to your API key and stored server-side.</p>
       </section>
 
       <section class="card full">
@@ -1069,8 +1169,12 @@
       const summaryOutEl = document.getElementById('summaryOut');
       const statusEl = document.getElementById('status');
       const startEl = document.getElementById('start');
-      const historyBodyEl = document.getElementById('historyBody');
+      const historyGridEl = document.getElementById('historyGrid');
       const historyFilterEl = document.getElementById('historyFilter');
+      const historyOrderEl = document.getElementById('historyOrder');
+      const historyPrevEl = document.getElementById('historyPrev');
+      const historyNextEl = document.getElementById('historyNext');
+      const historyPageInfoEl = document.getElementById('historyPageInfo');
       const clearHistoryEl = document.getElementById('clearHistory');
       const checkCurrentEl = document.getElementById('checkCurrent');
       const copyJsonEl = document.getElementById('copyJson');
@@ -1095,6 +1199,17 @@
 
       const dtf = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
       const HTTPS_PREFIX = 'https://';
+
+      const HISTORY_FETCH_LIMIT = 500;
+      const HISTORY_ITEMS_PER_ROW = 5;
+      const HISTORY_ROWS_PER_PAGE = 5;
+      const HISTORY_PAGE_SIZE = HISTORY_ITEMS_PER_ROW * HISTORY_ROWS_PER_PAGE;
+
+      let historyPage = 1;
+      let historyLoading = false;
+      let historyLoadError = null;
+      let historyLastLoadedAt = null;
+      let historyRefreshTimer = null;
 
       function normalizeUrlInput(raw) {
         const v = String(raw || '').trim();
@@ -1124,22 +1239,10 @@
         localStorage.setItem(key, JSON.stringify(value));
       }
 
-      function loadHistory() {
-        const items = readJson(LS.history, []);
-        if (!Array.isArray(items)) return [];
-        return items.filter(Boolean).slice(0, 50);
-      }
-
-      function saveHistory() {
-        writeJson(LS.history, history.slice(0, 50));
-      }
-
       function upsertHistory(entry) {
         const idx = history.findIndex(x => x && x.job_id === entry.job_id);
         if (idx >= 0) history[idx] = Object.assign({}, history[idx], entry);
         else history.unshift(entry);
-        history = history.slice(0, 50);
-        saveHistory();
         renderHistory();
       }
 
@@ -1147,15 +1250,53 @@
         const idx = history.findIndex(x => x && x.job_id === jobId);
         if (idx < 0) return;
         history[idx] = Object.assign({}, history[idx], patch);
-        saveHistory();
         renderHistory();
       }
 
-      function clearHistory() {
-        history = [];
-        saveHistory();
+      function resetHistoryPaging() {
+        historyPage = 1;
+      }
+
+      function scheduleHistoryRefresh(ms) {
+        if (historyRefreshTimer) clearTimeout(historyRefreshTimer);
+        historyRefreshTimer = setTimeout(() => {
+          resetHistoryPaging();
+          refreshHistoryFromServer({ silent: true });
+        }, Math.max(0, Number(ms || 0)) || 450);
+      }
+
+      async function refreshHistoryFromServer(opts) {
+        const silent = opts && opts.silent;
+        historyLoadError = null;
+
+        const key = apiKeyEl.value.trim();
+        if (!key) {
+          history = [];
+          historyLastLoadedAt = null;
+          renderHistory();
+          return;
+        }
+
+        historyLoading = true;
         renderHistory();
-        clearScreenshotCache();
+        try {
+          const res = await api('/jobs?limit=' + HISTORY_FETCH_LIMIT, 'GET');
+          const jobs = res && res.jobs;
+          if (!Array.isArray(jobs)) {
+            throw Object.assign(new Error('Invalid /jobs response'), { data: res });
+          }
+          history = jobs;
+          historyLastLoadedAt = new Date().toISOString();
+          if (!silent) setStatus('ok', 'History refreshed');
+        } catch (e) {
+          const info = formatApiError(e);
+          history = [];
+          historyLoadError = info.message || 'Failed to load history';
+          if (!silent) setStatus('warn', historyLoadError);
+        } finally {
+          historyLoading = false;
+          renderHistory();
+        }
       }
 
       function clearScreenshotCache() {
@@ -1876,77 +2017,132 @@
       }
 
       function renderHistory() {
+        const apiKey = apiKeyEl.value.trim();
         const filter = (historyFilterEl.value || '').trim().toLowerCase();
-        historyBodyEl.textContent = '';
+        const order = (historyOrderEl && historyOrderEl.value) ? String(historyOrderEl.value) : 'recent';
 
-        const items = history.filter(item => {
+        historyGridEl.textContent = '';
+
+        const showGridMessage = (text) => {
+          const msg = el('div', { class: 'muted', text: text });
+          msg.style.gridColumn = '1 / -1';
+          historyGridEl.appendChild(msg);
+        };
+
+        if (!apiKey) {
+          showGridMessage('Enter your API key to load history.');
+          historyPageInfoEl.textContent = '';
+          historyPrevEl.disabled = true;
+          historyNextEl.disabled = true;
+          return;
+        }
+
+        if (historyLoading && (!Array.isArray(history) || history.length === 0)) {
+          showGridMessage('Loading history…');
+          historyPageInfoEl.textContent = '';
+          historyPrevEl.disabled = true;
+          historyNextEl.disabled = true;
+          return;
+        }
+
+        if (historyLoadError && (!Array.isArray(history) || history.length === 0)) {
+          showGridMessage('Unable to load history: ' + historyLoadError);
+          historyPageInfoEl.textContent = '';
+          historyPrevEl.disabled = true;
+          historyNextEl.disabled = true;
+          return;
+        }
+
+        const parseMs = (iso) => {
+          if (!iso) return 0;
+          const t = Date.parse(iso);
+          return Number.isFinite(t) ? t : 0;
+        };
+
+        let items = Array.isArray(history) ? history.slice() : [];
+        items = items.filter(item => {
           if (!item) return false;
           if (!filter) return true;
           const hay = (String(item.url || '') + ' ' + String(item.job_id || '')).toLowerCase();
           return hay.indexOf(filter) >= 0;
         });
 
-        if (items.length === 0) {
+        items.sort((a, b) => {
+          const aMs = parseMs(a.submitted_at || a.scanned_at || a.updated_at || a.last_checked_at);
+          const bMs = parseMs(b.submitted_at || b.scanned_at || b.updated_at || b.last_checked_at);
+          if (order === 'oldest') return aMs - bMs;
+          return bMs - aMs; // recent (default)
+        });
+
+        const total = items.length;
+        const totalPages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+        if (historyPage > totalPages) historyPage = totalPages;
+        if (historyPage < 1) historyPage = 1;
+
+        historyPrevEl.disabled = historyPage <= 1;
+        historyNextEl.disabled = historyPage >= totalPages;
+
+        const updated = historyLastLoadedAt ? formatWhen(historyLastLoadedAt) : '';
+        historyPageInfoEl.textContent = `Page ${historyPage}/${totalPages} · ${total} job${total === 1 ? '' : 's'}${updated ? ' · Updated ' + updated : ''}`;
+
+        if (total === 0) {
           const msg = filter ? 'No matching scans.' : 'No scans yet. Start one to see it here.';
-          const td = el('td', { class: 'muted', text: msg });
-          td.colSpan = 5;
-          historyBodyEl.appendChild(el('tr', null, td));
+          showGridMessage(msg);
           return;
         }
 
-        for (const item of items) {
-          const when = formatWhen(item.submitted_at || item.last_checked_at);
+        const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
+        const pageItems = items.slice(start, start + HISTORY_PAGE_SIZE);
+
+        for (const item of pageItems) {
           const job = item.job_id || '';
           const shortJob = job ? (job.slice(0, 8) + '…') : '';
           const rawStatus = String(item.status || '');
           const hs = historyStatus(rawStatus);
 
-          const whenTd = el('td', { class: 'nowrap', text: when });
+          const whenIso = item.submitted_at || item.updated_at || item.last_checked_at || '';
+          const when = formatWhen(whenIso);
 
-          const urlLink = el('a', { href: item.url || '#', target: '_blank', rel: 'noreferrer', text: item.url || '' });
-          const urlTd = el('td', { class: 'url-cell' }, urlLink);
-
-          const jobCode = el('code', { text: shortJob, title: job });
-          const jobTd = el('td', { class: 'nowrap' }, jobCode);
-
-          const statusTd = el('td', { class: 'nowrap' });
           const badge = makeBadge(hs.kind, hs.label);
           badge.title = hs.title;
-          statusTd.appendChild(badge);
 
-          const actionsTd = el('td', { class: 'nowrap' });
+          const top = el('div', { class: 'job-card-top' }, badge, el('span', { class: 'muted small', text: when }));
+
+          const url = String(item.url || '').trim();
+          const urlLink = url
+            ? el('a', { class: 'job-url', href: url, target: '_blank', rel: 'noreferrer', text: url })
+            : el('div', { class: 'muted', text: '(no url)' });
+
+          const meta = el('div', { class: 'job-meta' });
+          meta.appendChild(el('code', { text: shortJob, title: job }));
+          const scannedAt = item.scanned_at ? ('scanned ' + formatWhen(item.scanned_at)) : '';
+          meta.appendChild(el('span', { text: scannedAt }));
+
+          const actions = el('div', { class: 'job-actions' });
+
+          const viewBtn = el('button', { type: 'button', text: 'View' });
+          viewBtn.disabled = !job;
+          viewBtn.addEventListener('click', () => {
+            if (!job) return;
+            currentJobId = job;
+            setButtonsEnabled(true);
+            refreshJob(job, true);
+          });
+
           const useBtn = el('button', { type: 'button', text: 'Use URL' });
+          useBtn.disabled = !url;
           useBtn.addEventListener('click', () => {
-            if (!item.url) return;
-            urlEl.value = normalizeUrlInput(item.url);
+            if (!url) return;
+            urlEl.value = normalizeUrlInput(url);
             urlEl.focus();
             setStatus('info', 'Loaded URL from history');
           });
 
-          const checkBtn = el('button', { type: 'button', text: 'Check' });
-          checkBtn.addEventListener('click', () => refreshJob(job, true));
+          actions.appendChild(viewBtn);
+          actions.appendChild(useBtn);
 
-          const setCurrentBtn = el('button', { type: 'button', text: 'Set current' });
-          setCurrentBtn.addEventListener('click', () => {
-            currentJobId = job;
-            if (currentJobId && lastFullJobId && lastFullJobId !== currentJobId) {
-              lastFull = null;
-              lastFullJobId = null;
-            }
-            if (currentJobId && lastSummaryJobId && lastSummaryJobId !== currentJobId) {
-              lastSummary = null;
-              lastSummaryJobId = null;
-            }
-            setButtonsEnabled(true);
-            setStatus('info', 'Current job set to ' + job);
-            showPlaceholder();
-          });
-
-          actionsTd.appendChild(useBtn);
-          actionsTd.appendChild(checkBtn);
-          actionsTd.appendChild(setCurrentBtn);
-
-          historyBodyEl.appendChild(el('tr', null, whenTd, urlTd, jobTd, statusTd, actionsTd));
+          const card = el('div', { class: 'job-card' }, top, urlLink, meta, actions);
+          historyGridEl.appendChild(card);
         }
       }
 
@@ -2092,15 +2288,21 @@
         apiKeyEl.value = stored;
         if (stored && !localStorage.getItem(LS.apiKey)) localStorage.setItem(LS.apiKey, stored);
 
-        apiKeyEl.addEventListener('input', () => localStorage.setItem(LS.apiKey, apiKeyEl.value));
+        apiKeyEl.addEventListener('input', () => {
+          localStorage.setItem(LS.apiKey, apiKeyEl.value);
+          scheduleHistoryRefresh(450);
+        });
         const stripSchemeIfPresent = () => {
           const next = normalizeUrlInput(urlEl.value);
           if (next !== urlEl.value) urlEl.value = next;
         };
         urlEl.addEventListener('blur', stripSchemeIfPresent);
         urlEl.addEventListener('paste', () => setTimeout(stripSchemeIfPresent, 0));
-        history = loadHistory();
+        history = [];
         renderHistory();
+        if (apiKeyEl.value.trim()) {
+          refreshHistoryFromServer({ silent: true });
+        }
         lastSummary = {};
         lastFull = null;
         showPlaceholder();
@@ -2133,10 +2335,27 @@
       startEl.addEventListener('click', startScan);
       checkCurrentEl.addEventListener('click', () => refreshJob(currentJobId, true));
       clearHistoryEl.addEventListener('click', () => {
-        clearHistory();
-        setStatus('ok', 'History cleared');
+        clearScreenshotCache();
+        refreshHistoryFromServer({ silent: false });
       });
-      historyFilterEl.addEventListener('input', renderHistory);
+      historyFilterEl.addEventListener('input', () => {
+        resetHistoryPaging();
+        renderHistory();
+      });
+      historyOrderEl.addEventListener('change', () => {
+        resetHistoryPaging();
+        renderHistory();
+      });
+      historyPrevEl.addEventListener('click', () => {
+        if (historyPage > 1) {
+          historyPage -= 1;
+          renderHistory();
+        }
+      });
+      historyNextEl.addEventListener('click', () => {
+        historyPage += 1;
+        renderHistory();
+      });
       tabSummaryEl.addEventListener('click', () => setActiveTab('summary'));
       tabRawEl.addEventListener('click', async () => {
         setActiveTab('raw');

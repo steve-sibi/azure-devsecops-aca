@@ -30,3 +30,6 @@ venv/
 
 # Local Azure CLI config (used by some scripts)
 .azure/
+
+# Terminal helper history
+.aca_api_history

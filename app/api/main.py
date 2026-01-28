@@ -48,6 +48,17 @@ from common.screenshot_store import (
     get_screenshot_redis_async,
     redis_screenshot_key,
 )
+from common.job_index import ALLOWED_JOB_STATUSES, api_key_hash as hash_api_key
+from common.job_index import list_jobs_async, upsert_job_index_record_async
+from common.job_index import build_job_index_record as build_job_record
+from common.url_dedupe import (
+    UrlDedupeConfig,
+    build_url_index_record,
+    get_url_index_entry_async,
+    make_url_index_key,
+    upsert_url_index_entry_async,
+    url_index_entry_is_fresh,
+)
 from common.url_validation import UrlValidationError, validate_public_https_url_async
 from fastapi import (
     FastAPI,
@@ -97,6 +108,7 @@ logger = get_logger(__name__)
 
 # API hardening
 API_KEY = os.getenv("API_KEY")
+API_KEYS = os.getenv("ACA_API_KEYS") or os.getenv("API_KEYS") or ""
 API_KEY_HEADER = os.getenv("API_KEY_HEADER", "X-API-Key")
 REQUIRE_API_KEY = os.getenv("REQUIRE_API_KEY", "true").lower() in ("1", "true", "yes")
 _API_LIMITS = get_api_limits()
@@ -108,6 +120,7 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
     "yes",
 )
 MAX_DASHBOARD_POLL_SECONDS = _API_LIMITS.max_dashboard_poll_seconds
+_URL_DEDUPE = UrlDedupeConfig.from_env()
 
 # File scanning (ClamAV)
 CLAMAV_HOST = (os.getenv("CLAMAV_HOST", "127.0.0.1") or "127.0.0.1").strip()
@@ -151,6 +164,9 @@ class ScanRequest(BaseModel):
         max_length=SCAN_SOURCE_MAX_LENGTH,
     )
     metadata: Optional[dict] = Field(None, description="Optional metadata")
+    force: bool = Field(
+        False, description="Force a re-scan (ignore URL dedupe cache)"
+    )
 
 
 async def _read_upload_bytes_limited(
@@ -266,14 +282,20 @@ async def require_api_key(
     request: Request, api_key: Optional[str] = Security(api_key_scheme)
 ):
     if not REQUIRE_API_KEY:
-        return
-    if not API_KEY:
-        raise HTTPException(status_code=500, detail="API_KEY is not configured")
+        return None
+    configured: list[str] = []
+    if isinstance(API_KEY, str) and API_KEY.strip():
+        configured.append(API_KEY.strip())
+    if isinstance(API_KEYS, str) and API_KEYS.strip():
+        configured.extend([p.strip() for p in API_KEYS.split(",") if p.strip()])
+    if not configured:
+        raise HTTPException(status_code=500, detail="No API keys are configured")
     if not api_key:
         raise HTTPException(status_code=401, detail="Missing API key")
-    if not secrets.compare_digest(api_key, API_KEY):
+    if not any(secrets.compare_digest(api_key, k) for k in configured):
         raise HTTPException(status_code=403, detail="Invalid API key")
     await _enforce_rate_limit(api_key)
+    return hash_api_key(api_key)
 
 
 async def _upsert_result(
@@ -817,7 +839,7 @@ async def scan_file(
     file: Optional[UploadFile] = File(None),
     payload: Optional[str] = Form(None),
     payload_base64: bool = Form(False),
-    _: None = Security(require_api_key),
+    _api_key_hash: Optional[str] = Security(require_api_key),
 ):
     if file is None and not (isinstance(payload, str) and payload.strip()):
         raise HTTPException(status_code=400, detail="Provide a file or payload")
@@ -939,7 +961,9 @@ async def scan_file(
 
 
 @app.post("/scan")
-async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
+async def enqueue_scan(
+    req: ScanRequest, api_key_hash: Optional[str] = Security(require_api_key)
+):
     log_with_context(
         logger,
         logging.INFO,
@@ -966,6 +990,7 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
         "source": req.source,
         "metadata": req.metadata or {},
         "submitted_at": submitted_at,
+        "api_key_hash": api_key_hash or "",
     }
     try:
         payload = validate_scan_task_v1(payload)
@@ -976,6 +1001,58 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
         raise HTTPException(status_code=400, detail=str(e))
 
     await _validate_scan_url(payload["url"])
+
+    url_index_key = None
+    if _URL_DEDUPE.enabled and payload.get("type") == "url":
+        try:
+            url_index_key = make_url_index_key(
+                url=payload["url"], api_key_hash=api_key_hash, cfg=_URL_DEDUPE
+            )
+        except Exception:
+            url_index_key = None
+
+    if (
+        _URL_DEDUPE.enabled
+        and url_index_key
+        and not bool(getattr(req, "force", False))
+        and payload.get("type") == "url"
+    ):
+        existing = await get_url_index_entry_async(
+            backend=RESULT_BACKEND,
+            cfg=_URL_DEDUPE,
+            key=url_index_key,
+            table_client=table_client,
+            redis_client=redis_client,
+        )
+        if existing and url_index_entry_is_fresh(existing, cfg=_URL_DEDUPE):
+            existing_job_id = str(existing.get("job_id") or "").strip()
+            if existing_job_id:
+                entity = await _get_result_entity(existing_job_id)
+                if entity:
+                    owner_hash = str(entity.get("api_key_hash") or "").strip()
+                    if owner_hash and api_key_hash and not secrets.compare_digest(
+                        owner_hash, api_key_hash
+                    ):
+                        # Cache hit points at a job owned by a different API key.
+                        entity = None
+                    else:
+                        existing_status = str(
+                            entity.get("status") or existing.get("status") or "unknown"
+                        )
+                        log_with_context(
+                            logger,
+                            logging.INFO,
+                            "Scan deduped (cache hit)",
+                            job_id=existing_job_id,
+                            url=payload["url"],
+                            canonical_url=url_index_key.canonical_url,
+                            status=existing_status,
+                        )
+                        return {
+                            "job_id": existing_job_id,
+                            "status": existing_status,
+                            "deduped": True,
+                        }
     try:
         await _enqueue_json(
             payload,
@@ -991,7 +1068,7 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
                 "type": payload.get("type"),
                 "source": payload.get("source"),
             },
-            extra={"submitted_at": submitted_at},
+            extra={"submitted_at": submitted_at, "api_key_hash": api_key_hash or ""},
         )
         log_with_context(
             logger,
@@ -1001,6 +1078,44 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
             url=req.url,
             scan_type=req.type,
         )
+        if api_key_hash:
+            job_record = build_job_record(
+                api_key_hash_value=api_key_hash,
+                job_id=job_id,
+                submitted_at=submitted_at,
+                status="queued",
+                url=payload.get("url"),
+                scanned_at=None,
+                updated_at=submitted_at,
+                correlation_id=correlation_id,
+                error=None,
+            )
+            await upsert_job_index_record_async(
+                backend=RESULT_BACKEND,
+                api_key_hash_value=api_key_hash,
+                record=job_record,
+                table_client=table_client,
+                redis_client=redis_client,
+                redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
+            )
+        if _URL_DEDUPE.enabled and url_index_key and payload.get("type") == "url":
+            record = build_url_index_record(
+                key=url_index_key,
+                job_id=job_id,
+                status="queued",
+                submitted_at=submitted_at,
+                scanned_at=None,
+                updated_at=submitted_at,
+            )
+            await upsert_url_index_entry_async(
+                backend=RESULT_BACKEND,
+                cfg=_URL_DEDUPE,
+                key=url_index_key,
+                record=record,
+                table_client=table_client,
+                redis_client=redis_client,
+                result_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
+            )
         return {"job_id": job_id, "status": "queued"}
     except HTTPException:
         raise
@@ -1030,12 +1145,71 @@ async def enqueue_scan(req: ScanRequest, _: None = Security(require_api_key)):
         )
 
 
+@app.get("/jobs")
+async def list_jobs(
+    request: Request,
+    limit: int = Query(50, ge=1, le=500),
+    status: Optional[str] = Query(
+        None, description="Optional CSV status filter (e.g. queued,fetching,completed)"
+    ),
+    api_key_hash: Optional[str] = Security(require_api_key),
+):
+    if RESULT_BACKEND == "table" and not table_client:
+        raise HTTPException(status_code=503, detail="Result store not initialized")
+    if RESULT_BACKEND == "redis" and not redis_client:
+        raise HTTPException(status_code=503, detail="Result store not initialized")
+    if not api_key_hash:
+        raise HTTPException(status_code=401, detail="Missing API key")
+
+    statuses = None
+    if isinstance(status, str) and status.strip():
+        statuses = [s.strip().lower() for s in status.split(",") if s.strip()]
+        invalid = [s for s in statuses if s not in ALLOWED_JOB_STATUSES]
+        if invalid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status value(s): {', '.join(invalid)}",
+            )
+
+    items = await list_jobs_async(
+        backend=RESULT_BACKEND,
+        api_key_hash_value=api_key_hash,
+        limit=int(limit or 0),
+        statuses=statuses,
+        table_client=table_client,
+        redis_client=redis_client,
+    )
+
+    base_url = str(request.base_url).rstrip("/")
+    out: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        job_id = str(item.get("job_id") or "").strip()
+        if not job_id:
+            continue
+        out.append(
+            {
+                "job_id": job_id,
+                "status": (item.get("status") or "unknown"),
+                "submitted_at": item.get("submitted_at") or None,
+                "scanned_at": item.get("scanned_at") or None,
+                "url": item.get("url") or None,
+                "error": item.get("error") or None,
+                "correlation_id": item.get("correlation_id") or None,
+                "dashboard_url": f"{base_url}/?job={job_id}",
+            }
+        )
+
+    return {"jobs": out}
+
+
 @app.get("/scan/{job_id}")
 async def get_scan_status(
     job_id: str,
     request: Request,
     view: str = Query("summary", description="Response view: summary or full"),
-    _: None = Security(require_api_key),
+    api_key_hash: Optional[str] = Security(require_api_key),
 ):
     log_with_context(
         logger, logging.INFO, "Fetching scan result", job_id=job_id, view=view
@@ -1055,6 +1229,10 @@ async def get_scan_status(
             status="pending",
         )
         return {"job_id": job_id, "status": "pending", "summary": None}
+
+    owner_hash = str(entity.get("api_key_hash") or "").strip()
+    if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+        raise HTTPException(status_code=404, detail="Scan result not found")
 
     details = _parse_details(entity.get("details"))
     summary = _build_summary(entity, details)
@@ -1093,7 +1271,9 @@ def _screenshot_blob_name(job_id: str) -> str:
 
 
 @app.get("/scan/{job_id}/screenshot")
-async def get_scan_screenshot(job_id: str, _: None = Security(require_api_key)):
+async def get_scan_screenshot(
+    job_id: str, api_key_hash: Optional[str] = Security(require_api_key)
+):
     log_with_context(
         logger,
         logging.INFO,
@@ -1101,6 +1281,13 @@ async def get_scan_screenshot(job_id: str, _: None = Security(require_api_key)):
         job_id=job_id,
         backend=RESULT_BACKEND,
     )
+
+    entity = await _get_result_entity(job_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Screenshot not found")
+    owner_hash = str(entity.get("api_key_hash") or "").strip()
+    if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+        raise HTTPException(status_code=404, detail="Screenshot not found")
 
     if RESULT_BACKEND == "redis":
         if not redis_client:

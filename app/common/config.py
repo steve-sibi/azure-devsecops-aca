@@ -6,7 +6,15 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Optional
 
+from common.job_index import build_job_index_record, upsert_job_index_record_sync
 from common.result_store import upsert_result_sync
+from common.url_dedupe import (
+    UrlDedupeConfig,
+    make_url_index_key,
+    update_url_index_if_job_matches_sync,
+)
+
+_URL_DEDUPE = UrlDedupeConfig.from_env()
 
 
 @dataclass(frozen=True)
@@ -146,6 +154,7 @@ class ResultPersister:
         details: Optional[dict] = None,
         size_bytes: Optional[int] = None,
         correlation_id: Optional[str] = None,
+        api_key_hash: Optional[str] = None,
         duration_ms: Optional[int] = None,
         submitted_at: Optional[str] = None,
         error: Optional[str] = None,
@@ -162,6 +171,8 @@ class ResultPersister:
         }
         if url:
             extra["url"] = url
+        if api_key_hash:
+            extra["api_key_hash"] = api_key_hash
 
         details_out: dict = dict(details or {})
         if url and "url" not in details_out:
@@ -185,6 +196,54 @@ class ResultPersister:
                 redis_prefix=self._redis_prefix,
                 redis_ttl_seconds=self._redis_ttl_seconds,
             )
+            if api_key_hash and submitted_at:
+                try:
+                    job_record = build_job_index_record(
+                        api_key_hash_value=api_key_hash,
+                        job_id=job_id,
+                        submitted_at=submitted_at,
+                        status=status,
+                        url=url,
+                        scanned_at=scanned_at,
+                        updated_at=scanned_at,
+                        correlation_id=correlation_id,
+                        error=error,
+                    )
+                    upsert_job_index_record_sync(
+                        backend=self._backend,
+                        api_key_hash_value=api_key_hash,
+                        record=job_record,
+                        table_client=self._table_client,
+                        redis_client=self._redis_client,
+                        redis_ttl_seconds=self._redis_ttl_seconds,
+                    )
+                except Exception:
+                    pass
+
+            if _URL_DEDUPE.enabled and url:
+                dedupe_key_hash = api_key_hash if _URL_DEDUPE.scope == "apikey" else None
+                if _URL_DEDUPE.scope != "apikey" or dedupe_key_hash:
+                    try:
+                        key = make_url_index_key(
+                            url=url, api_key_hash=dedupe_key_hash, cfg=_URL_DEDUPE
+                        )
+                        update_url_index_if_job_matches_sync(
+                            backend=self._backend,
+                            cfg=_URL_DEDUPE,
+                            key=key,
+                            expected_job_id=job_id,
+                            fields={
+                                "status": status,
+                                "updated_at": scanned_at,
+                                "scanned_at": scanned_at,
+                            },
+                            table_client=self._table_client,
+                            redis_client=self._redis_client,
+                            result_ttl_seconds=self._redis_ttl_seconds,
+                        )
+                    except Exception:
+                        # Never fail the scan pipeline on best-effort cache maintenance.
+                        pass
             return True
         except Exception:
             logging.exception(
