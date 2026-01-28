@@ -1,17 +1,18 @@
 # Shared runtime limits/timeouts. These env vars are read by the API/Fetcher/Worker.
 locals {
-  runtime_env_common = [
-    { name = "BLOCK_PRIVATE_NETWORKS", value = "true" },
-    { name = "MAX_DOWNLOAD_BYTES", value = tostring(1024 * 1024) }, # 1MB
-    { name = "MAX_REDIRECTS", value = "5" },
-    { name = "REQUEST_TIMEOUT", value = "10" },
-    { name = "WEB_MAX_HEADERS", value = "40" },
-    { name = "WEB_MAX_HEADER_VALUE_LEN", value = "600" },
-    { name = "URL_DEDUPE_TTL_SECONDS", value = tostring(var.url_dedupe_ttl_seconds) },
-    { name = "URL_DEDUPE_IN_PROGRESS_TTL_SECONDS", value = tostring(var.url_dedupe_in_progress_ttl_seconds) },
-    { name = "URL_DEDUPE_SCOPE", value = lower(var.url_dedupe_scope) },
-    { name = "URL_DEDUPE_INDEX_PARTITION", value = var.url_dedupe_index_partition },
-  ]
+	  runtime_env_common = [
+	    { name = "BLOCK_PRIVATE_NETWORKS", value = "true" },
+	    { name = "MAX_DOWNLOAD_BYTES", value = tostring(1024 * 1024) }, # 1MB
+	    { name = "MAX_REDIRECTS", value = "5" },
+	    { name = "REQUEST_TIMEOUT", value = "10" },
+	    { name = "WEB_MAX_HEADERS", value = "40" },
+	    { name = "WEB_MAX_HEADER_VALUE_LEN", value = "600" },
+	    { name = "URL_DEDUPE_TTL_SECONDS", value = tostring(var.url_dedupe_ttl_seconds) },
+	    { name = "URL_DEDUPE_IN_PROGRESS_TTL_SECONDS", value = tostring(var.url_dedupe_in_progress_ttl_seconds) },
+	    { name = "URL_DEDUPE_SCOPE", value = lower(var.url_dedupe_scope) },
+	    { name = "URL_DEDUPE_INDEX_PARTITION", value = var.url_dedupe_index_partition },
+	    { name = "URL_RESULT_VISIBILITY_DEFAULT", value = lower(var.url_result_visibility_default) },
+	  ]
 
   consumer_tuning_env = [
     { name = "BATCH_SIZE", value = "10" },

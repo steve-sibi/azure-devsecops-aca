@@ -128,8 +128,8 @@ variable "url_dedupe_in_progress_ttl_seconds" {
 
 variable "url_dedupe_scope" {
   type        = string
-  default     = "apikey"
-  description = "URL dedupe scope ('global' or 'apikey'). 'apikey' requires propagating a key hash through the queue."
+  default     = "global"
+  description = "URL dedupe scope ('global' or 'apikey'). Set to 'global' to reuse URL scans across API keys (recommended)."
 
   validation {
     condition     = contains(["global", "apikey"], lower(var.url_dedupe_scope))
@@ -141,4 +141,15 @@ variable "url_dedupe_index_partition" {
   type        = string
   default     = "urlidx"
   description = "Table Storage partition key used for the URL->job index."
+}
+
+variable "url_result_visibility_default" {
+  type        = string
+  default     = "shared"
+  description = "Default visibility for URL scan results ('shared' or 'private')."
+
+  validation {
+    condition     = contains(["shared", "private"], lower(var.url_result_visibility_default))
+    error_message = "url_result_visibility_default must be 'shared' or 'private'."
+  }
 }
