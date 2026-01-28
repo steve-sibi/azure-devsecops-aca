@@ -6,6 +6,8 @@
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Azure DevSecOps URL Scanner</title>
   <meta name="description" content="Submit URL scan jobs and poll for results." />
+  <meta name="theme-color" content="#0b1020" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f6f7fb" media="(prefers-color-scheme: light)" />
   <style>
     :root {
       color-scheme: light dark;
@@ -52,6 +54,87 @@
       }
     }
 
+    /* Animations */
+    @keyframes spin {
+      from {
+        transform: rotate(0deg);
+      }
+
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    @keyframes fadeOut {
+      from {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateY(-8px);
+      }
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateX(100%);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateX(0);
+      }
+    }
+
+    @keyframes slideOut {
+      from {
+        opacity: 1;
+        transform: translateX(0);
+      }
+
+      to {
+        opacity: 0;
+        transform: translateX(100%);
+      }
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1;
+      }
+
+      50% {
+        opacity: 0.5;
+      }
+    }
+
+    @keyframes shimmer {
+      0% {
+        background-position: -200% 0;
+      }
+
+      100% {
+        background-position: 200% 0;
+      }
+    }
+
     * {
       box-sizing: border-box;
     }
@@ -68,6 +151,186 @@
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* Skip to main content link for accessibility */
+    .skip-link {
+      position: absolute;
+      top: -100%;
+      left: 0;
+      padding: 0.75rem 1.25rem;
+      background: var(--primary);
+      color: var(--primary-ink);
+      font-weight: 700;
+      z-index: 9999;
+      border-radius: 0 0 10px 0;
+      transition: top 0.2s ease;
+    }
+
+    .skip-link:focus {
+      top: 0;
+      outline: none;
+      box-shadow: 0 0 0 4px var(--ring);
+    }
+
+    /* Toast notification container */
+    .toast-container {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      z-index: 10000;
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      pointer-events: none;
+      max-width: min(380px, calc(100vw - 2rem));
+    }
+
+    .toast {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+      padding: 0.75rem 1rem;
+      border-radius: 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+      pointer-events: auto;
+      animation: slideIn 0.25s ease forwards;
+      font-size: 0.9rem;
+      font-weight: 500;
+    }
+
+    .toast.toast-out {
+      animation: slideOut 0.2s ease forwards;
+    }
+
+    .toast-icon {
+      flex: 0 0 auto;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 900;
+    }
+
+    .toast.toast-success .toast-icon {
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    .toast.toast-error .toast-icon {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .toast.toast-info .toast-icon {
+      background: var(--primary-soft);
+      color: var(--primary);
+    }
+
+    .toast.toast-warn .toast-icon {
+      background: rgba(234, 179, 8, 0.14);
+      color: rgba(234, 179, 8, 1);
+    }
+
+    .toast-message {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .toast-close {
+      flex: 0 0 auto;
+      padding: 0.25rem;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 6px;
+      transition: background 0.15s ease;
+    }
+
+    .toast-close:hover {
+      background: rgba(148, 163, 184, 0.12);
+    }
+
+    /* Loading spinner */
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+    }
+
+    .spinner-sm {
+      width: 14px;
+      height: 14px;
+      border-width: 2px;
+    }
+
+    .spinner-lg {
+      width: 24px;
+      height: 24px;
+      border-width: 3px;
+    }
+
+    /* Button loading state */
+    button.loading {
+      position: relative;
+      color: transparent !important;
+      pointer-events: none;
+    }
+
+    button.loading::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 16px;
+      height: 16px;
+      margin: -8px 0 0 -8px;
+      border: 2px solid currentColor;
+      border-color: var(--primary-ink);
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    button:not(.primary).loading::after {
+      border-color: var(--text);
+      border-top-color: transparent;
+    }
+
+    /* Skeleton loading */
+    .skeleton {
+      background: linear-gradient(90deg, rgba(148, 163, 184, 0.08) 25%, rgba(148, 163, 184, 0.16) 50%, rgba(148, 163, 184, 0.08) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: 8px;
+    }
+
+    /* Keyboard shortcut hint */
+    .kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 1.5em;
+      padding: 0.15rem 0.4rem;
+      font-size: 0.72rem;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-weight: 700;
+      color: var(--muted);
+      background: rgba(148, 163, 184, 0.1);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      box-shadow: 0 1px 0 rgba(0, 0, 0, 0.1);
     }
 
     a {
@@ -473,23 +736,23 @@
       flex-wrap: wrap;
     }
 
-	    .job-actions button {
-	      padding: 0.35rem 0.55rem;
-	      font-size: 0.82rem;
-	    }
+    .job-actions button {
+      padding: 0.35rem 0.55rem;
+      font-size: 0.82rem;
+    }
 
-	    .badge-row {
-	      display: inline-flex;
-	      align-items: center;
-	      gap: 0.4rem;
-	      flex-wrap: wrap;
-	    }
+    .badge-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      flex-wrap: wrap;
+    }
 
-	    .history-pager {
-	      display: flex;
-	      align-items: center;
-	      justify-content: space-between;
-	      gap: 0.75rem;
+    .history-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
       margin-top: 0.75rem;
       flex-wrap: wrap;
     }
@@ -1080,6 +1343,12 @@
 </head>
 
 <body>
+  <!-- Skip to main content link for keyboard/screen reader users -->
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <!-- Toast notification container -->
+  <div id="toastContainer" class="toast-container" role="region" aria-label="Notifications" aria-live="polite"></div>
+
   <div class="app">
     <header class="header">
       <div>
@@ -1094,82 +1363,89 @@
       </div>
     </header>
 
-    <div class="grid">
-      <section class="card">
-        <h2>New scan</h2>
-        <div class="field">
-          <label for="apiKey">API key <span class="muted">(header: __API_KEY_HEADER__)</span></label>
-          <input id="apiKey" autocomplete="off" placeholder="Paste API key" />
-          <div class="help">Saved in this browser only (local storage).</div>
-        </div>
-        <div class="field">
-          <label for="url">HTTPS URL to scan</label>
-          <div class="url-group">
-            <span class="url-scheme" aria-hidden="true">https://</span>
-            <input id="url" class="url-input" inputmode="url" autocomplete="off" placeholder="example.com" />
+    <main id="main-content">
+      <div class="grid">
+        <section class="card" aria-labelledby="new-scan-heading">
+          <h2 id="new-scan-heading">New scan</h2>
+          <div class="field">
+            <label for="apiKey">API key <span class="muted">(header: __API_KEY_HEADER__)</span></label>
+            <input id="apiKey" autocomplete="off" placeholder="Paste API key" />
+            <div class="help">Saved in this browser only (local storage).</div>
           </div>
-          <div class="help">Only public HTTPS destinations on port 443 are allowed.</div>
-        </div>
-        <div class="actions">
-          <button id="start" class="primary" type="button">Start scan</button>
-          <button id="checkCurrent" type="button" disabled>Check job</button>
-          <button id="copyJson" type="button" disabled>Copy JSON</button>
-        </div>
-        <div id="status" class="status" aria-live="polite"></div>
-      </section>
-
-      <section class="card">
-        <div class="card-head">
-          <h2>History</h2>
-          <div class="history-controls">
-            <input id="historyFilter" class="filter" placeholder="Filter by URL or job id" />
-            <select id="historyOrder" class="select" aria-label="Order history">
-              <option value="recent" selected>Most recent</option>
-              <option value="oldest">Oldest</option>
-            </select>
+          <div class="field">
+            <label for="url">HTTPS URL to scan <span class="muted"><kbd class="kbd"
+                  title="Press Ctrl+Enter or Cmd+Enter to scan">⌘↵</kbd></span></label>
+            <div class="url-group">
+              <span class="url-scheme" aria-hidden="true">https://</span>
+              <input id="url" class="url-input" inputmode="url" autocomplete="off" placeholder="example.com"
+                aria-describedby="url-help" />
+            </div>
+            <div id="url-help" class="help">Only public HTTPS destinations on port 443 are allowed.</div>
           </div>
-        </div>
-        <div class="table-wrap" role="region" aria-label="Scan history">
-          <table>
-            <thead>
-              <tr>
-                <th class="nowrap">When</th>
-                <th>URL</th>
-                <th class="nowrap">Job</th>
-                <th class="nowrap">Status</th>
-                <th class="nowrap">Actions</th>
-              </tr>
-            </thead>
-            <tbody id="historyBody"></tbody>
-          </table>
-        </div>
-        <div class="history-pager" aria-label="History pagination">
-          <button id="historyPrev" type="button">Prev</button>
-          <span id="historyPageInfo" class="muted small"></span>
-          <button id="historyNext" type="button">Next</button>
-        </div>
-        <p class="muted small">History is tied to your API key and stored server-side.</p>
-      </section>
-
-      <section class="card full">
-        <div class="card-head">
-          <h2>Response</h2>
           <div class="actions">
-            <button id="copyJson2" type="button" disabled>Copy JSON</button>
+            <button id="start" class="primary" type="button" aria-describedby="start-hint">Start scan</button>
+            <button id="checkCurrent" type="button" disabled>Check job</button>
+            <button id="copyJson" type="button" disabled>Copy JSON</button>
           </div>
-        </div>
-        <div class="tabs" role="tablist" aria-label="Response view">
-          <button id="tabSummary" class="tab" role="tab" aria-selected="true" type="button">Summary</button>
-          <button id="tabRaw" class="tab" role="tab" aria-selected="false" type="button">Raw JSON</button>
-        </div>
-        <div id="panelSummary" class="panel">
-          <div id="summaryOut" class="summary-grid"></div>
-        </div>
-        <div id="panelRaw" class="panel hidden">
-          <pre id="out">{}</pre>
-        </div>
-      </section>
-    </div>
+          <div id="status" class="status" role="status" aria-live="polite" aria-atomic="true"></div>
+        </section>
+
+        <section class="card" aria-labelledby="history-heading">
+          <div class="card-head">
+            <h2 id="history-heading">History</h2>
+            <div class="history-controls">
+              <input id="historyFilter" class="filter" placeholder="Filter by URL or job id"
+                aria-label="Filter history" />
+              <select id="historyOrder" class="select" aria-label="Order history">
+                <option value="recent" selected>Most recent</option>
+                <option value="oldest">Oldest</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrap" role="region" aria-label="Scan history">
+            <table>
+              <thead>
+                <tr>
+                  <th class="nowrap" scope="col">When</th>
+                  <th scope="col">URL</th>
+                  <th class="nowrap" scope="col">Job</th>
+                  <th class="nowrap">Status</th>
+                  <th class="nowrap">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="historyBody"></tbody>
+            </table>
+          </div>
+          <div class="history-pager" aria-label="History pagination">
+            <button id="historyPrev" type="button">Prev</button>
+            <span id="historyPageInfo" class="muted small"></span>
+            <button id="historyNext" type="button">Next</button>
+          </div>
+          <p class="muted small">History is tied to your API key and stored server-side.</p>
+        </section>
+
+        <section class="card full">
+          <div class="card-head">
+            <h2>Response</h2>
+            <div class="actions">
+              <button id="copyJson2" type="button" disabled>Copy JSON</button>
+            </div>
+          </div>
+          <div class="tabs" role="tablist" aria-label="Response view">
+            <button id="tabSummary" class="tab" role="tab" aria-selected="true" aria-controls="panelSummary"
+              type="button">Summary</button>
+            <button id="tabRaw" class="tab" role="tab" aria-selected="false" aria-controls="panelRaw" type="button">Raw
+              JSON</button>
+          </div>
+          <div id="panelSummary" class="panel" role="tabpanel" aria-labelledby="tabSummary">
+            <div id="summaryOut" class="summary-grid"></div>
+          </div>
+          <div id="panelRaw" class="panel hidden" role="tabpanel" aria-labelledby="tabRaw">
+            <pre id="out">{}</pre>
+          </div>
+        </section>
+      </div>
+    </main>
   </div>
 
   <script>
@@ -1203,6 +1479,75 @@
       const tabRawEl = document.getElementById('tabRaw');
       const panelSummaryEl = document.getElementById('panelSummary');
       const panelRawEl = document.getElementById('panelRaw');
+      const toastContainerEl = document.getElementById('toastContainer');
+
+      // ===========================================
+      // Toast Notification System
+      // ===========================================
+      const toastQueue = [];
+      let toastCounter = 0;
+
+      function showToast(message, type = 'info', duration = 4000) {
+        const id = ++toastCounter;
+        const icons = { success: '✓', error: '✕', warn: '!', info: 'i' };
+
+        const toast = el('div', { class: 'toast toast-' + type, 'data-toast-id': String(id) },
+          el('span', { class: 'toast-icon', 'aria-hidden': 'true', text: icons[type] || icons.info }),
+          el('span', { class: 'toast-message', text: message }),
+          el('button', { class: 'toast-close', 'aria-label': 'Dismiss', type: 'button', text: '✕' })
+        );
+
+        const closeBtn = toast.querySelector('.toast-close');
+        closeBtn.addEventListener('click', () => dismissToast(toast));
+
+        toastContainerEl.appendChild(toast);
+        toastQueue.push({ id, toast, timer: null });
+
+        if (duration > 0) {
+          const entry = toastQueue.find(t => t.id === id);
+          if (entry) {
+            entry.timer = setTimeout(() => dismissToast(toast), duration);
+          }
+        }
+
+        // Limit max visible toasts
+        while (toastQueue.length > 5) {
+          const oldest = toastQueue.shift();
+          if (oldest && oldest.toast.isConnected) {
+            if (oldest.timer) clearTimeout(oldest.timer);
+            oldest.toast.remove();
+          }
+        }
+
+        return id;
+      }
+
+      function dismissToast(toast) {
+        if (!toast || !toast.isConnected) return;
+        toast.classList.add('toast-out');
+        setTimeout(() => {
+          if (toast.isConnected) toast.remove();
+          const idx = toastQueue.findIndex(t => t.toast === toast);
+          if (idx >= 0) {
+            if (toastQueue[idx].timer) clearTimeout(toastQueue[idx].timer);
+            toastQueue.splice(idx, 1);
+          }
+        }, 200);
+      }
+
+      // ===========================================
+      // Button Loading State Helpers
+      // ===========================================
+      function setButtonLoading(btn, loading) {
+        if (!btn) return;
+        if (loading) {
+          btn.classList.add('loading');
+          btn.disabled = true;
+        } else {
+          btn.classList.remove('loading');
+          // Don't auto-enable - let the caller decide
+        }
+      }
 
       let history = [];
       let currentJobId = null;
@@ -1895,7 +2240,7 @@
       async function copyText(text) {
         try {
           await navigator.clipboard.writeText(text);
-          setStatus('ok', 'Copied to clipboard');
+          showToast('Copied to clipboard', 'success', 2500);
         } catch (_) {
           const ta = el('textarea', { style: 'position:fixed;left:-1000px;top:-1000px;' });
           ta.value = text;
@@ -1903,7 +2248,7 @@
           ta.select();
           document.execCommand('copy');
           ta.remove();
-          setStatus('ok', 'Copied to clipboard');
+          showToast('Copied to clipboard', 'success', 2500);
         }
       }
 
@@ -2112,44 +2457,44 @@
         const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
         const pageItems = items.slice(start, start + HISTORY_PAGE_SIZE);
 
-	        for (const item of pageItems) {
-	          const job = item.job_id || '';
-	          const shortJob = job ? (job.slice(0, 8) + '…') : '';
-	          const rawStatus = String(item.status || '');
-	          const hs = historyStatus(rawStatus);
+        for (const item of pageItems) {
+          const job = item.job_id || '';
+          const shortJob = job ? (job.slice(0, 8) + '…') : '';
+          const rawStatus = String(item.status || '');
+          const hs = historyStatus(rawStatus);
 
-	          const whenIso = item.submitted_at || item.updated_at || item.last_checked_at || '';
-	          const when = formatWhen(whenIso);
+          const whenIso = item.submitted_at || item.updated_at || item.last_checked_at || '';
+          const when = formatWhen(whenIso);
 
-	          const badge = makeBadge(hs.kind, hs.label);
-	          badge.title = hs.title;
+          const badge = makeBadge(hs.kind, hs.label);
+          badge.title = hs.title;
 
-	          const deduped = Boolean(item.deduped);
-	          const visibility = String(item.visibility || '').trim().toLowerCase();
+          const deduped = Boolean(item.deduped);
+          const visibility = String(item.visibility || '').trim().toLowerCase();
 
-	          const whenTitleParts = [];
-	          if (item.submitted_at) whenTitleParts.push('submitted: ' + String(item.submitted_at));
-	          if (item.scanned_at) whenTitleParts.push('scanned: ' + String(item.scanned_at));
-	          const whenTitle = whenTitleParts.length ? whenTitleParts.join('\n') : '';
+          const whenTitleParts = [];
+          if (item.submitted_at) whenTitleParts.push('submitted: ' + String(item.submitted_at));
+          if (item.scanned_at) whenTitleParts.push('scanned: ' + String(item.scanned_at));
+          const whenTitle = whenTitleParts.length ? whenTitleParts.join('\n') : '';
 
-	          const url = String(item.url || '').trim();
-	          const urlLink = url
-	            ? el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url })
-	            : el('span', { class: 'muted', text: '(no url)' });
+          const url = String(item.url || '').trim();
+          const urlLink = url
+            ? el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url })
+            : el('span', { class: 'muted', text: '(no url)' });
 
-	          const badges = el('div', { class: 'badge-row' }, badge);
-	          if (deduped) {
-	            const scannedLabel = item.scanned_at ? formatWhen(item.scanned_at) : '';
-	            const cacheBadge = makeBadge('info', 'cache');
-	            cacheBadge.title = scannedLabel ? ('Cache hit (scanned ' + scannedLabel + ')') : 'Cache hit';
-	            badges.appendChild(cacheBadge);
-	          } else if (visibility === 'private') {
-	            const privateBadge = makeBadge('info', 'private');
-	            privateBadge.title = 'Not cached (private)';
-	            badges.appendChild(privateBadge);
-	          }
+          const badges = el('div', { class: 'badge-row' }, badge);
+          if (deduped) {
+            const scannedLabel = item.scanned_at ? formatWhen(item.scanned_at) : '';
+            const cacheBadge = makeBadge('info', 'cache');
+            cacheBadge.title = scannedLabel ? ('Cache hit (scanned ' + scannedLabel + ')') : 'Cache hit';
+            badges.appendChild(cacheBadge);
+          } else if (visibility === 'private') {
+            const privateBadge = makeBadge('info', 'private');
+            privateBadge.title = 'Not cached (private)';
+            badges.appendChild(privateBadge);
+          }
 
-	          const actions = el('div', { class: 'job-actions' });
+          const actions = el('div', { class: 'job-actions' });
 
           const viewBtn = el('button', { type: 'button', text: 'View' });
           viewBtn.disabled = !job;
@@ -2172,18 +2517,18 @@
           actions.appendChild(viewBtn);
           actions.appendChild(useBtn);
 
-	          const row = el(
-	            'tr',
-	            null,
-	            el('td', { class: 'nowrap muted small', text: when, title: whenTitle }),
-	            el('td', { class: 'url-cell' }, urlLink),
-	            el('td', { class: 'nowrap' }, el('code', { text: shortJob, title: job })),
-	            el('td', { class: 'nowrap' }, badges),
-	            el('td', { class: 'nowrap' }, actions)
-	          );
-	          historyBodyEl.appendChild(row);
-	        }
-	      }
+          const row = el(
+            'tr',
+            null,
+            el('td', { class: 'nowrap muted small', text: when, title: whenTitle }),
+            el('td', { class: 'url-cell' }, urlLink),
+            el('td', { class: 'nowrap' }, el('code', { text: shortJob, title: job })),
+            el('td', { class: 'nowrap' }, badges),
+            el('td', { class: 'nowrap' }, actions)
+          );
+          historyBodyEl.appendChild(row);
+        }
+      }
 
       async function refreshJob(jobId, showOutput) {
         if (!jobId) return null;
@@ -2193,17 +2538,17 @@
           const s = await api('/scan/' + jobId + '?view=' + encodeURIComponent(view), 'GET');
           const now = new Date().toISOString();
           // Use upsertHistory so it creates the entry if it doesn't exist (e.g., from deep-link)
-	          upsertHistory({
-	            job_id: jobId,
-	            url: s.summary?.url || s.summary?.download?.requested_url || undefined,
-	            status: s.status,
-	            error: s.error || null,
-	            deduped: Boolean(s.deduped),
-	            visibility: s.visibility || undefined,
-	            submitted_at: s.submitted_at || undefined,
-	            scanned_at: s.scanned_at || null,
-	            last_checked_at: now
-	          });
+          upsertHistory({
+            job_id: jobId,
+            url: s.summary?.url || s.summary?.download?.requested_url || undefined,
+            status: s.status,
+            error: s.error || null,
+            deduped: Boolean(s.deduped),
+            visibility: s.visibility || undefined,
+            submitted_at: s.submitted_at || undefined,
+            scanned_at: s.scanned_at || null,
+            last_checked_at: now
+          });
           if (showOutput) {
             if (view === 'full') showFull(s);
             else showSummary(s);
@@ -2261,11 +2606,14 @@
         try {
           target = toHttpsUrl(urlEl.value);
         } catch (e) {
+          showToast(e ? e.message : 'Only HTTPS URLs are allowed', 'error');
           setStatus('bad', e ? e.message : 'Only HTTPS URLs are allowed');
           return;
         }
         if (!target) {
+          showToast('Enter a URL to scan', 'warn');
           setStatus('bad', 'Enter a URL');
+          urlEl.focus();
           return;
         }
 
@@ -2278,7 +2626,7 @@
           summary: { url: target }
         });
         setButtonsEnabled(false);
-        startEl.disabled = true;
+        setButtonLoading(startEl, true);
         checkCurrentEl.disabled = true;
 
         try {
@@ -2301,9 +2649,11 @@
               scanned_at: null,
               last_checked_at: null
             });
+            showToast('Scan submitted! Waiting for results...', 'info', 3000);
           }
 
           if (!currentJobId) {
+            showToast('No job ID returned from server', 'error');
             setStatus('bad', 'No job_id returned');
             return;
           }
@@ -2311,14 +2661,21 @@
           isPolling = true;
           setStatus('info', 'Job queued; polling for results...');
           const result = await pollJob(currentJobId);
-          if (result && result.status === 'completed') setStatus('ok', 'Completed');
-          else setStatus('bad', 'Error');
+          if (result && result.status === 'completed') {
+            showToast('Scan completed successfully!', 'success');
+            setStatus('ok', 'Completed');
+          } else {
+            showToast('Scan finished with errors', 'error');
+            setStatus('bad', 'Error');
+          }
         } catch (e) {
           const info = formatApiError(e);
+          showToast(info.message, 'error', 6000);
           setStatus('bad', info.message);
           showSummary({ status: 'error', error: info.message, summary: { url: target }, problem: info.problem || null });
         } finally {
           isPolling = false;
+          setButtonLoading(startEl, false);
           startEl.disabled = false;
           setButtonsEnabled(true);
         }
@@ -2339,6 +2696,27 @@
         };
         urlEl.addEventListener('blur', stripSchemeIfPresent);
         urlEl.addEventListener('paste', () => setTimeout(stripSchemeIfPresent, 0));
+
+        // Keyboard shortcut: Ctrl/Cmd + Enter to submit scan
+        urlEl.addEventListener('keydown', (e) => {
+          if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+            e.preventDefault();
+            if (!startEl.disabled && !isPolling) {
+              startScan();
+            }
+          }
+        });
+
+        // Also allow Enter to submit when URL field is focused
+        urlEl.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
+            e.preventDefault();
+            if (!startEl.disabled && !isPolling) {
+              startScan();
+            }
+          }
+        });
+
         history = [];
         renderHistory();
         if (apiKeyEl.value.trim()) {
@@ -2358,6 +2736,7 @@
           const apiKey = apiKeyEl.value.trim();
           if (!apiKey) {
             setStatus('warn', 'Enter your API key above, then click "Check job" to load job ' + currentJobId);
+            showToast('Enter your API key to load the scan results', 'warn', 5000);
             setButtonsEnabled(true);
             return;
           }
