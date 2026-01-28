@@ -1,5 +1,12 @@
 # URL + File Scanner Pipeline on Azure (ACA)
 
+[![CI](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/ci.yml/badge.svg)](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/ci.yml)
+[![Deploy](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/deploy.yml/badge.svg)](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/deploy.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776ab.svg)](https://www.python.org/)
+[![Terraform 1.6+](https://img.shields.io/badge/Terraform-1.6+-844fba.svg)](https://www.terraform.io/)
+[![Azure Container Apps](https://img.shields.io/badge/Azure-Container%20Apps-0078d4.svg)](https://azure.microsoft.com/en-us/products/container-apps)
+
 End-to-end, cloud-native **URL scanning pipeline** (two-stage fetch + analyze) plus optional **file scanning** on **Azure Container Apps (ACA)** using **Terraform** and **GitHub Actions (OIDC)**.
 
 What this project demonstrates:
