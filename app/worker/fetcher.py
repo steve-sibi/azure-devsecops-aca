@@ -116,6 +116,7 @@ def process(task: dict):
     job_id = task.get("job_id")
     url = task.get("url")
     correlation_id = task.get("correlation_id")
+    api_key_hash = task.get("api_key_hash")
     submitted_at = task.get("submitted_at")
 
     if not url or not job_id:
@@ -128,6 +129,7 @@ def process(task: dict):
         status="fetching",
         details={"url": url, "stage": "fetching", "engines": engines},
         correlation_id=correlation_id,
+        api_key_hash=api_key_hash,
         submitted_at=submitted_at,
         url=url,
     ):
@@ -146,6 +148,7 @@ def process(task: dict):
     forward_payload = {
         "job_id": job_id,
         "correlation_id": correlation_id,
+        "api_key_hash": api_key_hash,
         "url": url,
         "type": task.get("type"),
         "source": task.get("source"),
@@ -173,6 +176,7 @@ def process(task: dict):
         },
         size_bytes=size_bytes,
         correlation_id=correlation_id,
+        api_key_hash=api_key_hash,
         duration_ms=duration_ms,
         submitted_at=submitted_at,
         error=None,
@@ -236,6 +240,7 @@ def main() -> None:
         if not job_id:
             return
         correlation_id = task.get("correlation_id") if isinstance(task, dict) else None
+        api_key_hash = task.get("api_key_hash") if isinstance(task, dict) else None
         submitted_at = task.get("submitted_at") if isinstance(task, dict) else None
 
         retrying = info.retryable and delivery_count < MAX_RETRIES
@@ -256,6 +261,7 @@ def main() -> None:
                 "stage": "fetcher",
             },
             correlation_id=correlation_id,
+            api_key_hash=api_key_hash,
             duration_ms=duration_ms,
             submitted_at=submitted_at,
             url=task.get("url") if isinstance(task, dict) else None,

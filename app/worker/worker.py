@@ -118,6 +118,7 @@ def process(task: dict):
     job_id = task.get("job_id")
     url = task.get("url")
     correlation_id = task.get("correlation_id")
+    api_key_hash = task.get("api_key_hash")
 
     # Set correlation ID in context for all logs in this request
     if correlation_id:
@@ -187,6 +188,7 @@ def process(task: dict):
         details=details,
         size_bytes=size_bytes,
         correlation_id=correlation_id,
+        api_key_hash=api_key_hash,
         duration_ms=duration_ms,
         submitted_at=task.get("submitted_at"),
         error=None,
@@ -577,6 +579,7 @@ def main():
         if not job_id:
             return
         correlation_id = task.get("correlation_id") if isinstance(task, dict) else None
+        api_key_hash = task.get("api_key_hash") if isinstance(task, dict) else None
         submitted_at = task.get("submitted_at") if isinstance(task, dict) else None
 
         retrying = info.retryable and delivery_count < MAX_RETRIES
@@ -596,6 +599,7 @@ def main():
                 "max_retries": MAX_RETRIES,
             },
             correlation_id=correlation_id,
+            api_key_hash=api_key_hash,
             duration_ms=duration_ms,
             submitted_at=submitted_at,
             url=task.get("url") if isinstance(task, dict) else None,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -18,6 +19,9 @@ SCAN_METADATA_STRING_VALUE_MAX_LENGTH = int(
 )
 
 ARTIFACT_PATH_MAX_LENGTH = int(os.getenv("SCAN_ARTIFACT_PATH_MAX_LENGTH", "256"))
+SCAN_API_KEY_HASH_MAX_LENGTH = int(os.getenv("SCAN_API_KEY_HASH_MAX_LENGTH", "128"))
+
+_API_KEY_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 @dataclass
@@ -132,6 +136,18 @@ def validate_scan_task_v1(payload: Any) -> dict[str, Any]:
         max_length=SCAN_ID_MAX_LENGTH,
         required=False,
     )
+    api_key_hash = _normalize_str(
+        payload.get("api_key_hash"),
+        field="api_key_hash",
+        max_length=SCAN_API_KEY_HASH_MAX_LENGTH,
+        required=False,
+    )
+    if api_key_hash:
+        api_key_hash = api_key_hash.strip().lower()
+        if not _API_KEY_HASH_RE.match(api_key_hash):
+            raise ScanMessageValidationError(
+                field="api_key_hash", message="must be a 64-character lowercase hex sha256"
+            )
     url = _normalize_str(
         payload.get("url"),
         field="url",
@@ -171,6 +187,8 @@ def validate_scan_task_v1(payload: Any) -> dict[str, Any]:
     }
     if correlation_id:
         out["correlation_id"] = correlation_id
+    if api_key_hash:
+        out["api_key_hash"] = api_key_hash
     if source:
         out["source"] = source
     if submitted_at:
@@ -224,4 +242,3 @@ def validate_scan_artifact_v1(payload: Any) -> dict[str, Any]:
         out["artifact_sha256"] = artifact_sha256
 
     return out
-
