@@ -473,16 +473,23 @@
       flex-wrap: wrap;
     }
 
-    .job-actions button {
-      padding: 0.35rem 0.55rem;
-      font-size: 0.82rem;
-    }
+	    .job-actions button {
+	      padding: 0.35rem 0.55rem;
+	      font-size: 0.82rem;
+	    }
 
-    .history-pager {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 0.75rem;
+	    .badge-row {
+	      display: inline-flex;
+	      align-items: center;
+	      gap: 0.4rem;
+	      flex-wrap: wrap;
+	    }
+
+	    .history-pager {
+	      display: flex;
+	      align-items: center;
+	      justify-content: space-between;
+	      gap: 0.75rem;
       margin-top: 0.75rem;
       flex-wrap: wrap;
     }
@@ -2105,24 +2112,44 @@
         const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
         const pageItems = items.slice(start, start + HISTORY_PAGE_SIZE);
 
-        for (const item of pageItems) {
-          const job = item.job_id || '';
-          const shortJob = job ? (job.slice(0, 8) + '…') : '';
-          const rawStatus = String(item.status || '');
-          const hs = historyStatus(rawStatus);
+	        for (const item of pageItems) {
+	          const job = item.job_id || '';
+	          const shortJob = job ? (job.slice(0, 8) + '…') : '';
+	          const rawStatus = String(item.status || '');
+	          const hs = historyStatus(rawStatus);
 
-          const whenIso = item.submitted_at || item.updated_at || item.last_checked_at || '';
-          const when = formatWhen(whenIso);
+	          const whenIso = item.submitted_at || item.updated_at || item.last_checked_at || '';
+	          const when = formatWhen(whenIso);
 
-          const badge = makeBadge(hs.kind, hs.label);
-          badge.title = hs.title;
+	          const badge = makeBadge(hs.kind, hs.label);
+	          badge.title = hs.title;
 
-          const url = String(item.url || '').trim();
-          const urlLink = url
-            ? el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url })
-            : el('span', { class: 'muted', text: '(no url)' });
+	          const deduped = Boolean(item.deduped);
+	          const visibility = String(item.visibility || '').trim().toLowerCase();
 
-          const actions = el('div', { class: 'job-actions' });
+	          const whenTitleParts = [];
+	          if (item.submitted_at) whenTitleParts.push('submitted: ' + String(item.submitted_at));
+	          if (item.scanned_at) whenTitleParts.push('scanned: ' + String(item.scanned_at));
+	          const whenTitle = whenTitleParts.length ? whenTitleParts.join('\n') : '';
+
+	          const url = String(item.url || '').trim();
+	          const urlLink = url
+	            ? el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url })
+	            : el('span', { class: 'muted', text: '(no url)' });
+
+	          const badges = el('div', { class: 'badge-row' }, badge);
+	          if (deduped) {
+	            const scannedLabel = item.scanned_at ? formatWhen(item.scanned_at) : '';
+	            const cacheBadge = makeBadge('info', 'cache');
+	            cacheBadge.title = scannedLabel ? ('Cache hit (scanned ' + scannedLabel + ')') : 'Cache hit';
+	            badges.appendChild(cacheBadge);
+	          } else if (visibility === 'private') {
+	            const privateBadge = makeBadge('info', 'private');
+	            privateBadge.title = 'Not cached (private)';
+	            badges.appendChild(privateBadge);
+	          }
+
+	          const actions = el('div', { class: 'job-actions' });
 
           const viewBtn = el('button', { type: 'button', text: 'View' });
           viewBtn.disabled = !job;
@@ -2145,18 +2172,18 @@
           actions.appendChild(viewBtn);
           actions.appendChild(useBtn);
 
-          const row = el(
-            'tr',
-            null,
-            el('td', { class: 'nowrap muted small', text: when }),
-            el('td', { class: 'url-cell' }, urlLink),
-            el('td', { class: 'nowrap' }, el('code', { text: shortJob, title: job })),
-            el('td', { class: 'nowrap' }, badge),
-            el('td', { class: 'nowrap' }, actions)
-          );
-          historyBodyEl.appendChild(row);
-        }
-      }
+	          const row = el(
+	            'tr',
+	            null,
+	            el('td', { class: 'nowrap muted small', text: when, title: whenTitle }),
+	            el('td', { class: 'url-cell' }, urlLink),
+	            el('td', { class: 'nowrap' }, el('code', { text: shortJob, title: job })),
+	            el('td', { class: 'nowrap' }, badges),
+	            el('td', { class: 'nowrap' }, actions)
+	          );
+	          historyBodyEl.appendChild(row);
+	        }
+	      }
 
       async function refreshJob(jobId, showOutput) {
         if (!jobId) return null;
@@ -2166,15 +2193,17 @@
           const s = await api('/scan/' + jobId + '?view=' + encodeURIComponent(view), 'GET');
           const now = new Date().toISOString();
           // Use upsertHistory so it creates the entry if it doesn't exist (e.g., from deep-link)
-          upsertHistory({
-            job_id: jobId,
-            url: s.summary?.url || s.summary?.download?.requested_url || undefined,
-            status: s.status,
-            error: s.error || null,
-            submitted_at: s.submitted_at || undefined,
-            scanned_at: s.scanned_at || null,
-            last_checked_at: now
-          });
+	          upsertHistory({
+	            job_id: jobId,
+	            url: s.summary?.url || s.summary?.download?.requested_url || undefined,
+	            status: s.status,
+	            error: s.error || null,
+	            deduped: Boolean(s.deduped),
+	            visibility: s.visibility || undefined,
+	            submitted_at: s.submitted_at || undefined,
+	            scanned_at: s.scanned_at || null,
+	            last_checked_at: now
+	          });
           if (showOutput) {
             if (view === 'full') showFull(s);
             else showSummary(s);
