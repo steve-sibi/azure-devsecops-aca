@@ -91,6 +91,7 @@ class TestValidateScanTaskV1:
             "correlation_id": "corr-456",
             "source": "api",
             "submitted_at": "2025-01-21T12:00:00Z",
+            "visibility": "shared",
             "metadata": {"client": "test"},
         }
         result = validate_scan_task_v1(payload)
@@ -98,6 +99,7 @@ class TestValidateScanTaskV1:
         assert result["correlation_id"] == "corr-456"
         assert result["source"] == "api"
         assert result["metadata"] == {"client": "test"}
+        assert result["visibility"] == "shared"
 
     def test_type_file_is_valid(self):
         payload = {
@@ -112,6 +114,26 @@ class TestValidateScanTaskV1:
         payload = {"job_id": "abc123", "url": "https://example.com", "type": "URL"}
         result = validate_scan_task_v1(payload)
         assert result["type"] == "url"
+
+    def test_visibility_is_lowercased(self):
+        payload = {
+            "job_id": "abc123",
+            "url": "https://example.com",
+            "visibility": "PrIvAtE",
+        }
+        result = validate_scan_task_v1(payload)
+        assert result["visibility"] == "private"
+
+    def test_rejects_invalid_visibility(self):
+        payload = {
+            "job_id": "abc123",
+            "url": "https://example.com",
+            "visibility": "public",
+        }
+        with pytest.raises(ScanMessageValidationError) as exc:
+            validate_scan_task_v1(payload)
+        assert "visibility" in str(exc.value)
+        assert "'shared' or 'private'" in str(exc.value)
 
     def test_rejects_non_dict_payload(self):
         with pytest.raises(ScanMessageValidationError) as exc:
