@@ -429,24 +429,29 @@ terraform apply \
 
 ### URL dedupe / cache (optional)
 
-To avoid wasting resources re-scanning the same URL, `POST /scan` can **reuse an existing job** when the **canonical URL** was scanned recently (or is still in progress). The URL canonicalization normalizes host casing, dot-segments, default ports, and strips fragments.
+To avoid wasting resources re-scanning the same URL, `POST /scan` maintains a **shared URL cache** keyed by the **canonical URL**. When a URL was scanned recently (or is still in progress), a new `POST /scan` request can reuse the existing underlying scan run instead of scanning again (but still returns a new `job_id` for the request). The URL canonicalization normalizes host casing, dot-segments, default ports, and strips fragments.
 
 Configure with env vars (set TTLs to `0` to disable):
 
 - `URL_DEDUPE_TTL_SECONDS`: cache window for `completed`/`error` jobs
 - `URL_DEDUPE_IN_PROGRESS_TTL_SECONDS`: dedupe window for `queued`/`fetching`/`queued_scan`/`retrying`
-- `URL_DEDUPE_SCOPE`: `global` (default) or `apikey` (recommended for multi-user)
+- `URL_DEDUPE_SCOPE`: `global` (recommended for multi-user) or `apikey` (cache is isolated per API key)
 - `URL_DEDUPE_INDEX_PARTITION`: Table Storage partition key for the URL index (default `urlidx`)
 - `REDIS_URL_INDEX_PREFIX`: Redis key prefix for the URL index (default `urlidx:`)
 
-To force a re-scan, pass `"force": true` in the `POST /scan` body.
+URL scans also have a **visibility** setting:
+
+- `URL_RESULT_VISIBILITY_DEFAULT`: `shared` (default) or `private`
+- `POST /scan` body supports `"visibility": "shared" | "private"`
+
+To force a re-scan, pass `"force": true` (or set `"visibility": "private"` to opt out of cache reuse and cache population).
 
 ### Per-user job history (API keys)
 
 The API stores a lightweight job index keyed by a **hash of the caller’s API key**:
 
 - `GET /jobs` lists only jobs created with *your* API key.
-- `GET /scan/{job_id}` and `GET /scan/{job_id}/screenshot` are owner-protected (a different API key won’t be able to fetch another user’s results).
+- `GET /scan/{job_id}` and `GET /scan/{job_id}/screenshot` are owner-protected (a different API key won’t be able to fetch another user’s request IDs).
 
 To enable multiple API keys (simple multi-user), set `ACA_API_KEYS` (comma-separated) in addition to `ACA_API_KEY`.
 
@@ -559,6 +564,7 @@ The script also keeps a local job history (default `./.aca_api_history`) so you 
 ./scripts/aca_api.sh jobs --limit 20
 ./scripts/aca_api.sh jobs --status queued,fetching,queued_scan,retrying --limit 50
 ./scripts/aca_api.sh history --limit 10
+./scripts/aca_api.sh clear-server-history  # clears server-side /jobs history for your API key
 ```
 
 Submit a scan:
