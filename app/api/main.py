@@ -800,7 +800,18 @@ async def otel_request_spans(request: Request, call_next):
 
 @app.get("/healthz")
 async def healthz():
-    return {"ok": True}
+    return {
+        "ok": True,
+        "queue_backend": QUEUE_BACKEND,
+        "result_backend": RESULT_BACKEND,
+        "url_dedupe": {
+            "enabled": bool(_URL_DEDUPE.enabled),
+            "ttl_seconds": int(_URL_DEDUPE.ttl_seconds or 0),
+            "in_progress_ttl_seconds": int(_URL_DEDUPE.in_progress_ttl_seconds or 0),
+            "scope": _URL_DEDUPE.scope,
+            "index_partition": _URL_DEDUPE.index_partition,
+        },
+    }
 
 
 @app.get("/favicon.ico", include_in_schema=False)

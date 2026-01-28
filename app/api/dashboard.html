@@ -1122,7 +1122,20 @@
             </select>
           </div>
         </div>
-        <div id="historyGrid" class="history-grid" role="region" aria-label="Scan history"></div>
+        <div class="table-wrap" role="region" aria-label="Scan history">
+          <table>
+            <thead>
+              <tr>
+                <th class="nowrap">When</th>
+                <th>URL</th>
+                <th class="nowrap">Job</th>
+                <th class="nowrap">Status</th>
+                <th class="nowrap">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="historyBody"></tbody>
+          </table>
+        </div>
         <div class="history-pager" aria-label="History pagination">
           <button id="historyPrev" type="button">Prev</button>
           <span id="historyPageInfo" class="muted small"></span>
@@ -1169,7 +1182,7 @@
       const summaryOutEl = document.getElementById('summaryOut');
       const statusEl = document.getElementById('status');
       const startEl = document.getElementById('start');
-      const historyGridEl = document.getElementById('historyGrid');
+      const historyBodyEl = document.getElementById('historyBody');
       const historyFilterEl = document.getElementById('historyFilter');
       const historyOrderEl = document.getElementById('historyOrder');
       const historyPrevEl = document.getElementById('historyPrev');
@@ -1201,9 +1214,8 @@
       const HTTPS_PREFIX = 'https://';
 
       const HISTORY_FETCH_LIMIT = 500;
-      const HISTORY_ITEMS_PER_ROW = 5;
       const HISTORY_ROWS_PER_PAGE = 5;
-      const HISTORY_PAGE_SIZE = HISTORY_ITEMS_PER_ROW * HISTORY_ROWS_PER_PAGE;
+      const HISTORY_PAGE_SIZE = HISTORY_ROWS_PER_PAGE;
 
       let historyPage = 1;
       let historyLoading = false;
@@ -2021,16 +2033,15 @@
         const filter = (historyFilterEl.value || '').trim().toLowerCase();
         const order = (historyOrderEl && historyOrderEl.value) ? String(historyOrderEl.value) : 'recent';
 
-        historyGridEl.textContent = '';
+        historyBodyEl.textContent = '';
 
-        const showGridMessage = (text) => {
-          const msg = el('div', { class: 'muted', text: text });
-          msg.style.gridColumn = '1 / -1';
-          historyGridEl.appendChild(msg);
+        const showTableMessage = (text) => {
+          const cell = el('td', { class: 'muted', colspan: '5', text: text });
+          historyBodyEl.appendChild(el('tr', null, cell));
         };
 
         if (!apiKey) {
-          showGridMessage('Enter your API key to load history.');
+          showTableMessage('Enter your API key to load history.');
           historyPageInfoEl.textContent = '';
           historyPrevEl.disabled = true;
           historyNextEl.disabled = true;
@@ -2038,7 +2049,7 @@
         }
 
         if (historyLoading && (!Array.isArray(history) || history.length === 0)) {
-          showGridMessage('Loading history…');
+          showTableMessage('Loading history…');
           historyPageInfoEl.textContent = '';
           historyPrevEl.disabled = true;
           historyNextEl.disabled = true;
@@ -2046,7 +2057,7 @@
         }
 
         if (historyLoadError && (!Array.isArray(history) || history.length === 0)) {
-          showGridMessage('Unable to load history: ' + historyLoadError);
+          showTableMessage('Unable to load history: ' + historyLoadError);
           historyPageInfoEl.textContent = '';
           historyPrevEl.disabled = true;
           historyNextEl.disabled = true;
@@ -2087,7 +2098,7 @@
 
         if (total === 0) {
           const msg = filter ? 'No matching scans.' : 'No scans yet. Start one to see it here.';
-          showGridMessage(msg);
+          showTableMessage(msg);
           return;
         }
 
@@ -2106,17 +2117,10 @@
           const badge = makeBadge(hs.kind, hs.label);
           badge.title = hs.title;
 
-          const top = el('div', { class: 'job-card-top' }, badge, el('span', { class: 'muted small', text: when }));
-
           const url = String(item.url || '').trim();
           const urlLink = url
-            ? el('a', { class: 'job-url', href: url, target: '_blank', rel: 'noreferrer', text: url })
-            : el('div', { class: 'muted', text: '(no url)' });
-
-          const meta = el('div', { class: 'job-meta' });
-          meta.appendChild(el('code', { text: shortJob, title: job }));
-          const scannedAt = item.scanned_at ? ('scanned ' + formatWhen(item.scanned_at)) : '';
-          meta.appendChild(el('span', { text: scannedAt }));
+            ? el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url })
+            : el('span', { class: 'muted', text: '(no url)' });
 
           const actions = el('div', { class: 'job-actions' });
 
@@ -2141,8 +2145,16 @@
           actions.appendChild(viewBtn);
           actions.appendChild(useBtn);
 
-          const card = el('div', { class: 'job-card' }, top, urlLink, meta, actions);
-          historyGridEl.appendChild(card);
+          const row = el(
+            'tr',
+            null,
+            el('td', { class: 'nowrap muted small', text: when }),
+            el('td', { class: 'url-cell' }, urlLink),
+            el('td', { class: 'nowrap' }, el('code', { text: shortJob, title: job })),
+            el('td', { class: 'nowrap' }, badge),
+            el('td', { class: 'nowrap' }, actions)
+          );
+          historyBodyEl.appendChild(row);
         }
       }
 
