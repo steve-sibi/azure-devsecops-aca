@@ -283,7 +283,7 @@ azure-devsecops-aca/
 │  │  ├─ deploy_infra_bootstrap.sh
 │  │  ├─ deploy_create_apps_and_test.sh
 │  │  └─ destroy.sh
-│  ├─ aca_api.sh          # helper CLI for calling the API
+│  ├─ aca_api.py          # helper CLI for calling the API
 │  ├─ docker_cleanup.sh
 │  ├─ keda_scale_test.sh
 │  └─ send_servicebus_messages.py
@@ -557,21 +557,21 @@ The included helper script wraps these calls (works locally or on Azure):
 
 ```bash
 # Local default: http://localhost:8000 (reads ACA_API_KEY or API_KEY from .env if present)
-./scripts/aca_api.sh scan-url https://example.com --wait
-./scripts/aca_api.sh jobs --limit 50
-./scripts/aca_api.sh scan-file ./readme.md
+./scripts/aca_api.py scan-url https://example.com --wait
+./scripts/aca_api.py jobs --limit 50
+./scripts/aca_api.py scan-file ./readme.md
 
 # Azure: set API_URL + API_KEY (see "Azure quickstart" above)
-API_URL="https://<api-fqdn>" API_KEY="..." ./scripts/aca_api.sh scan-url https://example.com --wait
+API_URL="https://<api-fqdn>" API_KEY="..." ./scripts/aca_api.py scan-url https://example.com --wait
 ```
 
 The script also keeps a local job history (default `./.aca_api_history`) so you can list the most recent jobs you submitted from your machine:
 
 ```bash
-./scripts/aca_api.sh jobs --limit 20
-./scripts/aca_api.sh jobs --status queued,fetching,queued_scan,retrying --limit 50
-./scripts/aca_api.sh history --limit 10
-./scripts/aca_api.sh clear-server-history  # clears server-side /jobs history for your API key
+./scripts/aca_api.py jobs --limit 20
+./scripts/aca_api.py jobs --status queued,fetching,queued_scan,retrying --limit 50
+./scripts/aca_api.py history --limit 10
+./scripts/aca_api.py clear-server-history  # clears server-side /jobs history for your API key
 ```
 
 Submit a scan:
