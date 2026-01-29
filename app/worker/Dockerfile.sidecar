@@ -10,7 +10,9 @@ WORKDIR /app
 
 # Tini for proper signal handling (graceful shutdowns)
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
       ca-certificates \
       tini \
     && rm -rf /var/lib/apt/lists/*

@@ -9,7 +9,9 @@ WORKDIR /app
 
 # Optional build tools for some wheels
 # hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 COPY api/requirements.txt ./requirements.txt
