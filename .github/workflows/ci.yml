@@ -377,6 +377,7 @@ jobs:
           context: ./app
           file: ./${{ matrix.dockerfile }}
           platforms: linux/amd64
+          pull: true # ensure base images are up-to-date for security scans
           push: false
           load: true # load into local Docker so Trivy can scan
           tags: ${{ matrix.name }}:ci
