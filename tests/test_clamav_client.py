@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import errno
 import socket
 import struct
 import sys
@@ -46,7 +47,16 @@ def _recv_until(conn: socket.socket, delim: bytes) -> bytes:
 @contextmanager
 def _fake_clamd_server(*, response: bytes):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(("127.0.0.1", 0))
+    try:
+        server.bind(("127.0.0.1", 0))
+    except OSError as e:
+        try:
+            server.close()
+        except Exception:
+            pass
+        if getattr(e, "errno", None) in (errno.EPERM, errno.EACCES):
+            pytest.skip("Socket bind not permitted in this environment.")
+        raise
     server.listen(1)
     port = server.getsockname()[1]
     received: dict = {}
@@ -119,4 +129,3 @@ def test_scan_chunks_concatenates_stream():
         res = clamd_scan_chunks([b"a", b"b", b"", b"c"], host="127.0.0.1", port=port, timeout_seconds=1.0)
     assert received["data"] == b"abc"
     assert res.verdict == "clean"
-
