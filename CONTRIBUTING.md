@@ -17,7 +17,7 @@ API docs: `http://localhost:8000/docs`
 
 ```bash
 python3 -m pip install --upgrade pip
-python3 -m pip install pytest
+python3 -m pip install -r app/api/requirements.txt -r app/worker/requirements.txt pytest
 pytest
 ```
 
@@ -27,4 +27,3 @@ pytest
 - Prefer security-by-default settings.
 - If you change Terraform, run `terraform fmt -recursive infra`.
 - If you change the API contract, update `README.md`.
-
