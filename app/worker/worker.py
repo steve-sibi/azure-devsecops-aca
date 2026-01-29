@@ -1,3 +1,13 @@
+"""
+Analyzer stage (URL scan pipeline).
+
+Consumes `scan-artifact-v1` messages from the "scan" queue, analyzes the artifact
+bytes (web/content heuristics) and persists results for `GET /scan/{job_id}`.
+
+Optional: captures a browser screenshot via Playwright and stores it alongside
+results (Redis locally, Blob Storage when using Table results).
+"""
+
 import hashlib
 import logging
 import os

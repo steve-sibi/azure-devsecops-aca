@@ -1,3 +1,16 @@
+"""
+Queue consumer helpers (Azure Service Bus or Redis).
+
+This module provides a small, dependency-light "consumer loop" used by both the
+fetcher and worker:
+
+- Redis backend: uses BLPOP, supports a lightweight JSON envelope, and requeues
+  by incrementing `delivery_count` until `max_retries`, then pushes to a DLQ list.
+- Service Bus backend: uses receiver abandon/dead-letter semantics.
+
+The processing function is synchronous by design to keep worker entrypoints simple.
+"""
+
 from __future__ import annotations
 
 import json
@@ -27,6 +40,7 @@ def install_signal_handlers(flag: ShutdownFlag) -> None:
 
 
 def decode_servicebus_body(msg) -> dict:
+    """Decode an Azure Service Bus message body into a dict."""
     body_bytes = b"".join(bytes(b) if isinstance(b, memoryview) else b for b in msg.body)
     return json.loads(body_bytes.decode("utf-8"))
 
@@ -34,6 +48,13 @@ def decode_servicebus_body(msg) -> dict:
 def decode_redis_body(
     raw: str,
 ) -> Tuple[Optional[dict], Optional[dict], int, Optional[Exception]]:
+    """
+    Decode a Redis queue item into a task dict.
+
+    Supports two formats:
+      1) Envelope: {"payload": {...}, "delivery_count": N, ...}
+      2) Bare task dict: {...} (treated as delivery_count=1)
+    """
     task: Optional[dict] = None
     envelope: Optional[dict] = None
     delivery_count = 1
@@ -73,6 +94,7 @@ def run_consumer(
     redis_queue_key: Optional[str] = None,
     redis_dlq_key: Optional[str] = None,
 ) -> None:
+    """Run the main consumer loop for the configured queue backend."""
     if queue_backend == "redis":
         if not redis_client:
             raise RuntimeError("Redis client not initialized")

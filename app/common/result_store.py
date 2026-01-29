@@ -1,3 +1,16 @@
+"""
+Result storage helpers (Azure Table Storage or Redis).
+
+This module stores scan job state for `GET /scan/{job_id}` and enforces two key
+invariants:
+
+- Status updates are monotonic: later stages must not be overwritten by earlier ones.
+- Terminal states (`completed`/`error`) must not be replaced by a different terminal state.
+
+When using Table Storage, large `details` payloads are compacted/truncated to stay
+within per-property limits; a `_truncated` marker is added to the stored `details`.
+"""
+
 from __future__ import annotations
 
 import json
@@ -6,6 +19,7 @@ from typing import Any, Optional
 from azure.core.exceptions import ResourceNotFoundError
 
 from common.limits import get_result_store_limits
+
 
 def _redis_key(prefix: str, job_id: str) -> str:
     return f"{prefix}{job_id}"
@@ -39,6 +53,7 @@ def _coerce_int(value: Any, *, default: int = 0) -> int:
 def _should_skip_regression(
     *, existing: Optional[dict], new_status: str, new_rank: int
 ) -> bool:
+    """Return True if a write would regress or conflict with an existing status."""
     if not isinstance(existing, dict) or not existing:
         return False
     existing_status = str(existing.get("status") or "").strip().lower()
@@ -55,6 +70,7 @@ def _json_dumps_compact(value: Any) -> str:
 
 
 def _truncate_details_for_table(details: dict, *, max_bytes: int) -> dict:
+    """Best-effort compaction of `details` to fit a byte budget for Table Storage."""
     def _encoded_len(obj: Any) -> int:
         return len(_json_dumps_compact(obj).encode("utf-8"))
 

@@ -1,3 +1,13 @@
+"""
+URL dedupe cache helpers.
+
+This is a best-effort cache for URL scans: within a configurable TTL window, the API
+can reuse results for the same canonical URL instead of re-scanning.
+
+The cache can be global or API-key scoped (see `URL_DEDUPE_SCOPE`). "Private" scans
+never populate the shared cache.
+"""
+
 from __future__ import annotations
 
 import hashlib

@@ -1,3 +1,14 @@
+"""
+Fetcher stage (URL scan pipeline).
+
+Consumes `scan-task-v1` messages from the "fetch" queue, downloads the URL (with the
+same SSRF protections as the rest of the pipeline), writes the bytes to the shared
+artifact directory, and forwards a `scan-artifact-v1` message to the "scan" queue.
+
+This stage is intentionally I/O focused: it avoids doing heavy analysis and exists
+to demonstrate an async, two-stage pipeline that can scale independently via KEDA.
+"""
+
 import hashlib
 import json
 import logging

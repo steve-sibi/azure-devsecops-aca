@@ -1,3 +1,20 @@
+"""
+FastAPI entrypoint for the URL + file scanning demo.
+
+Responsibilities:
+- Authenticate requests with `X-API-Key` (unless `REQUIRE_API_KEY=false`) and enforce
+  a simple per-key rate limit.
+- Accept scan submissions (`POST /scan`), enqueue jobs (Service Bus or Redis), and
+  expose results (`GET /scan/{job_id}`) from the configured result backend.
+- Provide a lightweight HTML dashboard (`GET /`) and file-scan UI (`GET /file`).
+- Provide optional screenshot retrieval (`GET /scan/{job_id}/screenshot`) when the
+  worker is configured to capture screenshots.
+
+Key env vars (see `.env.example` / README):
+`QUEUE_BACKEND`, `SERVICEBUS_CONN`, `RESULT_BACKEND`, `RESULT_STORE_CONN`, `REDIS_URL`,
+`API_KEY`/`ACA_API_KEYS`, `REQUIRE_API_KEY`, `RATE_LIMIT_RPM`, `BLOCK_PRIVATE_NETWORKS`.
+"""
+
 import asyncio
 import base64
 import hashlib
