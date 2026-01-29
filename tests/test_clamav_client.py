@@ -48,6 +48,7 @@ def _recv_until(conn: socket.socket, delim: bytes) -> bytes:
 def _fake_clamd_server(*, response: bytes):
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
+        # Some sandboxed CI environments disallow binding/listening sockets.
         server.bind(("127.0.0.1", 0))
     except OSError as e:
         try:
