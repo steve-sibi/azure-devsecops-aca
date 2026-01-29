@@ -643,7 +643,7 @@ async def correlation_id_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
         response.headers["X-Correlation-ID"] = correlation_id
-        response.headers["X-Request-Id"] = correlation_id
+        response.headers["X-Request-ID"] = correlation_id
         return response
     finally:
         clear_correlation_id()
