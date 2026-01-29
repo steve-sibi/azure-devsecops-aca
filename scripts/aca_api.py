@@ -5,7 +5,7 @@ aca_api.py
 Interact with the FastAPI scanner service.
 
 Dependencies:
-    Python 3.6+ (standard library only)
+    Python 3.11+ (standard library only)
 
 Configuration precedence (highest first):
   - API key:
@@ -19,19 +19,17 @@ Configuration precedence (highest first):
 """
 
 import argparse
-import base64
 import json
 import mimetypes
 import os
 import sys
 import time
 import urllib.error
-import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, NoReturn, Optional, Tuple, Union
+from typing import Any, NoReturn, Optional, Tuple, Union
 
 # --- Configuration & Helpers ---
 
