@@ -2,7 +2,6 @@
 """
 aca_api.py
 
-A pure Python replacement for aca_api.sh.
 Interact with the FastAPI scanner service.
 
 Dependencies:
