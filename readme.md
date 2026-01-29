@@ -22,6 +22,24 @@ What this project demonstrates:
 
 > Shareable, reproducible, “nuke-and-recreate” project or starter for lightweight production.
 
+## Contents
+- [0) Quick demo](#0-quick-demo-local-2-minutes)
+- [1) Architecture](#1-architecture)
+- [2) What Terraform Deploys](#2-what-terraform-deploys)
+- [3) Prerequisites](#3-prerequisites)
+- [4) Repository layout](#4-repository-layout)
+- [5) CI/CD workflow](#5-cicd-workflow)
+- [6) First-run values (env)](#6-first-run-values-env)
+- [7) Running it](#7-running-it)
+- [8) Using the API](#8-using-the-api)
+- [9) Observability & troubleshooting](#9-observability--troubleshooting)
+- [10) Working with Terraform locally](#10-working-with-terraform-locally)
+- [11) Costs & clean-up](#11-costs--clean-up)
+- [12) Security notes](#12-security-notes)
+- [13) How the app code works (quick tour)](#13-how-the-app-code-works-quick-tour)
+- [14) Extending this project (future work)](#14-extending-this-project-future-work)
+- [15) FAQ](#15-faq)
+
 ## 0) Quick demo (local, ~2 minutes)
 
 Prereqs: Docker Desktop (or any Docker engine with Compose).
@@ -551,9 +569,9 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `completed`: finished; check `summary` (and `details` if `view=full`)
 - `error`: failed; check `error` + `details`
 
-### Try it (CLI)
+### Try it (Option A: CLI Wrapper)
 
-The included helper script wraps these calls (works locally or on Azure):
+The included helper script (`scripts/aca_api.py`) wraps API calls and handles JSON parsing, headers, and polling. It works locally or on Azure.
 
 ```bash
 # Local default: http://localhost:8000 (reads ACA_API_KEY or API_KEY from .env if present)
@@ -574,7 +592,11 @@ The script also keeps a local job history (default `./.aca_api_history`) so you 
 ./scripts/aca_api.py clear-server-history  # clears server-side /jobs history for your API key
 ```
 
-Submit a scan:
+### Try it (Option B: curl)
+
+If you prefer standard tools, you can use `curl` directly.
+
+**Submit a scan:**
 
 ```bash
 submit="$(curl -sS -X POST "${API_URL}/scan" \
@@ -586,7 +608,7 @@ JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read())["job_i
 echo "JOB_ID=$JOB_ID"
 ```
 
-Poll for status/result:
+**Poll for status/result:**
 
 ```bash
 curl -sS "${API_URL}/scan/${JOB_ID}?view=summary" -H "X-API-Key: ${API_KEY}" | python3 -m json.tool
