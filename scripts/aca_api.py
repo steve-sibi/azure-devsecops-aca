@@ -32,6 +32,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, NoReturn, Optional, Tuple, Union
 
 # --- Configuration & Helpers ---
 
@@ -70,11 +71,21 @@ def load_dotenv(path: Path) -> dict:
 
 
 def get_repo_root() -> Path:
-    # Assuming this script is in scripts/
+    """
+    Get the repository root directory.
+    Assumes this script is located in the scripts/ directory.
+    """
     return Path(__file__).resolve().parent.parent
 
 
 class Config:
+    """
+    Configuration handling class.
+
+    Loads configuration from CLI arguments, environment variables, and .env files
+    with specific precedence rules.
+    """
+
     def __init__(self, args):
         self.repo_root = get_repo_root()
         self.dotenv = load_dotenv(self.repo_root / ".env")
@@ -116,18 +127,23 @@ class Config:
         self.verbose = args.verbose
 
     def require_api_key(self):
+        """
+        Ensure an API key is present. Exits if missing.
+        """
         if not self.api_key:
             die(
                 "Missing API key. Set --api-key, ACA_API_KEY, API_KEY, or add API_KEY to .env."
             )
 
 
-def die(msg):
+def die(msg: str) -> NoReturn:
+    """Print error message to stderr and exit with status 1."""
     print(f"error: {msg}", file=sys.stderr)
     sys.exit(1)
 
 
 def log(msg):
+    """Print message to stderr."""
     print(msg, file=sys.stderr)
 
 
@@ -136,7 +152,21 @@ def log(msg):
 
 def make_request(
     config: Config, method: str, path: str, data=None, headers=None, stream=False
-):
+) -> Tuple[int, Any, Union[str, bytes]]:
+    """
+    Execute an HTTP request using the standard library.
+
+    Args:
+        config: Configuration object containing base_url and api_key.
+        method: HTTP method (GET, POST, DELETE, etc.).
+        path: API endpoint path.
+        data: Request body (dict, str, or bytes).
+        headers: Optional dictionary of headers.
+        stream: If True, returns raw bytes for body; otherwise decodes UTF-8.
+
+    Returns:
+        Tuple containing (status_code, headers, body).
+    """
     if headers is None:
         headers = {}
 
@@ -191,6 +221,9 @@ def make_request(
 
 
 def emit_json(output, config: Config):
+    """
+    Print output as JSON, optionally pretty-printed based on config.
+    """
     if config.raw:
         if isinstance(output, str):
             print(output)
@@ -212,6 +245,9 @@ def emit_json(output, config: Config):
 
 
 def append_history(config: Config, job_id, url):
+    """
+    Append a job to the local history file.
+    """
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     line = f"{ts}\t{job_id}\t{url}\t{config.base_url}\n"
     try:
@@ -224,6 +260,9 @@ def append_history(config: Config, job_id, url):
 
 
 def read_history(config: Config, limit=0):
+    """
+    Read and print lines from the local history file.
+    """
     if not config.history_path.exists():
         return
 
@@ -241,11 +280,13 @@ def read_history(config: Config, limit=0):
 
 
 def cmd_health(config: Config, args):
+    """Handler for 'health' command."""
     status, _, body = make_request(config, "GET", "/healthz")
     emit_json(body, config)
 
 
 def cmd_scan_url(config: Config, args):
+    """Handler for 'scan-url' command."""
     config.require_api_key()
 
     payload = {"url": args.url, "type": "url"}
@@ -306,6 +347,7 @@ def cmd_scan_url(config: Config, args):
 
 
 def cmd_status(config: Config, args):
+    """Handler for 'status' command."""
     config.require_api_key()
     path = f"/scan/{args.job_id}?view={args.view}"
     status, _, body = make_request(config, "GET", path)
@@ -313,6 +355,7 @@ def cmd_status(config: Config, args):
 
 
 def cmd_wait(config: Config, args):
+    """Handler for 'wait' command."""
     config.require_api_key()
     start_time = time.time()
     last_status = None
@@ -326,6 +369,7 @@ def cmd_wait(config: Config, args):
             status = data.get("status")
         except json.JSONDecodeError:
             status = None
+            data = {}
 
         if config.verbose and status and status != last_status:
             log(f"status={status}")
@@ -348,6 +392,7 @@ def cmd_wait(config: Config, args):
 
 
 def cmd_jobs(config: Config, args):
+    """Handler for 'jobs' command."""
     config.require_api_key()
 
     params = [f"limit={args.limit}"]
@@ -386,6 +431,7 @@ def cmd_jobs(config: Config, args):
 
 
 def cmd_history(config: Config, args):
+    """Handler for 'history' command."""
     if not config.history_path.exists():
         log(f"No history yet at: {config.history_path}")
         return
@@ -393,23 +439,29 @@ def cmd_history(config: Config, args):
 
 
 def cmd_clear_history(config: Config, args):
+    """Handler for 'clear-history' command."""
     if config.history_path.exists():
         config.history_path.unlink()
     log(f"Cleared history: {config.history_path}")
 
 
 def cmd_clear_server_history(config: Config, args):
+    """Handler for 'clear-server-history' command."""
     config.require_api_key()
     status, _, body = make_request(config, "DELETE", "/jobs")
     emit_json(body, config)
 
 
 def cmd_screenshot(config: Config, args):
+    """Handler for 'screenshot' command."""
     config.require_api_key()
 
     status_code, headers, body_bytes = make_request(
         config, "GET", f"/scan/{args.job_id}/screenshot", stream=True
     )
+
+    if not isinstance(body_bytes, bytes):
+        die("Expected bytes response for screenshot")
 
     out_path = args.out
     if not out_path:
@@ -430,6 +482,7 @@ def cmd_screenshot(config: Config, args):
 
 
 def cmd_scan_file(config: Config, args):
+    """Handler for 'scan-file' command (multipart upload)."""
     config.require_api_key()
     file_path = Path(args.path)
     if not file_path.exists():
@@ -475,6 +528,7 @@ def cmd_scan_file(config: Config, args):
 
 
 def cmd_scan_payload(config: Config, args):
+    """Handler for 'scan-payload' command (multipart upload of text)."""
     config.require_api_key()
 
     boundary = uuid.uuid4().hex
