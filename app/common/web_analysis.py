@@ -7,7 +7,7 @@ import re
 import socket
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 from typing import Optional
@@ -255,6 +255,16 @@ class ParsedPage:
     fingerprinting: bool
     eval_usage: bool
     inner_html_usage: bool
+    suspicious_api_call_examples: list[str] = field(default_factory=list)
+    suspicious_inline_indicators: list[str] = field(default_factory=list)
+    suspicious_ip_script_examples: list[str] = field(default_factory=list)
+    tracking_resource_examples: list[dict] = field(default_factory=list)
+    tracking_inline_indicators: list[str] = field(default_factory=list)
+    fingerprinting_indicators: list[str] = field(default_factory=list)
+    eval_indicators: list[str] = field(default_factory=list)
+    inner_html_indicators: list[str] = field(default_factory=list)
+    eval_occurrences: int = 0
+    inner_html_occurrences: int = 0
 
 
 def _first_srcset_url(srcset: str) -> str:
@@ -340,6 +350,35 @@ def analyze_html(
     fingerprinting = False
     eval_usage = False
     inner_html_usage = False
+    suspicious_api_call_examples: list[str] = []
+    suspicious_inline_indicators: set[str] = set()
+    suspicious_ip_script_examples: list[str] = []
+    tracking_resource_examples: list[dict] = []
+    tracking_inline_indicators: set[str] = set()
+    fingerprinting_indicators: set[str] = set()
+    eval_indicators: set[str] = set()
+    inner_html_indicators: set[str] = set()
+    eval_occurrences = 0
+    inner_html_occurrences = 0
+
+    tracking_seen: set[str] = set()
+    suspicious_api_seen: set[str] = set()
+
+    def _maybe_add_tracking_example(url: str, *, kind: str, rtype: str) -> None:
+        if not url or url in tracking_seen:
+            return
+        if len(tracking_resource_examples) >= 10:
+            return
+        tracking_seen.add(url)
+        tracking_resource_examples.append({"kind": kind, "url": url, "type": rtype})
+
+    def _maybe_add_api_example(url: str) -> None:
+        if not url or url in suspicious_api_seen:
+            return
+        if len(suspicious_api_call_examples) >= 10:
+            return
+        suspicious_api_seen.add(url)
+        suspicious_api_call_examples.append(_truncate(url, max_len=260))
 
     seen_links: set[str] = set()
     seen_images: set[str] = set()
@@ -383,17 +422,12 @@ def analyze_html(
         if resolved in seen_images:
             continue
         seen_images.add(resolved)
-        images.append(
-            {
-                "url": resolved,
-                "type": classify_internal_external(
-                    resource_url=resolved, page_host=page_host
-                ),
-            }
-        )
+        rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+        images.append({"url": resolved, "type": rtype})
         _maybe_add_mixed(mixed_content, resolved)
         if _is_tracking_resource(resolved, page_host=page_host, kind="image"):
             tracking_scripts = True
+            _maybe_add_tracking_example(resolved, kind="image", rtype=rtype)
 
     # <picture><source srcset="..."> (common for responsive images)
     for tag in soup.find_all("source"):
@@ -414,17 +448,12 @@ def analyze_html(
         if resolved in seen_images:
             continue
         seen_images.add(resolved)
-        images.append(
-            {
-                "url": resolved,
-                "type": classify_internal_external(
-                    resource_url=resolved, page_host=page_host
-                ),
-            }
-        )
+        rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+        images.append({"url": resolved, "type": rtype})
         _maybe_add_mixed(mixed_content, resolved)
         if _is_tracking_resource(resolved, page_host=page_host, kind="image"):
             tracking_scripts = True
+            _maybe_add_tracking_example(resolved, kind="image", rtype=rtype)
 
     # Link-tag resources (stylesheets + preloads)
     for tag in soup.find_all("link", href=True):
@@ -453,17 +482,12 @@ def analyze_html(
 
         if is_stylesheet and len(styles) < max_items and resolved not in seen_styles:
             seen_styles.add(resolved)
-            styles.append(
-                {
-                    "url": resolved,
-                    "type": classify_internal_external(
-                        resource_url=resolved, page_host=page_host
-                    ),
-                }
-            )
+            rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+            styles.append({"url": resolved, "type": rtype})
             _maybe_add_mixed(mixed_content, resolved)
             if _is_tracking_resource(resolved, page_host=page_host, kind="style"):
                 tracking_scripts = True
+                _maybe_add_tracking_example(resolved, kind="style", rtype=rtype)
             continue
 
         if is_script and len(scripts) < max_items and resolved not in seen_scripts:
@@ -477,24 +501,25 @@ def analyze_html(
                 external_scripts += 1
             if _is_tracking_resource(resolved, page_host=page_host, kind="script"):
                 tracking_scripts = True
+                _maybe_add_tracking_example(resolved, kind="script", rtype=rtype)
             yara_names = _yara_rule_names(resolved)
             if "Web_Fingerprinting_INFO" in yara_names:
                 fingerprinting = True
+                low_url = resolved.lower()
+                if "fingerprintjs" in low_url:
+                    fingerprinting_indicators.add("fingerprintjs")
+                if "fp.min.js" in low_url:
+                    fingerprinting_indicators.add("fp.min.js")
             continue
 
         if is_image and len(images) < max_items and resolved not in seen_images:
             seen_images.add(resolved)
-            images.append(
-                {
-                    "url": resolved,
-                    "type": classify_internal_external(
-                        resource_url=resolved, page_host=page_host
-                    ),
-                }
-            )
+            rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+            images.append({"url": resolved, "type": rtype})
             _maybe_add_mixed(mixed_content, resolved)
             if _is_tracking_resource(resolved, page_host=page_host, kind="image"):
                 tracking_scripts = True
+                _maybe_add_tracking_example(resolved, kind="image", rtype=rtype)
 
     # Scripts (external + inline heuristics)
     for tag in soup.find_all("script"):
@@ -521,11 +546,19 @@ def analyze_html(
                 resolved, page_host=page_host, kind="script"
             ):
                 tracking_scripts = True
+                _maybe_add_tracking_example(resolved, kind="script", rtype=rtype)
             yara_names = _yara_rule_names(resolved)
             if "Web_Fingerprinting_INFO" in yara_names:
                 fingerprinting = True
+                low_url = resolved.lower()
+                if "fingerprintjs" in low_url:
+                    fingerprinting_indicators.add("fingerprintjs")
+                if "fp.min.js" in low_url:
+                    fingerprinting_indicators.add("fp.min.js")
             if _is_ip_host(host):
                 suspicious_scripts += 1
+                if len(suspicious_ip_script_examples) < 5:
+                    suspicious_ip_script_examples.append(resolved)
             continue
 
         script_text = (tag.get_text() or "")[:max_inline_script_chars]
@@ -536,14 +569,85 @@ def analyze_html(
         yara_names = _yara_rule_names(script_text)
         if "Web_Suspicious_JS_MEDIUM" in yara_names:
             suspicious_scripts += 1
+            if "activexobject" in low:
+                suspicious_inline_indicators.add("ActiveXObject")
+            if "wscript." in low:
+                suspicious_inline_indicators.add("wscript")
+            if "powershell" in low:
+                suspicious_inline_indicators.add("powershell")
+            if "cmd.exe" in low:
+                suspicious_inline_indicators.add("cmd.exe")
+            if "mshta" in low:
+                suspicious_inline_indicators.add("mshta")
+            if "rundll32" in low:
+                suspicious_inline_indicators.add("rundll32")
+            if "regsvr32" in low:
+                suspicious_inline_indicators.add("regsvr32")
+            if "document.write(" in low:
+                suspicious_inline_indicators.add("document.write(")
+            if "unescape(" in low:
+                suspicious_inline_indicators.add("unescape(")
+            if "fromcharcode" in low:
+                suspicious_inline_indicators.add("fromCharCode")
+            if "atob(" in low:
+                suspicious_inline_indicators.add("atob(")
+            if "eval(" in low:
+                suspicious_inline_indicators.add("eval(")
+            if re.search(r"new\s+function\s*\(", script_text, flags=re.IGNORECASE):
+                suspicious_inline_indicators.add("new Function(")
         if "Web_Fingerprinting_INFO" in yara_names:
             fingerprinting = True
+            if "fingerprintjs" in low:
+                fingerprinting_indicators.add("fingerprintjs")
+            if "fp.min.js" in low:
+                fingerprinting_indicators.add("fp.min.js")
+            if "audiocontext" in low:
+                fingerprinting_indicators.add("AudioContext")
+            if "offlineaudiocontext" in low:
+                fingerprinting_indicators.add("OfflineAudioContext")
+            if "webglrenderingcontext" in low:
+                fingerprinting_indicators.add("WebGLRenderingContext")
+            if "getimagedata" in low:
+                fingerprinting_indicators.add("getImageData")
+            if "todataurl" in low:
+                fingerprinting_indicators.add("toDataURL")
+            if "navigator.plugins" in low:
+                fingerprinting_indicators.add("navigator.plugins")
+            if "navigator.hardwareconcurrency" in low:
+                fingerprinting_indicators.add("navigator.hardwareConcurrency")
+            if "navigator.devicememory" in low:
+                fingerprinting_indicators.add("navigator.deviceMemory")
+            if "canvas" in low:
+                fingerprinting_indicators.add("canvas")
         if "Web_Tracking_Inline_INFO" in yara_names:
             tracking_scripts = True
+            if "gtag(" in low:
+                tracking_inline_indicators.add("gtag(")
+            if "ga(" in low:
+                tracking_inline_indicators.add("ga(")
+            if "fbq(" in low:
+                tracking_inline_indicators.add("fbq(")
+            if "datalayer" in low:
+                tracking_inline_indicators.add("dataLayer")
         if "Web_Eval_Usage_INFO" in yara_names:
             eval_usage = True
+            if "eval(" in low:
+                eval_indicators.add("eval(")
+                eval_occurrences += low.count("eval(")
+            new_fn = re.findall(
+                r"new\s+function\s*\(", script_text, flags=re.IGNORECASE
+            )
+            if new_fn:
+                eval_indicators.add("new Function(")
+                eval_occurrences += len(new_fn)
         if "Web_InnerHTML_Usage_INFO" in yara_names:
             inner_html_usage = True
+            if "innerhtml" in low:
+                inner_html_indicators.add("innerHTML")
+                inner_html_occurrences += low.count("innerhtml")
+            if "outerhtml" in low:
+                inner_html_indicators.add("outerHTML")
+                inner_html_occurrences += low.count("outerhtml")
 
         if any(h in low for h in _API_CALL_HINTS):
             for raw_url in _ABSOLUTE_URL_RE.findall(script_text):
@@ -552,10 +656,15 @@ def analyze_html(
                     continue
                 if _is_ip_host(host):
                     suspicious_api_calls = True
-                    break
+                    _maybe_add_api_example(raw_url)
+                    if len(suspicious_api_call_examples) >= 10:
+                        break
+                    continue
                 if page_domain and registrable_domain(host) != page_domain:
                     suspicious_api_calls = True
-                    break
+                    _maybe_add_api_example(raw_url)
+                    if len(suspicious_api_call_examples) >= 10:
+                        break
 
     # Forms and inputs
     for tag in soup.find_all("input"):
@@ -611,6 +720,16 @@ def analyze_html(
         fingerprinting=bool(fingerprinting),
         eval_usage=bool(eval_usage),
         inner_html_usage=bool(inner_html_usage),
+        suspicious_api_call_examples=list(suspicious_api_call_examples),
+        suspicious_inline_indicators=sorted(suspicious_inline_indicators),
+        suspicious_ip_script_examples=list(suspicious_ip_script_examples),
+        tracking_resource_examples=list(tracking_resource_examples),
+        tracking_inline_indicators=sorted(tracking_inline_indicators),
+        fingerprinting_indicators=sorted(fingerprinting_indicators),
+        eval_indicators=sorted(eval_indicators),
+        inner_html_indicators=sorted(inner_html_indicators),
+        eval_occurrences=int(eval_occurrences),
+        inner_html_occurrences=int(inner_html_occurrences),
     )
 
 

@@ -428,6 +428,52 @@ def _web_scan(content: bytes, *, url: str, download: Optional[dict] = None) -> d
     eval_usage = parsed.eval_usage if parsed else False
     inner_html_usage = parsed.inner_html_usage if parsed else False
 
+    external_script_examples: list[str] = []
+    suspicious_ip_script_examples: list[str] = []
+    suspicious_inline_indicators: list[str] = []
+    suspicious_api_call_examples: list[str] = []
+    tracking_resource_examples: list[dict] = []
+    tracking_inline_indicators: list[str] = []
+    fingerprinting_indicators: list[str] = []
+    eval_indicators: list[str] = []
+    inner_html_indicators: list[str] = []
+    eval_occurrences = 0
+    inner_html_occurrences = 0
+    if parsed:
+        for item in parsed.scripts:
+            if not isinstance(item, dict):
+                continue
+            url = item.get("url")
+            typ = item.get("type")
+            if typ == "external" and isinstance(url, str) and url:
+                external_script_examples.append(url)
+        external_script_examples = external_script_examples[:10]
+
+        suspicious_ip_script_examples = list(
+            getattr(parsed, "suspicious_ip_script_examples", []) or []
+        )[:5]
+        suspicious_inline_indicators = list(
+            getattr(parsed, "suspicious_inline_indicators", []) or []
+        )[:15]
+        suspicious_api_call_examples = list(
+            getattr(parsed, "suspicious_api_call_examples", []) or []
+        )[:10]
+        tracking_resource_examples = list(
+            getattr(parsed, "tracking_resource_examples", []) or []
+        )[:10]
+        tracking_inline_indicators = list(
+            getattr(parsed, "tracking_inline_indicators", []) or []
+        )[:10]
+        fingerprinting_indicators = list(
+            getattr(parsed, "fingerprinting_indicators", []) or []
+        )[:10]
+        eval_indicators = list(getattr(parsed, "eval_indicators", []) or [])[:10]
+        inner_html_indicators = list(getattr(parsed, "inner_html_indicators", []) or [])[
+            :10
+        ]
+        eval_occurrences = int(getattr(parsed, "eval_occurrences", 0) or 0)
+        inner_html_occurrences = int(getattr(parsed, "inner_html_occurrences", 0) or 0)
+
     open_redirects = {"detected": False, "examples": []}
     if parsed:
         candidate_urls: list[str] = []
@@ -471,6 +517,10 @@ def _web_scan(content: bytes, *, url: str, download: Optional[dict] = None) -> d
             "suspicious_scripts": int(suspicious_scripts),
             "external_scripts": int(external_scripts),
             "suspicious_api_calls": bool(suspicious_api_calls),
+            "external_script_examples": external_script_examples,
+            "suspicious_ip_script_examples": suspicious_ip_script_examples,
+            "suspicious_inline_indicators": suspicious_inline_indicators,
+            "suspicious_api_call_examples": suspicious_api_call_examples,
         },
         "cookies": {
             "insecure_cookies": int(len(insecure_cookies)),
@@ -480,11 +530,18 @@ def _web_scan(content: bytes, *, url: str, download: Optional[dict] = None) -> d
             "open_redirects": bool(open_redirects.get("detected")),
             "open_redirect_examples": open_redirects.get("examples") or [],
             "inner_html_usage": bool(inner_html_usage),
+            "inner_html_indicators": inner_html_indicators,
+            "inner_html_occurrences": int(inner_html_occurrences),
             "eval_usage": bool(eval_usage),
+            "eval_indicators": eval_indicators,
+            "eval_occurrences": int(eval_occurrences),
         },
         "tracking_features": {
             "tracking_scripts": bool(tracking_scripts),
+            "tracking_resource_examples": tracking_resource_examples,
+            "tracking_inline_indicators": tracking_inline_indicators,
             "fingerprinting": bool(fingerprinting),
+            "fingerprinting_indicators": fingerprinting_indicators,
         },
     }
 
