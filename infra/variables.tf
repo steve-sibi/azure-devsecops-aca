@@ -153,3 +153,14 @@ variable "url_result_visibility_default" {
     error_message = "url_result_visibility_default must be 'shared' or 'private'."
   }
 }
+
+variable "web_whois_timeout_seconds" {
+  type        = number
+  default     = 6
+  description = "Timeout for WHOIS/RDAP lookups (seconds)."
+
+  validation {
+    condition     = var.web_whois_timeout_seconds >= 0.1
+    error_message = "web_whois_timeout_seconds must be >= 0.1."
+  }
+}

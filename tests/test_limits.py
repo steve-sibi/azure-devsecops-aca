@@ -150,7 +150,7 @@ class TestWebAnalysisLimits:
             assert limits.max_resources == 25
             assert limits.max_inline_script_chars == 80_000
             assert limits.max_html_bytes == 300_000
-            assert limits.whois_timeout_seconds == 3.0
+            assert limits.whois_timeout_seconds == 6.0
 
     def test_validate_rejects_zero_resources(self):
         limits = WebAnalysisLimits(

@@ -670,7 +670,7 @@ def resolve_dns_addresses(host: str, *, max_addresses: int = 10) -> list[str]:
     return out
 
 
-def rdap_whois(domain: str, *, timeout_seconds: float = 3.0) -> Optional[dict]:
+def rdap_whois(domain: str, *, timeout_seconds: float = 6.0) -> Optional[dict]:
     d = (domain or "").strip().lower().rstrip(".")
     if not d or _is_ip_host(d):
         return None

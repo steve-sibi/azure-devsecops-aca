@@ -85,7 +85,7 @@ class WebAnalysisLimits:
             max_resources=_env_int("WEB_MAX_RESOURCES", 25),
             max_inline_script_chars=_env_int("WEB_MAX_INLINE_SCRIPT_CHARS", 80_000),
             max_html_bytes=_env_int("WEB_MAX_HTML_BYTES", 300_000),
-            whois_timeout_seconds=_env_float("WEB_WHOIS_TIMEOUT_SECONDS", 3.0),
+            whois_timeout_seconds=_env_float("WEB_WHOIS_TIMEOUT_SECONDS", 6.0),
         )
         limits.validate()
         return limits

@@ -38,7 +38,7 @@ locals {
     { name = "WEB_MAX_HTML_BYTES", value = "300000" },
     { name = "WEB_MAX_INLINE_SCRIPT_CHARS", value = "80000" },
     { name = "WEB_MAX_RESOURCES", value = "25" },
-    { name = "WEB_WHOIS_TIMEOUT_SECONDS", value = "3.0" },
+    { name = "WEB_WHOIS_TIMEOUT_SECONDS", value = tostring(var.web_whois_timeout_seconds) },
   ]
 
   screenshot_env = [
