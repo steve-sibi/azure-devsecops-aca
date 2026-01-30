@@ -176,8 +176,8 @@
     /* Toast notification container */
     .toast-container {
       position: fixed;
-      top: 1rem;
-      right: 1rem;
+      top: calc(1rem + env(safe-area-inset-top));
+      right: calc(1rem + env(safe-area-inset-right));
       z-index: 10000;
       display: flex;
       flex-direction: column;
@@ -599,6 +599,7 @@
 
     .table-wrap {
       overflow: auto;
+      -webkit-overflow-scrolling: touch;
       border: 1px solid var(--border);
       border-radius: 12px;
       background: rgba(148, 163, 184, 0.03);
@@ -641,6 +642,78 @@
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    @media (max-width: 720px) {
+      .table-wrap {
+        border: 0;
+        background: transparent;
+      }
+
+      table {
+        min-width: 0;
+      }
+
+      thead {
+        display: none;
+      }
+
+      tbody {
+        display: block;
+      }
+
+      tr {
+        display: block;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 0.75rem;
+        margin-bottom: 0.65rem;
+        background: rgba(148, 163, 184, 0.03);
+      }
+
+      td {
+        display: block;
+        border-bottom: 0;
+        padding: 0.35rem 0;
+      }
+
+      td[data-label] {
+        display: grid;
+        grid-template-columns: minmax(86px, 120px) 1fr;
+        gap: 0.65rem;
+        align-items: start;
+      }
+
+      td[data-label]::before {
+        content: attr(data-label);
+        font-size: 0.72rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+        font-weight: 700;
+        padding-top: 0.12rem;
+      }
+
+      td.nowrap {
+        white-space: normal;
+      }
+
+      td[colspan] {
+        text-align: center;
+        padding: 0.85rem 0;
+      }
+
+      .url-cell {
+        max-width: none;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+      }
+
+      .url-cell a {
+        overflow-wrap: anywhere;
+        word-break: break-word;
+      }
     }
 
     .filter {
@@ -933,6 +1006,81 @@
 
       dl.kv dt {
         padding-top: 0;
+      }
+
+      .app {
+        padding: 1rem 1rem 2rem;
+      }
+
+      .header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .header h1 {
+        font-size: 1.45rem;
+      }
+
+      .header .actions {
+        width: 100%;
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .header .actions>button,
+      .header .actions>a {
+        width: 100%;
+      }
+
+      .header .actions>a.tab {
+        justify-content: center;
+      }
+
+      .card .actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .card .actions>button {
+        width: 100%;
+      }
+
+      .history-controls {
+        justify-content: stretch;
+      }
+
+      .history-controls .filter {
+        min-width: 0;
+        flex: 1 1 100%;
+      }
+
+      .history-controls .select {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .url-group {
+        flex-wrap: wrap;
+      }
+
+      .url-scheme {
+        width: 100%;
+        justify-content: center;
+        border-right: none;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.18);
+      }
+
+      .url-input {
+        width: 100%;
+      }
+
+      .toast-container {
+        top: auto;
+        bottom: calc(1rem + env(safe-area-inset-bottom));
+        right: auto;
+        left: 50%;
+        transform: translateX(-50%);
+        max-width: min(520px, calc(100vw - 2rem));
       }
     }
 
@@ -2520,11 +2668,11 @@
           const row = el(
             'tr',
             null,
-            el('td', { class: 'nowrap muted small', text: when, title: whenTitle }),
-            el('td', { class: 'url-cell' }, urlLink),
-            el('td', { class: 'nowrap' }, el('code', { text: shortJob, title: job })),
-            el('td', { class: 'nowrap' }, badges),
-            el('td', { class: 'nowrap' }, actions)
+            el('td', { class: 'nowrap muted small', 'data-label': 'When', text: when, title: whenTitle }),
+            el('td', { class: 'url-cell', 'data-label': 'URL' }, urlLink),
+            el('td', { class: 'nowrap', 'data-label': 'Job' }, el('code', { text: shortJob, title: job })),
+            el('td', { class: 'nowrap', 'data-label': 'Status' }, badges),
+            el('td', { class: 'nowrap', 'data-label': 'Actions' }, actions)
           );
           historyBodyEl.appendChild(row);
         }
