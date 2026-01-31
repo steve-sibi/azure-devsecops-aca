@@ -17,6 +17,7 @@
       --muted: #6b7280;
       --border: #e5e7eb;
       --shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+      --shadow-sm: 0 8px 22px rgba(0, 0, 0, 0.06);
       --primary: #2563eb;
       --primary-ink: #ffffff;
       --success: #16a34a;
@@ -39,6 +40,7 @@
         --muted: #94a3b8;
         --border: #22304a;
         --shadow: 0 14px 40px rgba(0, 0, 0, 0.35);
+        --shadow-sm: 0 10px 28px rgba(0, 0, 0, 0.28);
         --primary: #60a5fa;
         --primary-ink: #0b1020;
         --success: #4ade80;
@@ -342,9 +344,9 @@
     }
 
     .app {
-      max-width: 1440px;
+      max-width: 1920px;
       margin: 0 auto;
-      padding: clamp(1.25rem, 2vw, 2rem) clamp(1rem, 3vw, 2.25rem) 3rem;
+      padding: clamp(1.25rem, 2vw, 2rem) clamp(1.5rem, 2vw, 3rem) 3rem;
     }
 
     .header {
@@ -1149,9 +1151,9 @@
     .section {
       grid-column: 1 / -1;
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 1rem;
-      background: rgba(148, 163, 184, 0.04);
+      border-radius: 16px;
+      padding: clamp(1.1rem, 1.8vw, 1.5rem);
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.02));
       backdrop-filter: blur(10px);
       min-width: 0;
     }
@@ -1162,70 +1164,228 @@
       justify-content: space-between;
       gap: 0.75rem;
       flex-wrap: wrap;
-      margin-bottom: 0.85rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.75rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.14);
     }
 
     .section-title {
       margin: 0;
-      font-size: 1.05rem;
+      font-size: clamp(1.05rem, 1.2vw, 1.15rem);
       letter-spacing: -0.01em;
       font-weight: 800;
     }
 
     .analysis-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 1rem;
+      grid-template-columns: repeat(4, 1fr);
+      gap: clamp(0.85rem, 1.2vw, 1.25rem);
       align-items: start;
     }
 
-    @media (max-width: 1100px) {
+    .analysis-grid .analysis-card {
+      min-width: 0;
+    }
+
+    /* Allow certain cards to span 2 columns for better grouping */
+    .analysis-grid .analysis-card.span-2 {
+      grid-column: span 2;
+    }
+
+    @media (max-width: 1600px) {
       .analysis-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, 1fr);
+      }
+
+      .analysis-grid .analysis-card.span-2 {
+        grid-column: span 1;
       }
     }
 
-    @media (max-width: 720px) {
+    @media (max-width: 1200px) {
+      .analysis-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 768px) {
       .analysis-grid {
         grid-template-columns: 1fr;
       }
     }
 
+    /* Security Summary Stats Bar */
+    .security-summary {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: clamp(1rem, 2vw, 2rem);
+      padding: 0.85rem 1.25rem;
+      margin-bottom: 1.25rem;
+      background: linear-gradient(135deg, rgba(148, 163, 184, 0.08), rgba(148, 163, 184, 0.03));
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 12px;
+      flex-wrap: wrap;
+    }
+
+    .security-stat {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      font-weight: 700;
+      font-size: 0.92rem;
+    }
+
+    .security-stat-icon {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      flex-shrink: 0;
+    }
+
+    .security-stat.stat-ok .security-stat-icon {
+      background: var(--success);
+      box-shadow: 0 0 0 4px var(--success-soft);
+    }
+
+    .security-stat.stat-warn .security-stat-icon {
+      background: rgba(234, 179, 8, 1);
+      box-shadow: 0 0 0 4px rgba(234, 179, 8, 0.14);
+    }
+
+    .security-stat.stat-bad .security-stat-icon {
+      background: var(--danger);
+      box-shadow: 0 0 0 4px var(--danger-soft);
+    }
+
+    .security-stat.stat-ok {
+      color: var(--success);
+    }
+
+    .security-stat.stat-warn {
+      color: rgba(234, 179, 8, 1);
+    }
+
+    .security-stat.stat-bad {
+      color: var(--danger);
+    }
+
+    .security-stat-label {
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    /* Card group labels */
+    .card-group-label {
+      grid-column: 1 / -1;
+      font-size: 0.8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      padding: 0.5rem 0 0.25rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+      margin-bottom: 0.25rem;
+    }
+
+    .card-group-label:first-child {
+      padding-top: 0;
+    }
+
     .analysis-card {
+      --dot: var(--primary);
+      --dot-soft: var(--primary-soft);
       border: 1px solid rgba(148, 163, 184, 0.22);
       border-radius: 14px;
-      padding: 0.95rem;
-      background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.02));
+      padding: clamp(1rem, 1.3vw, 1.2rem);
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.07), rgba(148, 163, 184, 0.02));
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
       min-width: 0;
+      transition: transform 80ms ease, border-color 120ms ease, box-shadow 120ms ease, background 120ms ease;
+      overflow: hidden;
+      position: relative;
     }
 
     .analysis-card.tone-ok {
+      --dot: var(--success);
+      --dot-soft: var(--success-soft);
       border-color: rgba(22, 163, 74, 0.5);
     }
 
     .analysis-card.tone-warn {
+      --dot: rgba(234, 179, 8, 1);
+      --dot-soft: rgba(234, 179, 8, 0.14);
       border-color: rgba(234, 179, 8, 0.6);
     }
 
     .analysis-card.tone-bad {
+      --dot: var(--danger);
+      --dot-soft: var(--danger-soft);
       border-color: rgba(220, 38, 38, 0.5);
     }
 
+    .analysis-card:hover {
+      transform: translateY(-1px);
+      border-color: rgba(148, 163, 184, 0.35);
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.08), rgba(148, 163, 184, 0.02));
+    }
+
+    .analysis-card.tone-ok:hover {
+      border-color: rgba(22, 163, 74, 0.6);
+    }
+
+    .analysis-card.tone-warn:hover {
+      border-color: rgba(234, 179, 8, 0.7);
+    }
+
+    .analysis-card.tone-bad:hover {
+      border-color: rgba(220, 38, 38, 0.6);
+    }
+
+    .analysis-card:focus-within {
+      outline: none;
+      border-color: var(--primary-soft-border);
+      box-shadow: var(--shadow-sm), 0 0 0 4px var(--ring);
+    }
+
     .analysis-card h4 {
-      margin: 0 0 0.75rem;
-      font-size: 0.95rem;
+      margin: 0;
+      font-size: 0.98rem;
       font-weight: 800;
       letter-spacing: -0.01em;
+      display: flex;
+      align-items: center;
+      gap: 0.55rem;
+      padding-bottom: 0.65rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    }
+
+    .analysis-card h4::before {
+      content: "";
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      background: var(--dot);
+      box-shadow: 0 0 0 4px var(--dot-soft);
+      opacity: 0.95;
+      flex: 0 0 auto;
     }
 
     .checklist {
       display: flex;
       flex-direction: column;
-      gap: 0.55rem;
+      gap: 0.5rem;
     }
 
     .checkline {
       border-radius: 12px;
+      border: 1px solid rgba(148, 163, 184, 0.14);
+      background: rgba(148, 163, 184, 0.03);
+      transition: all 180ms cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
     }
 
     .checkline summary {
@@ -1234,20 +1394,32 @@
       justify-content: space-between;
       gap: 0.6rem;
       min-width: 0;
-      padding: 0.1rem 0;
+      padding: 0.45rem 0.55rem;
       cursor: pointer;
       user-select: none;
       list-style: none;
+      border-radius: 10px;
     }
 
     .checkline summary::-webkit-details-marker {
       display: none;
     }
 
+    .checkline summary:hover {
+      background: rgba(148, 163, 184, 0.06);
+    }
+
     .checkline summary:focus-visible {
       outline: none;
       box-shadow: 0 0 0 4px var(--ring);
       border-radius: 10px;
+    }
+
+    .checkline[open] {
+      border-color: rgba(148, 163, 184, 0.28);
+      background: rgba(148, 163, 184, 0.06);
+      box-shadow: 0 2px 8px rgba(148, 163, 184, 0.12);
+      transform: translateY(-1px);
     }
 
     .checkleft {
@@ -1296,25 +1468,61 @@
       flex: 0 0 auto;
     }
 
+    .checkline.ok .checkvalue {
+      color: var(--success);
+    }
+
+    .checkline.warn .checkvalue {
+      color: rgba(234, 179, 8, 1);
+    }
+
+    .checkline.bad .checkvalue {
+      color: var(--danger);
+    }
+
     .checkhint {
       margin-left: 0.35rem;
-      font-size: 0.72rem;
+      font-size: 0.75rem;
       font-weight: 900;
       color: var(--muted);
       border: 1px solid rgba(148, 163, 184, 0.28);
       background: rgba(148, 163, 184, 0.08);
-      padding: 0.08rem 0.35rem;
+      padding: 0;
       border-radius: 999px;
-      line-height: 1.2;
+      line-height: 1;
+      width: 1.1rem;
+      height: 1.1rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       flex: 0 0 auto;
+      opacity: 0.95;
     }
 
     .checkhelp {
-      margin: 0.35rem 0 0.1rem;
-      padding-left: 1.65rem;
+      margin: 0.45rem 0 0.25rem;
+      margin-left: 1.65rem;
+      padding: 0.65rem 0.75rem;
       color: var(--muted);
-      font-size: 0.82rem;
-      line-height: 1.35;
+      font-size: 0.83rem;
+      line-height: 1.45;
+      border-left: 3px solid rgba(148, 163, 184, 0.25);
+      background: linear-gradient(90deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.02));
+      border-radius: 8px;
+      transition: all 120ms ease;
+      backdrop-filter: blur(4px);
+    }
+
+    .checkline.ok .checkhelp {
+      border-left-color: rgba(22, 163, 74, 0.6);
+    }
+
+    .checkline.warn .checkhelp {
+      border-left-color: rgba(234, 179, 8, 0.7);
+    }
+
+    .checkline.bad .checkhelp {
+      border-left-color: rgba(220, 38, 38, 0.6);
     }
 
     .checkline .mini-toggle {
@@ -1323,13 +1531,41 @@
     }
 
     .headers-list.evidence-list {
-      max-height: 220px;
+      max-height: 240px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(148, 163, 184, 0.3) transparent;
+      border: 1px solid rgba(148, 163, 184, 0.15);
+      border-radius: 8px;
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.04), rgba(148, 163, 184, 0.01));
+    }
+
+    .headers-list.evidence-list::-webkit-scrollbar {
+      width: 6px;
+    }
+
+    .headers-list.evidence-list::-webkit-scrollbar-track {
+      background: rgba(148, 163, 184, 0.08);
+      border-radius: 3px;
+    }
+
+    .headers-list.evidence-list::-webkit-scrollbar-thumb {
+      background: rgba(148, 163, 184, 0.3);
+      border-radius: 3px;
+    }
+
+    .headers-list.evidence-list::-webkit-scrollbar-thumb:hover {
+      background: rgba(148, 163, 184, 0.5);
+    }
+
+    .headers-list.evidence-list .header-name {
+      color: var(--primary);
     }
 
     .analysis-actions {
       display: flex;
       justify-content: center;
-      gap: 0.7rem;
+      gap: clamp(0.6rem, 1.2vw, 0.9rem);
       flex-wrap: wrap;
       margin-top: 1rem;
     }
@@ -1345,10 +1581,21 @@
       color: var(--text);
       background: rgba(148, 163, 184, 0.06);
       font-weight: 700;
+      transition: transform 80ms ease, background 120ms ease, border-color 120ms ease, opacity 120ms ease;
     }
 
     a.btn:hover {
       background: rgba(148, 163, 184, 0.10);
+      transform: translateY(-1px);
+    }
+
+    a.btn:active {
+      transform: translateY(0);
+    }
+
+    a.btn:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 4px var(--ring);
     }
 
     a.btn.primary {
@@ -1361,6 +1608,35 @@
       background: var(--success);
       border-color: var(--success);
       color: var(--success-ink);
+    }
+
+    @media (max-width: 520px) {
+      .analysis-actions {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .analysis-actions .btn {
+        justify-content: center;
+        width: 100%;
+      }
+
+      .checklabel {
+        white-space: normal;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      .analysis-card,
+      a.btn {
+        transition: none;
+      }
+
+      .analysis-card:hover,
+      a.btn:hover {
+        transform: none;
+      }
     }
 
     .split {
@@ -2030,11 +2306,13 @@
           const reasonText = (opts && opts.reason) ? String(opts.reason) : '';
           const extra = (opts && opts.extra && typeof opts.extra === 'object') ? opts.extra : null;
           const details = el('details', { class: 'checkline ' + k });
+          // Add data attribute to track status for summary counting
+          details.setAttribute('data-check-status', k);
           const summary = el('summary', null,
             el('span', { class: 'checkleft' },
               el('span', { class: 'checkdot' }),
               el('span', { class: 'checklabel', text: labelText }),
-              el('span', { class: 'checkhint', text: '?' })
+              el('span', { class: 'checkhint', title: 'Click to expand', text: '?' })
             ),
             el('span', { class: 'checkvalue', text: String(value || '') })
           );
@@ -2044,6 +2322,40 @@
           if (howText) details.appendChild(el('div', { class: 'checkhelp', text: 'How: ' + howText }));
           if (extra) details.appendChild(extra);
           return details;
+        }
+
+        function securitySummaryBar(cards) {
+          // Count all checklines by status
+          let okCount = 0, warnCount = 0, badCount = 0;
+          const allChecks = cards.querySelectorAll('[data-check-status]');
+          allChecks.forEach(check => {
+            const status = check.getAttribute('data-check-status');
+            if (status === 'ok') okCount++;
+            else if (status === 'warn') warnCount++;
+            else if (status === 'bad') badCount++;
+          });
+
+          return el('div', { class: 'security-summary' },
+            el('div', { class: 'security-stat stat-ok' },
+              el('span', { class: 'security-stat-icon' }),
+              el('span', { text: String(okCount) }),
+              el('span', { class: 'security-stat-label', text: 'Passed' })
+            ),
+            el('div', { class: 'security-stat stat-warn' },
+              el('span', { class: 'security-stat-icon' }),
+              el('span', { text: String(warnCount) }),
+              el('span', { class: 'security-stat-label', text: 'Warnings' })
+            ),
+            el('div', { class: 'security-stat stat-bad' },
+              el('span', { class: 'security-stat-icon' }),
+              el('span', { text: String(badCount) }),
+              el('span', { class: 'security-stat-label', text: 'Issues' })
+            )
+          );
+        }
+
+        function cardGroupLabel(text) {
+          return el('div', { class: 'card-group-label', text: text });
         }
 
         function analysisCard(title, lines, opts) {
@@ -2159,12 +2471,12 @@
 
         // --- Security Analysis (cards) ---
         if (isTerminal && sec && Object.keys(sec).length) {
-	          const conn = (sec.connection_security && typeof sec.connection_security === 'object') ? sec.connection_security : {};
-	          const mixed = (conn.mixed_content && typeof conn.mixed_content === 'object') ? conn.mixed_content : {};
-	          const mixedDetected = mixed.detected === true;
-	          const mixedCount = Number(mixed.count || 0);
-	          const mixedExamples = Array.isArray(mixed.examples) ? mixed.examples : [];
-	          const proto = conn.protocol ? String(conn.protocol) : 'HTTPS';
+          const conn = (sec.connection_security && typeof sec.connection_security === 'object') ? sec.connection_security : {};
+          const mixed = (conn.mixed_content && typeof conn.mixed_content === 'object') ? conn.mixed_content : {};
+          const mixedDetected = mixed.detected === true;
+          const mixedCount = Number(mixed.count || 0);
+          const mixedExamples = Array.isArray(mixed.examples) ? mixed.examples : [];
+          const proto = conn.protocol ? String(conn.protocol) : 'HTTPS';
 
           const headers = (sec.security_headers && typeof sec.security_headers === 'object') ? sec.security_headers : {};
           const cspPresent = headers.content_security_policy && headers.content_security_policy.present === true;
@@ -2176,14 +2488,14 @@
           const passwordFields = Number(forms.password_fields || 0);
           const csrfOk = forms.csrf_protection === true;
 
-	          const scripts = (sec.suspicious_scripts && typeof sec.suspicious_scripts === 'object') ? sec.suspicious_scripts : {};
-	          const suspiciousScripts = Number(scripts.suspicious_scripts || 0);
-	          const externalScripts = Number(scripts.external_scripts || 0);
-	          const apiSuspicious = scripts.suspicious_api_calls === true;
-	          const externalScriptExamples = Array.isArray(scripts.external_script_examples) ? scripts.external_script_examples : [];
-	          const suspiciousIpScriptExamples = Array.isArray(scripts.suspicious_ip_script_examples) ? scripts.suspicious_ip_script_examples : [];
-	          const suspiciousInlineIndicators = Array.isArray(scripts.suspicious_inline_indicators) ? scripts.suspicious_inline_indicators : [];
-	          const suspiciousApiCallExamples = Array.isArray(scripts.suspicious_api_call_examples) ? scripts.suspicious_api_call_examples : [];
+          const scripts = (sec.suspicious_scripts && typeof sec.suspicious_scripts === 'object') ? sec.suspicious_scripts : {};
+          const suspiciousScripts = Number(scripts.suspicious_scripts || 0);
+          const externalScripts = Number(scripts.external_scripts || 0);
+          const apiSuspicious = scripts.suspicious_api_calls === true;
+          const externalScriptExamples = Array.isArray(scripts.external_script_examples) ? scripts.external_script_examples : [];
+          const suspiciousIpScriptExamples = Array.isArray(scripts.suspicious_ip_script_examples) ? scripts.suspicious_ip_script_examples : [];
+          const suspiciousInlineIndicators = Array.isArray(scripts.suspicious_inline_indicators) ? scripts.suspicious_inline_indicators : [];
+          const suspiciousApiCallExamples = Array.isArray(scripts.suspicious_api_call_examples) ? scripts.suspicious_api_call_examples : [];
 
           const cookies = (sec.cookies && typeof sec.cookies === 'object') ? sec.cookies : {};
           const insecureCookies = Number(cookies.insecure_cookies || 0);
@@ -2208,17 +2520,17 @@
             cookieExtra = details;
           }
 
-	          const vulns = (sec.detectable_vulnerabilities && typeof sec.detectable_vulnerabilities === 'object') ? sec.detectable_vulnerabilities : {};
-	          const openRedirects = vulns.open_redirects === true;
-	          const innerHtml = vulns.inner_html_usage === true;
-	          const evalUsage = vulns.eval_usage === true;
-	          const innerHtmlIndicators = Array.isArray(vulns.inner_html_indicators) ? vulns.inner_html_indicators : [];
-	          const innerHtmlOccurrences = Number(vulns.inner_html_occurrences || 0);
-	          const evalIndicators = Array.isArray(vulns.eval_indicators) ? vulns.eval_indicators : [];
-	          const evalOccurrences = Number(vulns.eval_occurrences || 0);
-	          const openRedirectExamples = Array.isArray(vulns.open_redirect_examples) ? vulns.open_redirect_examples : [];
-	          let openRedirectExtra = null;
-	          if (openRedirectExamples.length) {
+          const vulns = (sec.detectable_vulnerabilities && typeof sec.detectable_vulnerabilities === 'object') ? sec.detectable_vulnerabilities : {};
+          const openRedirects = vulns.open_redirects === true;
+          const innerHtml = vulns.inner_html_usage === true;
+          const evalUsage = vulns.eval_usage === true;
+          const innerHtmlIndicators = Array.isArray(vulns.inner_html_indicators) ? vulns.inner_html_indicators : [];
+          const innerHtmlOccurrences = Number(vulns.inner_html_occurrences || 0);
+          const evalIndicators = Array.isArray(vulns.eval_indicators) ? vulns.eval_indicators : [];
+          const evalOccurrences = Number(vulns.eval_occurrences || 0);
+          const openRedirectExamples = Array.isArray(vulns.open_redirect_examples) ? vulns.open_redirect_examples : [];
+          let openRedirectExtra = null;
+          if (openRedirectExamples.length) {
             const details = el('details', { class: 'mini-toggle' });
             const summary = el('summary', { text: 'Examples' });
             details.appendChild(summary);
@@ -2235,132 +2547,144 @@
             openRedirectExtra = details;
           }
 
-	          const tracking = (sec.tracking_features && typeof sec.tracking_features === 'object') ? sec.tracking_features : {};
-	          const trackingScripts = tracking.tracking_scripts === true;
-	          const fingerprinting = tracking.fingerprinting === true;
-	          const trackingResourceExamples = Array.isArray(tracking.tracking_resource_examples) ? tracking.tracking_resource_examples : [];
-	          const trackingInlineIndicators = Array.isArray(tracking.tracking_inline_indicators) ? tracking.tracking_inline_indicators : [];
-	          const fingerprintingIndicators = Array.isArray(tracking.fingerprinting_indicators) ? tracking.fingerprinting_indicators : [];
+          const tracking = (sec.tracking_features && typeof sec.tracking_features === 'object') ? sec.tracking_features : {};
+          const trackingScripts = tracking.tracking_scripts === true;
+          const fingerprinting = tracking.fingerprinting === true;
+          const trackingResourceExamples = Array.isArray(tracking.tracking_resource_examples) ? tracking.tracking_resource_examples : [];
+          const trackingInlineIndicators = Array.isArray(tracking.tracking_inline_indicators) ? tracking.tracking_inline_indicators : [];
+          const fingerprintingIndicators = Array.isArray(tracking.fingerprinting_indicators) ? tracking.fingerprinting_indicators : [];
 
-	          const cards = el('div', { class: 'analysis-grid' },
-	            analysisCard('Connection Security', [
-	              checkLine('Protocol', proto, (String(proto || '').toLowerCase() === 'https') ? 'ok' : 'warn',
-	                (String(proto || '').toLowerCase() === 'https') ? null : { reason: 'Final URL is not HTTPS.' }),
-	              checkLine('Mixed Content', mixedDetected ? 'Detected' : 'Not detected', mixedDetected ? 'bad' : 'ok',
-	                mixedDetected ? {
-	                  reason: (mixedCount ? (mixedCount + ' http:// resource(s) found.') : 'http:// resources found.'),
-	                  extra: evidenceBox('Examples', mixedExamples.slice(0, 10).map((u, idx) => {
-	                    const url = String(u || '');
-	                    if (!url) return null;
-	                    const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
-	                    return [String(idx + 1), link];
-	                  }))
-	                } : null),
-	            ], { tone: mixedDetected ? 'bad' : 'ok' }),
-	            analysisCard('Security Headers', [
-	              checkLine('Content Security Policy', cspPresent ? 'Present' : 'Missing', cspPresent ? 'ok' : 'bad',
-	                cspPresent ? null : { reason: 'CSP header not present in the response.' }),
-	              checkLine('X Frame Options', xfoPresent ? 'Present' : 'Missing', xfoPresent ? 'ok' : 'warn',
-	                xfoPresent ? null : { reason: 'X-Frame-Options header not present in the response.' }),
-	              checkLine('Xss Protection', xssPresent ? 'Present' : 'Missing', xssPresent ? 'ok' : 'warn',
-	                xssPresent ? null : { reason: 'X-XSS-Protection header not present in the response.' }),
-	            ], { tone: cspPresent ? 'ok' : 'warn' }),
-	            analysisCard('Forms and Input', [
-	              checkLine('Login Forms', String(loginForms), loginForms > 0 ? 'warn' : 'ok',
-	                loginForms > 0 ? { reason: 'Found form(s) containing password inputs.' } : null),
-	              checkLine('Password Fields', String(passwordFields), passwordFields > 0 ? 'warn' : 'ok',
-	                passwordFields > 0 ? { reason: 'Found password input(s) in the HTML.' } : null),
-	              checkLine('Csrf Protection', csrfOk ? 'Yes' : 'No', (loginForms > 0 && !csrfOk) ? 'warn' : (csrfOk ? 'ok' : 'info'),
-	                (loginForms > 0 && !csrfOk) ? { reason: 'Login form detected, but no CSRF token indicator found.' } : null),
-	            ], { tone: (loginForms > 0 && !csrfOk) ? 'warn' : 'info' }),
-	            analysisCard('Suspicious Scripts', [
-	              checkLine('Suspicious Scripts', String(suspiciousScripts), suspiciousScripts > 0 ? 'warn' : 'ok',
-	                suspiciousScripts > 0 ? {
-	                  reason: 'Matched suspicious-script indicators.',
-	                  extra: el('div', null,
-	                    evidenceBox('IP-hosted script URLs', suspiciousIpScriptExamples.slice(0, 5).map((u, idx) => {
-	                      const url = String(u || '');
-	                      if (!url) return null;
-	                      const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
-	                      return [String(idx + 1), link];
-	                    })),
-	                    evidenceBox('Inline indicators', suspiciousInlineIndicators.slice(0, 15).map((s, idx) => [String(idx + 1), String(s || '')])),
-	                  )
-	                } : null),
-	              checkLine('External Scripts', String(externalScripts), externalScripts > 0 ? 'info' : 'ok',
-	                externalScriptExamples.length ? {
-	                  reason: 'Third-party script(s) loaded.',
-	                  extra: evidenceBox('Examples', externalScriptExamples.slice(0, 10).map((u, idx) => {
-	                    const url = String(u || '');
-	                    if (!url) return null;
-	                    const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
-	                    return [String(idx + 1), link];
-	                  }))
-	                } : null),
-	              checkLine('Suspicious Api Calls', apiSuspicious ? 'true' : 'false', apiSuspicious ? 'warn' : 'ok',
-	                apiSuspicious ? {
-	                  reason: 'Inline scripts reference absolute URLs on external hosts or IPs.',
-	                  extra: evidenceBox('Examples', suspiciousApiCallExamples.slice(0, 10).map((u, idx) => {
-	                    const url = String(u || '');
-	                    if (!url) return null;
-	                    const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
-	                    return [String(idx + 1), link];
-	                  })),
-	                } : null),
-	            ], { tone: (suspiciousScripts > 0 || apiSuspicious) ? 'warn' : 'ok' }),
-	            analysisCard('Cookies', [
-	              checkLine('Insecure Cookies', String(insecureCookies), insecureCookies > 0 ? 'bad' : 'ok',
-	                insecureCookies > 0 ? { reason: 'Cookie attributes are missing or risky (see details).', extra: cookieExtra } : null),
-	            ], { tone: insecureCookies > 0 ? 'warn' : 'ok' }),
-	            analysisCard('Detectable Vulnerabilities', [
-	              checkLine('Open Redirects', openRedirects ? 'Possible' : 'None detected', openRedirects ? 'warn' : 'ok',
-	                openRedirects ? { reason: 'Potential redirect parameter pointing to an external URL.', extra: openRedirectExtra } : null),
-	              checkLine('Inner Html Usage', innerHtml ? 'Detected' : 'None detected', innerHtml ? 'warn' : 'ok',
-	                innerHtml ? {
-	                  reason: innerHtmlOccurrences
-	                    ? ('Found ' + innerHtmlOccurrences + ' occurrence(s) in inline scripts.')
-	                    : 'Found usage in inline scripts.',
-	                  extra: evidenceBox('Evidence', [
-	                    innerHtmlOccurrences ? ['occurrences', String(innerHtmlOccurrences)] : null,
-	                    ...(innerHtmlIndicators || []).slice(0, 10).map((s, idx) => ['keyword ' + String(idx + 1), String(s || '')]),
-	                  ]),
-	                } : null),
-	              checkLine('Eval Usage', evalUsage ? 'Detected' : 'None detected', evalUsage ? 'warn' : 'ok',
-	                evalUsage ? {
-	                  reason: evalOccurrences
-	                    ? ('Found ' + evalOccurrences + ' occurrence(s) in inline scripts.')
-	                    : 'Found usage in inline scripts.',
-	                  extra: evidenceBox('Evidence', [
-	                    evalOccurrences ? ['occurrences', String(evalOccurrences)] : null,
-	                    ...(evalIndicators || []).slice(0, 10).map((s, idx) => ['pattern ' + String(idx + 1), String(s || '')]),
-	                  ]),
-	                } : null),
-	            ], { tone: (openRedirects || innerHtml || evalUsage) ? 'warn' : 'ok' }),
-	            analysisCard('Tracking Features', [
-	              checkLine('Tracking Scripts', trackingScripts ? 'Detected' : 'None detected', trackingScripts ? 'warn' : 'ok',
-	                trackingScripts ? {
-	                  reason: 'Tracking resources and/or analytics calls detected.',
-	                  extra: el('div', null,
-	                    evidenceBox('Resources', trackingResourceExamples.slice(0, 10).map((item, idx) => {
-	                      if (!item || typeof item !== 'object') return null;
-	                      const kind = String(item.kind || 'resource');
-	                      const url = String(item.url || '');
-	                      const typ = String(item.type || '');
-	                      if (!url) return null;
-	                      const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
-	                      const value = typ ? el('span', null, link, ' ', el('span', { class: 'muted', text: '(' + typ + ')' })) : link;
-	                      return [kind, value];
-	                    })),
-	                    evidenceBox('Inline indicators', trackingInlineIndicators.slice(0, 10).map((s, idx) => [String(idx + 1), String(s || '')])),
-	                  )
-	                } : null),
-	              checkLine('Fingerprinting', fingerprinting ? 'Detected' : 'None detected', fingerprinting ? 'warn' : 'ok',
-	                fingerprinting ? {
-	                  reason: 'Fingerprinting-related APIs/libraries detected.',
-	                  extra: evidenceBox('Indicators', fingerprintingIndicators.slice(0, 10).map((s, idx) => [String(idx + 1), String(s || '')])),
-	                } : null),
-	            ], { tone: (trackingScripts || fingerprinting) ? 'warn' : 'ok' }),
-	          );
+          // Build cards with logical grouping
+          const cards = el('div', { class: 'analysis-grid' },
+            // --- Connection & Headers Group ---
+            cardGroupLabel('Connection & Headers'),
+            analysisCard('Connection Security', [
+              checkLine('Protocol', proto, (String(proto || '').toLowerCase() === 'https') ? 'ok' : 'warn',
+                (String(proto || '').toLowerCase() === 'https') ? null : { reason: 'Final URL is not HTTPS.' }),
+              checkLine('Mixed Content', mixedDetected ? 'Detected' : 'Not detected', mixedDetected ? 'bad' : 'ok',
+                mixedDetected ? {
+                  reason: (mixedCount ? (mixedCount + ' http:// resource(s) found.') : 'http:// resources found.'),
+                  extra: evidenceBox('Examples', mixedExamples.slice(0, 10).map((u, idx) => {
+                    const url = String(u || '');
+                    if (!url) return null;
+                    const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
+                    return [String(idx + 1), link];
+                  }))
+                } : null),
+            ], { tone: mixedDetected ? 'bad' : 'ok' }),
+            analysisCard('Security Headers', [
+              checkLine('Content Security Policy', cspPresent ? 'Present' : 'Missing', cspPresent ? 'ok' : 'bad',
+                cspPresent ? null : { reason: 'CSP header not present in the response.' }),
+              checkLine('X Frame Options', xfoPresent ? 'Present' : 'Missing', xfoPresent ? 'ok' : 'warn',
+                xfoPresent ? null : { reason: 'X-Frame-Options header not present in the response.' }),
+              checkLine('Xss Protection', xssPresent ? 'Present' : 'Missing', xssPresent ? 'ok' : 'warn',
+                xssPresent ? null : { reason: 'X-XSS-Protection header not present in the response.' }),
+            ], { tone: cspPresent ? 'ok' : 'warn' }),
+            analysisCard('Cookies', [
+              checkLine('Insecure Cookies', String(insecureCookies), insecureCookies > 0 ? 'bad' : 'ok',
+                insecureCookies > 0 ? { reason: 'Cookie attributes are missing or risky (see details).', extra: cookieExtra } : null),
+            ], { tone: insecureCookies > 0 ? 'warn' : 'ok' }),
+            analysisCard('Forms and Input', [
+              checkLine('Login Forms', String(loginForms), loginForms > 0 ? 'warn' : 'ok',
+                loginForms > 0 ? { reason: 'Found form(s) containing password inputs.' } : null),
+              checkLine('Password Fields', String(passwordFields), passwordFields > 0 ? 'warn' : 'ok',
+                passwordFields > 0 ? { reason: 'Found password input(s) in the HTML.' } : null),
+              checkLine('Csrf Protection', csrfOk ? 'Yes' : 'No', (loginForms > 0 && !csrfOk) ? 'warn' : (csrfOk ? 'ok' : 'info'),
+                (loginForms > 0 && !csrfOk) ? { reason: 'Login form detected, but no CSRF token indicator found.' } : null),
+            ], { tone: (loginForms > 0 && !csrfOk) ? 'warn' : 'info' }),
+
+            // --- Content Analysis Group ---
+            cardGroupLabel('Content Analysis'),
+            analysisCard('Suspicious Scripts', [
+              checkLine('Suspicious Scripts', String(suspiciousScripts), suspiciousScripts > 0 ? 'warn' : 'ok',
+                suspiciousScripts > 0 ? {
+                  reason: 'Matched suspicious-script indicators.',
+                  extra: el('div', null,
+                    evidenceBox('IP-hosted script URLs', suspiciousIpScriptExamples.slice(0, 5).map((u, idx) => {
+                      const url = String(u || '');
+                      if (!url) return null;
+                      const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
+                      return [String(idx + 1), link];
+                    })),
+                    evidenceBox('Inline indicators', suspiciousInlineIndicators.slice(0, 15).map((s, idx) => [String(idx + 1), String(s || '')])),
+                  )
+                } : null),
+              checkLine('External Scripts', String(externalScripts), externalScripts > 0 ? 'info' : 'ok',
+                externalScriptExamples.length ? {
+                  reason: 'Third-party script(s) loaded.',
+                  extra: evidenceBox('Examples', externalScriptExamples.slice(0, 10).map((u, idx) => {
+                    const url = String(u || '');
+                    if (!url) return null;
+                    const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
+                    return [String(idx + 1), link];
+                  }))
+                } : null),
+              checkLine('Suspicious Api Calls', apiSuspicious ? 'true' : 'false', apiSuspicious ? 'warn' : 'ok',
+                apiSuspicious ? {
+                  reason: 'Inline scripts reference absolute URLs on external hosts or IPs.',
+                  extra: evidenceBox('Examples', suspiciousApiCallExamples.slice(0, 10).map((u, idx) => {
+                    const url = String(u || '');
+                    if (!url) return null;
+                    const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
+                    return [String(idx + 1), link];
+                  })),
+                } : null),
+            ], { tone: (suspiciousScripts > 0 || apiSuspicious) ? 'warn' : 'ok' }),
+            analysisCard('Detectable Vulnerabilities', [
+              checkLine('Open Redirects', openRedirects ? 'Possible' : 'None detected', openRedirects ? 'warn' : 'ok',
+                openRedirects ? { reason: 'Potential redirect parameter pointing to an external URL.', extra: openRedirectExtra } : null),
+              checkLine('Inner Html Usage', innerHtml ? 'Detected' : 'None detected', innerHtml ? 'warn' : 'ok',
+                innerHtml ? {
+                  reason: innerHtmlOccurrences
+                    ? ('Found ' + innerHtmlOccurrences + ' occurrence(s) in inline scripts.')
+                    : 'Found usage in inline scripts.',
+                  extra: evidenceBox('Evidence', [
+                    innerHtmlOccurrences ? ['occurrences', String(innerHtmlOccurrences)] : null,
+                    ...(innerHtmlIndicators || []).slice(0, 10).map((s, idx) => ['keyword ' + String(idx + 1), String(s || '')]),
+                  ]),
+                } : null),
+              checkLine('Eval Usage', evalUsage ? 'Detected' : 'None detected', evalUsage ? 'warn' : 'ok',
+                evalUsage ? {
+                  reason: evalOccurrences
+                    ? ('Found ' + evalOccurrences + ' occurrence(s) in inline scripts.')
+                    : 'Found usage in inline scripts.',
+                  extra: evidenceBox('Evidence', [
+                    evalOccurrences ? ['occurrences', String(evalOccurrences)] : null,
+                    ...(evalIndicators || []).slice(0, 10).map((s, idx) => ['pattern ' + String(idx + 1), String(s || '')]),
+                  ]),
+                } : null),
+            ], { tone: (openRedirects || innerHtml || evalUsage) ? 'warn' : 'ok' }),
+
+            // --- Privacy & Tracking Group ---
+            cardGroupLabel('Privacy & Tracking'),
+            analysisCard('Tracking Features', [
+              checkLine('Tracking Scripts', trackingScripts ? 'Detected' : 'None detected', trackingScripts ? 'warn' : 'ok',
+                trackingScripts ? {
+                  reason: 'Tracking resources and/or analytics calls detected.',
+                  extra: el('div', null,
+                    evidenceBox('Resources', trackingResourceExamples.slice(0, 10).map((item, idx) => {
+                      if (!item || typeof item !== 'object') return null;
+                      const kind = String(item.kind || 'resource');
+                      const url = String(item.url || '');
+                      const typ = String(item.type || '');
+                      if (!url) return null;
+                      const link = el('a', { href: url, target: '_blank', rel: 'noreferrer', text: url });
+                      const value = typ ? el('span', null, link, ' ', el('span', { class: 'muted', text: '(' + typ + ')' })) : link;
+                      return [kind, value];
+                    })),
+                    evidenceBox('Inline indicators', trackingInlineIndicators.slice(0, 10).map((s, idx) => [String(idx + 1), String(s || '')])),
+                  )
+                } : null),
+              checkLine('Fingerprinting', fingerprinting ? 'Detected' : 'None detected', fingerprinting ? 'warn' : 'ok',
+                fingerprinting ? {
+                  reason: 'Fingerprinting-related APIs/libraries detected.',
+                  extra: evidenceBox('Indicators', fingerprintingIndicators.slice(0, 10).map((s, idx) => [String(idx + 1), String(s || '')])),
+                } : null),
+            ], { tone: (trackingScripts || fingerprinting) ? 'warn' : 'ok' }),
+          );
+
+          // Generate summary bar after cards are built
+          const summaryBar = securitySummaryBar(cards);
 
           const urlscanQ = urlscanQuery(finalUrl);
           const urlscanDomain = registrableDomain(hostnameFromUrl(finalUrl));
@@ -2377,7 +2701,7 @@
             el('a', { class: 'btn success', href: vtHref, target: '_blank', rel: 'noreferrer', text: 'Check on VirusTotal' }),
           );
 
-          section('Security Analysis', el('div', null, cards, actions));
+          section('Security Analysis', el('div', null, summaryBar, cards, actions));
         }
 
         // --- Page Information ---

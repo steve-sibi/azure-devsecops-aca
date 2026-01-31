@@ -245,9 +245,9 @@
     }
 
     .app {
-      max-width: 1440px;
+      max-width: 1920px;
       margin: 0 auto;
-      padding: clamp(1.25rem, 2vw, 2rem) clamp(1rem, 3vw, 2.25rem) 3rem;
+      padding: clamp(1.25rem, 2vw, 2rem) clamp(1.5rem, 2vw, 3rem) 3rem;
     }
 
     .header {
@@ -1215,30 +1215,30 @@
           return;
         }
 
-	        for (const item of items) {
-	          const verdict = String(item.verdict || '');
-	          const verdictBadge = makeBadge(verdictKind(verdict), verdict ? verdict.toUpperCase() : '—');
+        for (const item of items) {
+          const verdict = String(item.verdict || '');
+          const verdictBadge = makeBadge(verdictKind(verdict), verdict ? verdict.toUpperCase() : '—');
 
-	          const viewBtn = el('button', { type: 'button' }, 'View');
-	          viewBtn.addEventListener('click', () => showResult(item.result || item));
+          const viewBtn = el('button', { type: 'button' }, 'View');
+          viewBtn.addEventListener('click', () => showResult(item.result || item));
 
-	          const copyShaBtn = el('button', { type: 'button' }, 'Copy SHA');
-	          copyShaBtn.addEventListener('click', () => copyText(String(item.sha256 || '')));
-	          copyShaBtn.disabled = !item.sha256;
+          const copyShaBtn = el('button', { type: 'button' }, 'Copy SHA');
+          copyShaBtn.addEventListener('click', () => copyText(String(item.sha256 || '')));
+          copyShaBtn.disabled = !item.sha256;
 
-	          const actions = el('div', { class: 'job-actions' }, viewBtn, copyShaBtn);
+          const actions = el('div', { class: 'job-actions' }, viewBtn, copyShaBtn);
 
-	          historyBodyEl.appendChild(
-	            el('tr', null,
-	              el('td', { class: 'nowrap', 'data-label': 'When', text: formatWhen(item.scanned_at) }),
-	              el('td', { class: 'item-cell', 'data-label': 'Item', title: item.filename || '', text: item.filename || '' }),
-	              el('td', { class: 'nowrap', 'data-label': 'SHA-256', text: (item.sha256 || '').slice(0, 12) + (item.sha256 ? '…' : '') }),
-	              el('td', { class: 'nowrap', 'data-label': 'Verdict' }, verdictBadge),
-	              el('td', { class: 'nowrap', 'data-label': 'Actions' }, actions)
-	            )
-	          );
-	        }
-	      }
+          historyBodyEl.appendChild(
+            el('tr', null,
+              el('td', { class: 'nowrap', 'data-label': 'When', text: formatWhen(item.scanned_at) }),
+              el('td', { class: 'item-cell', 'data-label': 'Item', title: item.filename || '', text: item.filename || '' }),
+              el('td', { class: 'nowrap', 'data-label': 'SHA-256', text: (item.sha256 || '').slice(0, 12) + (item.sha256 ? '…' : '') }),
+              el('td', { class: 'nowrap', 'data-label': 'Verdict' }, verdictBadge),
+              el('td', { class: 'nowrap', 'data-label': 'Actions' }, actions)
+            )
+          );
+        }
+      }
 
       function kvRow(k, v) {
         const valueNode = (v instanceof Node)
