@@ -1122,6 +1122,31 @@
       word-break: break-word;
     }
 
+    /* HTTP status code colors */
+    .value-code.status-ok {
+      background: var(--success-soft);
+      border-color: rgba(22, 163, 74, 0.4);
+      color: var(--success);
+    }
+
+    .value-code.status-warn {
+      background: rgba(234, 179, 8, 0.14);
+      border-color: rgba(234, 179, 8, 0.4);
+      color: rgba(234, 179, 8, 1);
+    }
+
+    .value-code.status-bad {
+      background: var(--danger-soft);
+      border-color: rgba(220, 38, 38, 0.4);
+      color: var(--danger);
+    }
+
+    /* Timestamp styling */
+    .timestamp-value {
+      font-variant-numeric: tabular-nums;
+      cursor: help;
+    }
+
     .value-link {
       text-decoration: none;
       border-bottom: 1px dashed rgba(148, 163, 184, 0.45);
@@ -2384,6 +2409,45 @@
           return node;
         }
 
+        // Format timestamp to readable date with time and timezone
+        function formatTimestamp(isoStr) {
+          try {
+            const d = new Date(isoStr);
+            if (isNaN(d.getTime())) return String(isoStr);
+
+            const options = {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+              second: '2-digit',
+              timeZoneName: 'short'
+            };
+            return d.toLocaleString('en-US', options);
+          } catch (_) {
+            return String(isoStr);
+          }
+        }
+
+        function timestampValue(isoStr) {
+          if (!isoStr) return '';
+          const formatted = formatTimestamp(isoStr);
+          return el('span', { class: 'timestamp-value', title: String(isoStr), text: formatted });
+        }
+
+        // HTTP status code with color coding
+        function httpStatusValue(code) {
+          const c = Number(code);
+          let kind = 'info';
+          if (c >= 200 && c < 300) kind = 'ok';
+          else if (c >= 300 && c < 400) kind = 'warn';
+          else if (c >= 400) kind = 'bad';
+
+          const node = el('code', { class: 'value-code status-' + kind, text: String(code) });
+          return node;
+        }
+
         function linkValue(url, opts) {
           const href = String(url || '');
           const node = el('a', { class: 'value-link', href: href, target: '_blank', rel: 'noreferrer', text: href });
@@ -2638,8 +2702,8 @@
         block('Scan', [
           ['Status', statusBadge],
           ['Job id', data.job_id ? codeValue(String(data.job_id), { copy: true, copyLabel: 'Copy job id' }) : ''],
-          ['Submitted', data.submitted_at || ''],
-          ['Scanned', data.scanned_at || ''],
+          ['Submitted', data.submitted_at ? timestampValue(data.submitted_at) : ''],
+          ['Scanned', data.scanned_at ? timestampValue(data.scanned_at) : ''],
           ['Duration', data.duration_ms != null ? formatMs(data.duration_ms) : ''],
           ['Error', data.error || ''],
         ].filter(Boolean), { tone: statusKind(status) });
@@ -2649,7 +2713,7 @@
           (requestedUrl && finalUrl && requestedUrl !== finalUrl)
             ? ['Original URL', linkValue(requestedUrl, { copy: true, copyLabel: 'Copy original url' })]
             : null,
-          ['HTTP status', (dl && dl.status_code != null) ? codeValue(String(dl.status_code)) : ''],
+          ['HTTP status', (dl && dl.status_code != null) ? httpStatusValue(dl.status_code) : ''],
           ['Content type', (dl && dl.content_type) ? codeValue(String(dl.content_type)) : ''],
           ['Redirects', (dl && dl.redirect_count != null) ? codeValue(String(dl.redirect_count)) : ''],
         ].filter(Boolean), { tone: 'info' });
