@@ -489,6 +489,67 @@
       border-right-color: var(--primary-soft-border);
     }
 
+    /* API key input with toggle */
+    .api-key-group {
+      display: flex;
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(148, 163, 184, 0.06);
+      overflow: hidden;
+      transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    .api-key-group:focus-within {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px var(--ring);
+      background: rgba(148, 163, 184, 0.04);
+    }
+
+    .api-key-input {
+      flex: 1 1 auto;
+      border: none;
+      background: transparent;
+      padding: 0.65rem 0.75rem;
+      width: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      letter-spacing: 0.02em;
+    }
+
+    .api-key-input:focus,
+    .api-key-input:focus-visible {
+      outline: none;
+      box-shadow: none;
+      background: transparent;
+    }
+
+    .api-key-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0.75rem;
+      border: none;
+      background: rgba(148, 163, 184, 0.08);
+      color: var(--muted);
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease;
+      font-size: 1rem;
+    }
+
+    .api-key-toggle:hover {
+      background: rgba(148, 163, 184, 0.15);
+      color: var(--text);
+    }
+
+    .api-key-saved {
+      display: inline-flex;
+      align-items: center;
+      padding: 0 0.6rem;
+      color: var(--success-ink);
+      background: var(--success);
+      font-size: 0.85rem;
+    }
+
     .help {
       margin-top: 0.35rem;
       font-size: 0.85rem;
@@ -587,6 +648,22 @@
       font-size: 0.85rem;
     }
 
+    .timestamp-cell {
+      font-size: 0.9rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* Eye icon for API key toggle */
+    .eye-icon {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      fill: none;
+    }
+
     pre {
       margin: 0;
       background: var(--code-bg);
@@ -633,6 +710,43 @@
 
     tr:last-child td {
       border-bottom: none;
+    }
+
+    tbody tr {
+      transition: background 100ms ease;
+    }
+
+    tbody tr:hover {
+      background: rgba(148, 163, 184, 0.06);
+    }
+
+    .job-id-cell {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .copy-job-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.2rem;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background 100ms ease, color 100ms ease;
+      font-size: 0.75rem;
+    }
+
+    .copy-job-btn:hover {
+      background: rgba(148, 163, 184, 0.15);
+      color: var(--text);
+    }
+
+    .copy-job-btn.copied {
+      color: var(--success-ink);
     }
 
     .nowrap {
@@ -2012,7 +2126,16 @@
           <h2 id="new-scan-heading">New scan</h2>
           <div class="field">
             <label for="apiKey">API key <span class="muted">(header: __API_KEY_HEADER__)</span></label>
-            <input id="apiKey" autocomplete="off" placeholder="Paste API key" />
+            <div class="api-key-group">
+              <input id="apiKey" class="api-key-input" type="password" autocomplete="off" placeholder="Paste API key" />
+              <button id="apiKeyToggle" type="button" class="api-key-toggle" title="Show/hide API key"
+                aria-label="Toggle API key visibility"><svg class="eye-icon" viewBox="0 0 24 24">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg></button>
+              <span id="apiKeySaved" class="api-key-saved" style="display: none;"
+                title="Saved to local storage">✓</span>
+            </div>
             <div class="help">Saved in this browser only (local storage).</div>
           </div>
           <div class="field">
@@ -2103,6 +2226,8 @@
       };
 
       const apiKeyEl = document.getElementById('apiKey');
+      const apiKeyToggleEl = document.getElementById('apiKeyToggle');
+      const apiKeySavedEl = document.getElementById('apiKeySaved');
       const urlEl = document.getElementById('url');
       const outEl = document.getElementById('out');
       const summaryOutEl = document.getElementById('summaryOut');
@@ -3376,6 +3501,27 @@
         try { return dtf.format(new Date(iso)); } catch (_) { return iso; }
       }
 
+      function formatRelativeTime(iso) {
+        if (!iso) return '';
+        try {
+          const date = new Date(iso);
+          const now = Date.now();
+          const diff = now - date.getTime();
+          const seconds = Math.floor(diff / 1000);
+          const minutes = Math.floor(seconds / 60);
+          const hours = Math.floor(minutes / 60);
+          const days = Math.floor(hours / 24);
+
+          if (seconds < 60) return 'just now';
+          if (minutes < 60) return minutes === 1 ? '1 min ago' : minutes + ' mins ago';
+          if (hours < 24) return hours === 1 ? '1 hour ago' : hours + ' hours ago';
+          if (days < 7) return days === 1 ? 'yesterday' : days + ' days ago';
+          return formatWhen(iso);
+        } catch (_) {
+          return formatWhen(iso);
+        }
+      }
+
       function statusKind(status) {
         if (status === 'completed') return 'ok';
         if (status === 'error') return 'warn';
@@ -3474,7 +3620,8 @@
           const hs = historyStatus(rawStatus);
 
           const whenIso = item.submitted_at || item.updated_at || item.last_checked_at || '';
-          const when = formatWhen(whenIso);
+          const when = formatRelativeTime(whenIso);
+          const whenFull = formatWhen(whenIso);
 
           const badge = makeBadge(hs.kind, hs.label);
           badge.title = hs.title;
@@ -3483,9 +3630,9 @@
           const visibility = String(item.visibility || '').trim().toLowerCase();
 
           const whenTitleParts = [];
-          if (item.submitted_at) whenTitleParts.push('submitted: ' + String(item.submitted_at));
-          if (item.scanned_at) whenTitleParts.push('scanned: ' + String(item.scanned_at));
-          const whenTitle = whenTitleParts.length ? whenTitleParts.join('\n') : '';
+          if (item.submitted_at) whenTitleParts.push('Submitted: ' + formatWhen(item.submitted_at));
+          if (item.scanned_at) whenTitleParts.push('Scanned: ' + formatWhen(item.scanned_at));
+          const whenTitle = whenTitleParts.length ? whenTitleParts.join('\n') : whenFull;
 
           const url = String(item.url || '').trim();
           const urlLink = url
@@ -3494,7 +3641,7 @@
 
           const badges = el('div', { class: 'badge-row' }, badge);
           if (deduped) {
-            const scannedLabel = item.scanned_at ? formatWhen(item.scanned_at) : '';
+            const scannedLabel = item.scanned_at ? formatRelativeTime(item.scanned_at) : '';
             const cacheBadge = makeBadge('info', 'cache');
             cacheBadge.title = scannedLabel ? ('Cache hit (scanned ' + scannedLabel + ')') : 'Cache hit';
             badges.appendChild(cacheBadge);
@@ -3527,12 +3674,31 @@
           actions.appendChild(viewBtn);
           actions.appendChild(useBtn);
 
+          // Job ID cell with copy button
+          const jobCode = el('code', { text: shortJob, title: job });
+          const copyJobBtn = el('button', { type: 'button', class: 'copy-job-btn', title: 'Copy job ID', 'aria-label': 'Copy job ID', text: '📋' });
+          copyJobBtn.addEventListener('click', async () => {
+            if (!job) return;
+            try {
+              await navigator.clipboard.writeText(job);
+              copyJobBtn.textContent = '✓';
+              copyJobBtn.classList.add('copied');
+              setTimeout(() => {
+                copyJobBtn.textContent = '📋';
+                copyJobBtn.classList.remove('copied');
+              }, 1500);
+            } catch (e) {
+              showToast('Failed to copy job ID', 'error');
+            }
+          });
+          const jobIdCell = el('span', { class: 'job-id-cell' }, jobCode, copyJobBtn);
+
           const row = el(
             'tr',
             null,
-            el('td', { class: 'nowrap muted small', 'data-label': 'When', text: when, title: whenTitle }),
+            el('td', { class: 'timestamp-cell', 'data-label': 'When', text: when, title: whenTitle }),
             el('td', { class: 'url-cell', 'data-label': 'URL' }, urlLink),
-            el('td', { class: 'nowrap', 'data-label': 'Job' }, el('code', { text: shortJob, title: job })),
+            el('td', { class: 'nowrap', 'data-label': 'Job' }, jobIdCell),
             el('td', { class: 'nowrap', 'data-label': 'Status' }, badges),
             el('td', { class: 'nowrap', 'data-label': 'Actions' }, actions)
           );
@@ -3696,8 +3862,22 @@
         apiKeyEl.value = stored;
         if (stored && !localStorage.getItem(LS.apiKey)) localStorage.setItem(LS.apiKey, stored);
 
+        // Show saved indicator if API key exists
+        if (stored) apiKeySavedEl.style.display = 'inline-flex';
+
+        // API key visibility toggle
+        apiKeyToggleEl.addEventListener('click', () => {
+          const isPassword = apiKeyEl.type === 'password';
+          apiKeyEl.type = isPassword ? 'text' : 'password';
+          apiKeyToggleEl.innerHTML = isPassword
+            ? '<svg class="eye-icon" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+            : '<svg class="eye-icon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+          apiKeyToggleEl.title = isPassword ? 'Hide API key' : 'Show API key';
+        });
+
         apiKeyEl.addEventListener('input', () => {
           localStorage.setItem(LS.apiKey, apiKeyEl.value);
+          apiKeySavedEl.style.display = apiKeyEl.value.trim() ? 'inline-flex' : 'none';
           scheduleHistoryRefresh(450);
         });
         const stripSchemeIfPresent = () => {

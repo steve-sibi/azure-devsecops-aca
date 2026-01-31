@@ -357,6 +357,112 @@
       color: var(--muted);
     }
 
+    .timestamp-cell {
+      font-size: 0.9rem;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .sha-cell {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .copy-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0.2rem;
+      border: none;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      border-radius: 4px;
+      transition: background 100ms ease, color 100ms ease;
+      font-size: 0.75rem;
+    }
+
+    .copy-btn:hover {
+      background: rgba(148, 163, 184, 0.15);
+      color: var(--text);
+    }
+
+    .copy-btn.copied {
+      color: var(--success-ink);
+    }
+
+    /* Eye icon for API key toggle */
+    .eye-icon {
+      width: 18px;
+      height: 18px;
+      stroke: currentColor;
+      stroke-width: 2;
+      fill: none;
+    }
+
+    /* API key input with toggle */
+    .api-key-group {
+      display: flex;
+      width: 100%;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: rgba(148, 163, 184, 0.06);
+      overflow: hidden;
+      transition: box-shadow 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    .api-key-group:focus-within {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 4px var(--ring);
+      background: rgba(148, 163, 184, 0.04);
+    }
+
+    .api-key-input {
+      flex: 1 1 auto;
+      border: none;
+      background: transparent;
+      padding: 0.65rem 0.75rem;
+      width: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      letter-spacing: 0.02em;
+    }
+
+    .api-key-input:focus,
+    .api-key-input:focus-visible {
+      outline: none;
+      box-shadow: none;
+      background: transparent;
+    }
+
+    .api-key-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 0.75rem;
+      border: none;
+      background: rgba(148, 163, 184, 0.08);
+      color: var(--muted);
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease;
+      font-size: 1rem;
+    }
+
+    .api-key-toggle:hover {
+      background: rgba(148, 163, 184, 0.15);
+      color: var(--text);
+    }
+
+    .api-key-saved {
+      display: inline-flex;
+      align-items: center;
+      padding: 0 0.6rem;
+      color: var(--success-ink);
+      background: var(--success);
+      font-size: 0.85rem;
+    }
+
     .actions {
       display: flex;
       gap: 0.6rem;
@@ -594,6 +700,15 @@
       }
     }
 
+    .history-pager {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+      margin-top: 0.75rem;
+      flex-wrap: wrap;
+    }
+
     .tabs {
       display: flex;
       gap: 0.5rem;
@@ -633,18 +748,19 @@
 
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 1.15rem;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1rem;
       align-items: start;
     }
 
-    @media (max-width: 1100px) {
-      .summary-grid {
-        grid-template-columns: repeat(2, 1fr);
-      }
+    .summary-col {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+      min-width: 0;
     }
 
-    @media (max-width: 700px) {
+    @media (max-width: 900px) {
       .summary-grid {
         grid-template-columns: 1fr;
       }
@@ -653,21 +769,14 @@
     .summary-block {
       --dot: var(--primary);
       --dot-soft: var(--primary-soft);
-      border: 1px solid rgba(148, 163, 184, 0.22);
+      border: 1px solid var(--border);
       border-radius: 14px;
-      padding: 1rem 1.1rem;
-      background: linear-gradient(180deg, rgba(148, 163, 184, 0.07), rgba(148, 163, 184, 0.02));
-      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.06);
+      padding: 0.95rem;
+      background: rgba(148, 163, 184, 0.04);
       backdrop-filter: blur(10px);
       align-self: start;
       height: fit-content;
       min-width: 0;
-      transition: transform 80ms ease, border-color 120ms ease, box-shadow 120ms ease;
-    }
-
-    .summary-block:hover {
-      transform: translateY(-1px);
-      border-color: rgba(148, 163, 184, 0.35);
     }
 
     .summary-block.span-all {
@@ -677,42 +786,25 @@
     .summary-block.tone-ok {
       --dot: var(--success);
       --dot-soft: var(--success-soft);
-      border-color: rgba(22, 163, 74, 0.5);
-    }
-
-    .summary-block.tone-ok:hover {
-      border-color: rgba(22, 163, 74, 0.6);
-    }
-
-    .summary-block.tone-bad {
-      --dot: var(--danger);
-      --dot-soft: var(--danger-soft);
-      border-color: rgba(220, 38, 38, 0.5);
-    }
-
-    .summary-block.tone-bad:hover {
-      border-color: rgba(220, 38, 38, 0.6);
     }
 
     .summary-block.tone-warn {
       --dot: rgba(234, 179, 8, 1);
       --dot-soft: rgba(234, 179, 8, 0.14);
-      border-color: rgba(234, 179, 8, 0.6);
     }
 
-    .summary-block.tone-warn:hover {
-      border-color: rgba(234, 179, 8, 0.7);
+    .summary-block.tone-bad {
+      --dot: var(--danger);
+      --dot-soft: var(--danger-soft);
     }
 
     .summary-block h3 {
-      margin: 0 0 0.85rem;
-      font-size: 0.98rem;
-      font-weight: 800;
-      letter-spacing: -0.01em;
+      margin: 0 0 0.75rem;
+      font-size: 0.95rem;
       display: flex;
       align-items: center;
       gap: 0.55rem;
-      padding-bottom: 0.65rem;
+      padding-bottom: 0.55rem;
       border-bottom: 1px solid rgba(148, 163, 184, 0.14);
     }
 
@@ -723,29 +815,41 @@
       border-radius: 999px;
       background: var(--dot);
       box-shadow: 0 0 0 4px var(--dot-soft);
-      opacity: 0.95;
+      opacity: 0.9;
       flex: 0 0 auto;
     }
 
     .summary-title {
-      font-weight: 800;
+      font-weight: 700;
       letter-spacing: -0.01em;
     }
 
+    .summary-meta {
+      margin-left: auto;
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+      justify-content: flex-end;
+    }
+
     dl.kv {
-      display: flex;
-      flex-direction: column;
-      gap: 0.15rem;
+      display: block;
       margin: 0;
     }
 
+    dl.kv.kv-wide .kv-row {
+      grid-template-columns: 1fr;
+    }
+
+    dl.kv.kv-wide dt {
+      display: none;
+    }
+
     dl.kv .kv-row {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-      gap: 0.6rem;
-      padding: 0.45rem 0;
-      border-radius: 8px;
+      display: grid;
+      grid-template-columns: minmax(120px, 170px) 1fr;
+      gap: 0.35rem 0.8rem;
+      padding: 0.4rem 0;
     }
 
     dl.kv .kv-row>* {
@@ -753,26 +857,24 @@
     }
 
     dl.kv .kv-row+.kv-row {
-      border-top: 1px solid rgba(148, 163, 184, 0.1);
+      border-top: 1px solid rgba(148, 163, 184, 0.14);
     }
 
     dl.kv dt {
       color: var(--muted);
-      font-size: 0.75rem;
-      font-weight: 600;
-      letter-spacing: 0.04em;
+      font-size: 0.72rem;
+      letter-spacing: 0.06em;
       text-transform: uppercase;
-      flex-shrink: 0;
+      padding-top: 0.12rem;
     }
 
     dl.kv dd {
       margin: 0;
       min-width: 0;
       overflow-wrap: anywhere;
-      font-weight: 600;
+      font-weight: 500;
       font-variant-numeric: tabular-nums;
       line-height: 1.35;
-      text-align: right;
     }
 
     dl.kv dd .value-code {
@@ -783,15 +885,45 @@
       border-radius: 6px;
     }
 
+    .value-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.5rem;
+      justify-content: space-between;
+      width: 100%;
+    }
+
+    .value-row> :first-child {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    .value-row .icon-btn {
+      flex: 0 0 auto;
+    }
+
+    .icon-btn {
+      padding: 0.3rem 0.55rem;
+      border-radius: 10px;
+      font-size: 0.78rem;
+      line-height: 1;
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      background: rgba(148, 163, 184, 0.08);
+    }
+
+    .icon-btn:hover:not(:disabled) {
+      background: rgba(148, 163, 184, 0.14);
+      transform: none;
+    }
+
     @media (max-width: 520px) {
       dl.kv .kv-row {
-        flex-direction: column;
-        align-items: flex-start;
+        grid-template-columns: 1fr;
         gap: 0.2rem;
       }
 
-      dl.kv dd {
-        text-align: left;
+      dl.kv dt {
+        padding-top: 0;
       }
 
       .app {
@@ -932,7 +1064,16 @@
           <h2 id="new-scan-heading">New scan</h2>
           <div class="field">
             <label for="apiKey">API key <span class="muted">(header: __API_KEY_HEADER__)</span></label>
-            <input id="apiKey" autocomplete="off" placeholder="Paste API key" />
+            <div class="api-key-group">
+              <input id="apiKey" class="api-key-input" type="password" autocomplete="off" placeholder="Paste API key" />
+              <button id="apiKeyToggle" type="button" class="api-key-toggle" title="Show/hide API key"
+                aria-label="Toggle API key visibility"><svg class="eye-icon" viewBox="0 0 24 24">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </svg></button>
+              <span id="apiKeySaved" class="api-key-saved" style="display: none;"
+                title="Saved to local storage">✓</span>
+            </div>
             <div class="help">Saved in this browser only (local storage).</div>
           </div>
 
@@ -992,6 +1133,11 @@
               <tbody id="historyBody"></tbody>
             </table>
           </div>
+          <div class="history-pager" aria-label="History pagination">
+            <button id="historyPrev" type="button">Prev</button>
+            <span id="historyPageInfo" class="muted small"></span>
+            <button id="historyNext" type="button">Next</button>
+          </div>
           <p class="muted small">History is stored locally in your browser.</p>
         </section>
 
@@ -1031,6 +1177,8 @@
       };
 
       const apiKeyEl = document.getElementById('apiKey');
+      const apiKeyToggleEl = document.getElementById('apiKeyToggle');
+      const apiKeySavedEl = document.getElementById('apiKeySaved');
       const fileInputEl = document.getElementById('fileInput');
       const payloadEl = document.getElementById('payload');
       const payloadBase64El = document.getElementById('payloadBase64');
@@ -1043,6 +1191,13 @@
       const clearHistoryEl = document.getElementById('clearHistory');
       const historyBodyEl = document.getElementById('historyBody');
       const historyFilterEl = document.getElementById('historyFilter');
+      const historyPrevEl = document.getElementById('historyPrev');
+      const historyNextEl = document.getElementById('historyNext');
+      const historyPageInfoEl = document.getElementById('historyPageInfo');
+
+      const HISTORY_PAGE_SIZE = 5;
+      let historyPage = 1;
+      let historyLastRenderedAt = null;
       const fileHelpEl = document.getElementById('fileHelp');
       const toastContainerEl = document.getElementById('toastContainer');
 
@@ -1154,6 +1309,27 @@
         try { return dtf.format(new Date(iso)); } catch (_) { return iso; }
       }
 
+      function formatRelativeTime(iso) {
+        if (!iso) return '';
+        try {
+          const date = new Date(iso);
+          const now = Date.now();
+          const diff = now - date.getTime();
+          const seconds = Math.floor(diff / 1000);
+          const minutes = Math.floor(seconds / 60);
+          const hours = Math.floor(minutes / 60);
+          const days = Math.floor(hours / 24);
+
+          if (seconds < 60) return 'just now';
+          if (minutes < 60) return minutes === 1 ? '1 min ago' : minutes + ' mins ago';
+          if (hours < 24) return hours === 1 ? '1 hour ago' : hours + ' hours ago';
+          if (days < 7) return days === 1 ? 'yesterday' : days + ' days ago';
+          return formatWhen(iso);
+        } catch (_) {
+          return formatWhen(iso);
+        }
+      }
+
       // Format timestamp with timezone for summary display
       function formatTimestamp(iso) {
         if (!iso) return '';
@@ -1245,7 +1421,10 @@
 
       function loadApiKey() {
         const key = (localStorage.getItem(LS.apiKey) || '').trim() || (localStorage.getItem(LS.legacyApiKey) || '').trim();
-        if (key) apiKeyEl.value = key;
+        if (key) {
+          apiKeyEl.value = key;
+          apiKeySavedEl.style.display = 'inline-flex';
+        }
       }
 
       function makeLocalId(prefix) {
@@ -1302,33 +1481,87 @@
           return hay.includes(q);
         });
 
+        // Sort by most recent first
+        items.sort((a, b) => {
+          const aMs = Date.parse(a.submitted_at || a.scanned_at || 0);
+          const bMs = Date.parse(b.submitted_at || b.scanned_at || 0);
+          return bMs - aMs;
+        });
+
+        const total = items.length;
+        const totalPages = Math.max(1, Math.ceil(total / HISTORY_PAGE_SIZE));
+        if (historyPage > totalPages) historyPage = totalPages;
+        if (historyPage < 1) historyPage = 1;
+
+        historyPrevEl.disabled = historyPage <= 1;
+        historyNextEl.disabled = historyPage >= totalPages;
+
+        historyLastRenderedAt = new Date();
+        const updated = historyLastRenderedAt ? formatRelativeTime(historyLastRenderedAt.toISOString()) : '';
+        historyPageInfoEl.textContent = `Page ${historyPage}/${totalPages} · ${total} scan${total === 1 ? '' : 's'}${updated ? ' · Updated ' + updated : ''}`;
+
         if (!items.length) {
           historyBodyEl.appendChild(
             el('tr', null,
-              el('td', { class: 'muted', colspan: '5', text: 'No history yet.' })
+              el('td', { class: 'muted', colspan: '5', text: q ? 'No matching scans.' : 'No history yet.' })
             )
           );
           return;
         }
 
-        for (const item of items) {
+        const start = (historyPage - 1) * HISTORY_PAGE_SIZE;
+        const pageItems = items.slice(start, start + HISTORY_PAGE_SIZE);
+
+        for (const item of pageItems) {
           const verdict = String(item.verdict || '');
           const verdictBadge = makeBadge(verdictKind(verdict), verdict ? verdict.toUpperCase() : '—');
 
           const viewBtn = el('button', { type: 'button' }, 'View');
-          viewBtn.addEventListener('click', () => showResult(item.result || item));
+          viewBtn.addEventListener('click', () => {
+            const result = item.result || item;
+            // Ensure submitted_at is available in the result for display
+            if (item.submitted_at && !result.submitted_at) {
+              result.submitted_at = item.submitted_at;
+            }
+            showResult(result);
+          });
 
-          const copyShaBtn = el('button', { type: 'button' }, 'Copy SHA');
-          copyShaBtn.addEventListener('click', () => copyText(String(item.sha256 || '')));
-          copyShaBtn.disabled = !item.sha256;
+          const actions = el('div', { class: 'job-actions' }, viewBtn);
 
-          const actions = el('div', { class: 'job-actions' }, viewBtn, copyShaBtn);
+          const whenIso = item.submitted_at || item.scanned_at;
+          const whenRelative = formatRelativeTime(whenIso);
+          const whenTitleParts = [];
+          if (item.submitted_at) whenTitleParts.push('Submitted: ' + formatWhen(item.submitted_at));
+          if (item.scanned_at) whenTitleParts.push('Scanned: ' + formatWhen(item.scanned_at));
+          const whenTitle = whenTitleParts.length ? whenTitleParts.join('\n') : formatWhen(whenIso);
+
+          // SHA cell with copy button
+          const sha = item.sha256 || '';
+          const shortSha = sha ? (sha.slice(0, 12) + '…') : '';
+          const shaCode = el('code', { text: shortSha, title: sha });
+          const copyShaInlineBtn = el('button', { type: 'button', class: 'copy-btn', title: 'Copy SHA-256', 'aria-label': 'Copy SHA-256', text: '📋' });
+          copyShaInlineBtn.disabled = !sha;
+          copyShaInlineBtn.addEventListener('click', async () => {
+            if (!sha) return;
+            try {
+              await navigator.clipboard.writeText(sha);
+              copyShaInlineBtn.textContent = '✓';
+              copyShaInlineBtn.classList.add('copied');
+              setTimeout(() => {
+                copyShaInlineBtn.textContent = '📋';
+                copyShaInlineBtn.classList.remove('copied');
+              }, 1500);
+            } catch (e) {
+              showToast('Failed to copy SHA-256', 'error');
+            }
+          });
+          const shaCell = el('span', { class: 'sha-cell' }, shaCode, sha ? copyShaInlineBtn : null);
 
           historyBodyEl.appendChild(
             el('tr', null,
-              el('td', { class: 'nowrap', 'data-label': 'When', text: formatWhen(item.scanned_at) }),
+              el('td', { class: 'timestamp-cell', 'data-label': 'When', text: whenRelative, title: whenTitle }),
               el('td', { class: 'item-cell', 'data-label': 'Item', title: item.filename || '', text: item.filename || '' }),
-              el('td', { class: 'nowrap', 'data-label': 'SHA-256', text: (item.sha256 || '').slice(0, 12) + (item.sha256 ? '…' : '') }),
+              el('td', { 'data-label': 'SHA-256' }, shaCell),
               el('td', { class: 'nowrap', 'data-label': 'Verdict' }, verdictBadge),
               el('td', { class: 'nowrap', 'data-label': 'Actions' }, actions)
             )
@@ -1344,6 +1577,33 @@
           el('dt', { text: k }),
           el('dd', null, valueNode)
         );
+      }
+
+      function makeCopyableValue(text, displayText) {
+        const val = String(text || '');
+        const display = displayText || val;
+
+        const codeEl = el('code', { class: 'value-code', text: display });
+
+        if (!val) return codeEl;
+
+        const copyBtn = el('button', {
+          type: 'button',
+          class: 'icon-btn',
+          title: 'Copy',
+          'aria-label': 'Copy',
+          text: 'Copy'
+        });
+
+        copyBtn.addEventListener('click', async () => {
+          try {
+            await navigator.clipboard.writeText(val);
+          } catch (e) {
+            showToast('Failed to copy', 'error');
+          }
+        });
+
+        return el('span', { class: 'value-row' }, codeEl, copyBtn);
       }
 
       function block(title, rows, opts) {
@@ -1366,6 +1626,7 @@
           ['Verdict', makeBadge(verdictKind(verdict), verdict ? verdict.toUpperCase() : 'UNKNOWN')],
         ];
         if (r.signature) verdictRows.push(['Signature', String(r.signature)]);
+        if (r.submitted_at) verdictRows.push(['Submitted', timestampValue(r.submitted_at)]);
         if (r.scanned_at) verdictRows.push(['Scanned', timestampValue(r.scanned_at)]);
         if (r.duration_ms != null) verdictRows.push(['Scan time', String(r.duration_ms) + ' ms']);
         summaryOutEl.appendChild(block('Verdict', verdictRows, { tone }));
@@ -1374,7 +1635,7 @@
           ['Type', String(r.input_type || '')],
           ['Name', String(r.filename || '')],
           ['Size', formatBytes(r.size_bytes)],
-          ['SHA-256', String(r.sha256 || '')],
+          ['SHA-256', makeCopyableValue(r.sha256)],
         ];
         summaryOutEl.appendChild(block('Artifact', fileRows, { tone: 'info' }));
 
@@ -1481,6 +1742,7 @@
 
           const pending = {
             scan_id: pendingId,
+            submitted_at: startedAt,
             scanned_at: startedAt,
             input_type: inputType,
             filename: label,
@@ -1493,6 +1755,7 @@
           showResult(pending);
           upsertHistory({
             scan_id: pendingId,
+            submitted_at: startedAt,
             scanned_at: startedAt,
             filename: label,
             sha256: '',
@@ -1503,10 +1766,12 @@
           pendingInserted = true;
 
           const resp = await apiForm('/file/scan', fd);
+          resp.submitted_at = startedAt; // Preserve submitted time
           showResult(resp);
           history = history.filter(x => x && x.scan_id !== pendingId);
           upsertHistory({
             scan_id: resp.scan_id || (Math.random().toString(16).slice(2)),
+            submitted_at: startedAt,
             scanned_at: resp.scanned_at,
             filename: resp.filename || label,
             sha256: resp.sha256,
@@ -1526,6 +1791,7 @@
           if (pendingInserted) {
             const errObj = {
               scan_id: pendingId,
+              submitted_at: startedAt,
               scanned_at: startedAt,
               input_type: inputType,
               filename: label,
@@ -1536,6 +1802,7 @@
             showResult(errObj);
             upsertHistory({
               scan_id: pendingId,
+              submitted_at: startedAt,
               scanned_at: startedAt,
               filename: errObj.filename || 'scan failed',
               sha256: '',
@@ -1564,6 +1831,16 @@
 
         fileHelpEl.textContent = FILE_SCAN_MAX_BYTES ? ('Max size: ' + formatBytes(FILE_SCAN_MAX_BYTES)) : '';
 
+        // API key visibility toggle
+        apiKeyToggleEl.addEventListener('click', () => {
+          const isPassword = apiKeyEl.type === 'password';
+          apiKeyEl.type = isPassword ? 'text' : 'password';
+          apiKeyToggleEl.innerHTML = isPassword
+            ? '<svg class="eye-icon" viewBox="0 0 24 24"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+            : '<svg class="eye-icon" viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+          apiKeyToggleEl.title = isPassword ? 'Hide API key' : 'Show API key';
+        });
+
         tabInputFileEl.addEventListener('click', () => setActiveInput('file'));
         tabInputPayloadEl.addEventListener('click', () => setActiveInput('payload'));
 
@@ -1572,12 +1849,29 @@
 
         startEl.addEventListener('click', startScan);
         clearHistoryEl.addEventListener('click', clearHistory);
-        historyFilterEl.addEventListener('input', renderHistory);
+        historyFilterEl.addEventListener('input', () => {
+          historyPage = 1;
+          renderHistory();
+        });
+        historyPrevEl.addEventListener('click', () => {
+          if (historyPage > 1) {
+            historyPage--;
+            renderHistory();
+          }
+        });
+        historyNextEl.addEventListener('click', () => {
+          const totalPages = Math.max(1, Math.ceil(history.length / HISTORY_PAGE_SIZE));
+          if (historyPage < totalPages) {
+            historyPage++;
+            renderHistory();
+          }
+        });
         copyJsonEl.addEventListener('click', copyLastJson);
         copyJson2El.addEventListener('click', copyLastJson);
 
         apiKeyEl.addEventListener('input', () => {
           const v = apiKeyEl.value.trim();
+          apiKeySavedEl.style.display = v ? 'inline-flex' : 'none';
           if (!v) return;
           localStorage.setItem(LS.apiKey, v);
         });
