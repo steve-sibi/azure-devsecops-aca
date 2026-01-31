@@ -633,12 +633,18 @@
 
     .summary-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 1rem;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.15rem;
       align-items: start;
     }
 
-    @media (max-width: 900px) {
+    @media (max-width: 1100px) {
+      .summary-grid {
+        grid-template-columns: repeat(2, 1fr);
+      }
+    }
+
+    @media (max-width: 700px) {
       .summary-grid {
         grid-template-columns: 1fr;
       }
@@ -647,14 +653,21 @@
     .summary-block {
       --dot: var(--primary);
       --dot-soft: var(--primary-soft);
-      border: 1px solid var(--border);
+      border: 1px solid rgba(148, 163, 184, 0.22);
       border-radius: 14px;
-      padding: 0.95rem;
-      background: rgba(148, 163, 184, 0.04);
+      padding: 1rem 1.1rem;
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.07), rgba(148, 163, 184, 0.02));
+      box-shadow: 0 8px 22px rgba(0, 0, 0, 0.06);
       backdrop-filter: blur(10px);
       align-self: start;
       height: fit-content;
       min-width: 0;
+      transition: transform 80ms ease, border-color 120ms ease, box-shadow 120ms ease;
+    }
+
+    .summary-block:hover {
+      transform: translateY(-1px);
+      border-color: rgba(148, 163, 184, 0.35);
     }
 
     .summary-block.span-all {
@@ -664,20 +677,42 @@
     .summary-block.tone-ok {
       --dot: var(--success);
       --dot-soft: var(--success-soft);
+      border-color: rgba(22, 163, 74, 0.5);
+    }
+
+    .summary-block.tone-ok:hover {
+      border-color: rgba(22, 163, 74, 0.6);
     }
 
     .summary-block.tone-bad {
       --dot: var(--danger);
       --dot-soft: var(--danger-soft);
+      border-color: rgba(220, 38, 38, 0.5);
+    }
+
+    .summary-block.tone-bad:hover {
+      border-color: rgba(220, 38, 38, 0.6);
+    }
+
+    .summary-block.tone-warn {
+      --dot: rgba(234, 179, 8, 1);
+      --dot-soft: rgba(234, 179, 8, 0.14);
+      border-color: rgba(234, 179, 8, 0.6);
+    }
+
+    .summary-block.tone-warn:hover {
+      border-color: rgba(234, 179, 8, 0.7);
     }
 
     .summary-block h3 {
-      margin: 0 0 0.75rem;
-      font-size: 0.95rem;
+      margin: 0 0 0.85rem;
+      font-size: 0.98rem;
+      font-weight: 800;
+      letter-spacing: -0.01em;
       display: flex;
       align-items: center;
       gap: 0.55rem;
-      padding-bottom: 0.55rem;
+      padding-bottom: 0.65rem;
       border-bottom: 1px solid rgba(148, 163, 184, 0.14);
     }
 
@@ -688,25 +723,29 @@
       border-radius: 999px;
       background: var(--dot);
       box-shadow: 0 0 0 4px var(--dot-soft);
-      opacity: 0.9;
+      opacity: 0.95;
       flex: 0 0 auto;
     }
 
     .summary-title {
-      font-weight: 700;
+      font-weight: 800;
       letter-spacing: -0.01em;
     }
 
     dl.kv {
-      display: block;
+      display: flex;
+      flex-direction: column;
+      gap: 0.15rem;
       margin: 0;
     }
 
     dl.kv .kv-row {
-      display: grid;
-      grid-template-columns: minmax(120px, 170px) 1fr;
-      gap: 0.35rem 0.8rem;
-      padding: 0.4rem 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.6rem;
+      padding: 0.45rem 0;
+      border-radius: 8px;
     }
 
     dl.kv .kv-row>* {
@@ -714,34 +753,45 @@
     }
 
     dl.kv .kv-row+.kv-row {
-      border-top: 1px solid rgba(148, 163, 184, 0.14);
+      border-top: 1px solid rgba(148, 163, 184, 0.1);
     }
 
     dl.kv dt {
       color: var(--muted);
-      font-size: 0.72rem;
-      letter-spacing: 0.06em;
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.04em;
       text-transform: uppercase;
-      padding-top: 0.12rem;
+      flex-shrink: 0;
     }
 
     dl.kv dd {
       margin: 0;
       min-width: 0;
       overflow-wrap: anywhere;
-      font-weight: 500;
+      font-weight: 600;
       font-variant-numeric: tabular-nums;
       line-height: 1.35;
+      text-align: right;
+    }
+
+    dl.kv dd .value-code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.85rem;
+      background: rgba(148, 163, 184, 0.08);
+      padding: 0.15rem 0.4rem;
+      border-radius: 6px;
     }
 
     @media (max-width: 520px) {
       dl.kv .kv-row {
-        grid-template-columns: 1fr;
+        flex-direction: column;
+        align-items: flex-start;
         gap: 0.2rem;
       }
 
-      dl.kv dt {
-        padding-top: 0;
+      dl.kv dd {
+        text-align: left;
       }
 
       .app {

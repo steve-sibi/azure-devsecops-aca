@@ -1641,8 +1641,8 @@
 
     .split {
       display: grid;
-      grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.65fr);
-      gap: 1rem;
+      grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+      gap: 1.25rem;
       align-items: start;
     }
 
@@ -1650,6 +1650,67 @@
       .split {
         grid-template-columns: 1fr;
       }
+    }
+
+    /* Page metadata card */
+    .page-meta {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+    }
+
+    @media (max-width: 600px) {
+      .page-meta {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .page-meta-item {
+      background: linear-gradient(135deg, rgba(148, 163, 184, 0.08), rgba(148, 163, 184, 0.03));
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 10px;
+      padding: 0.65rem 0.85rem;
+    }
+
+    .page-meta-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 0.25rem;
+    }
+
+    .page-meta-value {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: var(--text);
+      line-height: 1.4;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    /* Headers categories */
+    .headers-section {
+      margin-bottom: 0.85rem;
+    }
+
+    .headers-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .headers-category {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      padding: 0.5rem 0.65rem 0.35rem;
+      background: rgba(148, 163, 184, 0.06);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.14);
     }
 
     .mini-toggle {
@@ -1677,18 +1738,18 @@
       border-radius: 12px;
       background: rgba(148, 163, 184, 0.03);
       overflow: auto;
-      max-height: 280px;
+      max-height: 320px;
       min-width: 0;
     }
 
     .header-row {
       display: grid;
-      grid-template-columns: minmax(140px, 180px) 1fr;
+      grid-template-columns: minmax(140px, 200px) 1fr;
       gap: 0.6rem;
-      padding: 0.5rem 0.65rem;
+      padding: 0.45rem 0.65rem;
       border-bottom: 1px solid rgba(148, 163, 184, 0.14);
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      font-size: 0.86rem;
+      font-size: 0.82rem;
     }
 
     .header-row:last-child {
@@ -1696,8 +1757,8 @@
     }
 
     .header-name {
-      color: var(--success);
-      font-weight: 800;
+      color: var(--primary);
+      font-weight: 700;
     }
 
     .header-value {
@@ -1708,9 +1769,21 @@
     .screenshot {
       border: 1px solid var(--border);
       border-radius: 12px;
-      background: rgba(148, 163, 184, 0.03);
+      background: linear-gradient(180deg, rgba(148, 163, 184, 0.06), rgba(148, 163, 184, 0.02));
       padding: 0.75rem;
       min-width: 0;
+      position: sticky;
+      top: 1rem;
+    }
+
+    .screenshot-label {
+      font-size: 0.72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: var(--muted);
+      margin-bottom: 0.5rem;
+      text-align: center;
     }
 
     .screenshot img {
@@ -1720,38 +1793,150 @@
       display: block;
       background: rgba(148, 163, 184, 0.06);
       cursor: zoom-in;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .screenshot img:hover {
+      transform: scale(1.02);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
     }
 
     .screenshot .placeholder {
       border: 1px dashed rgba(148, 163, 184, 0.4);
       border-radius: 12px;
-      padding: 1rem;
+      padding: 1.5rem 1rem;
       text-align: center;
       color: var(--muted);
-      font-weight: 700;
+      font-weight: 600;
+      font-size: 0.85rem;
     }
 
-    .dns-grid {
+    /* Network Information improvements */
+    .network-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 0.65rem;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      align-items: start;
     }
 
-    @media (max-width: 720px) {
-      .dns-grid {
+    @media (max-width: 900px) {
+      .network-grid {
         grid-template-columns: 1fr;
       }
     }
 
+    .network-card {
+      background: linear-gradient(135deg, rgba(148, 163, 184, 0.08), rgba(148, 163, 184, 0.03));
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 12px;
+      padding: 1rem;
+    }
+
+    .network-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+      padding-bottom: 0.65rem;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+    }
+
+    .network-card-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .network-card-icon {
+      width: 18px;
+      height: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+    }
+
+    .network-card-badge {
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 0.2rem 0.5rem;
+      border-radius: 999px;
+      background: var(--success-soft);
+      color: var(--success);
+    }
+
+    .dns-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
     .dns-item {
       border: 1px solid rgba(148, 163, 184, 0.22);
-      border-radius: 12px;
-      padding: 0.55rem 0.65rem;
-      background: rgba(148, 163, 184, 0.06);
+      border-radius: 8px;
+      padding: 0.45rem 0.7rem;
+      background: rgba(148, 163, 184, 0.04);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.82rem;
       font-variant-numeric: tabular-nums;
-      overflow-wrap: anywhere;
-      font-weight: 700;
+      font-weight: 600;
       color: var(--success);
+      white-space: nowrap;
+    }
+
+    .whois-grid {
+      display: grid;
+      gap: 0.6rem;
+    }
+
+    .whois-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.5rem;
+      padding: 0.4rem 0;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+    }
+
+    .whois-row:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+
+    .whois-label {
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+
+    .whois-value {
+      font-size: 0.88rem;
+      font-weight: 700;
+      color: var(--text);
+      text-align: right;
+    }
+
+    .whois-value.highlight {
+      color: var(--success);
+    }
+
+    .domain-age {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.72rem;
+      font-weight: 700;
+      padding: 0.2rem 0.5rem;
+      border-radius: 999px;
+      background: var(--primary-soft);
+      color: var(--primary);
     }
 
     .modal {
@@ -2724,35 +2909,87 @@
           return 'Screenshot not available';
         }
 
-        if (isTerminal && (headerPairs.length || screenshotUrl || title || description || screenshotMeta)) {
-          const headerList = el('div', { class: 'headers-list' });
-          for (const h of headerPairs.slice(0, 60)) {
+        // Categorize headers for better organization
+        function categorizeHeaders(headers) {
+          const categories = {
+            security: { label: 'Security', headers: [] },
+            caching: { label: 'Caching', headers: [] },
+            content: { label: 'Content', headers: [] },
+            other: { label: 'Other', headers: [] }
+          };
+
+          const securityHeaders = ['content-security-policy', 'content-security-policy-report-only', 'x-frame-options', 'x-xss-protection', 'x-content-type-options', 'strict-transport-security', 'permissions-policy', 'referrer-policy', 'cross-origin-opener-policy', 'cross-origin-embedder-policy', 'cross-origin-resource-policy'];
+          const cachingHeaders = ['cache-control', 'expires', 'etag', 'last-modified', 'age', 'vary', 'pragma'];
+          const contentHeaders = ['content-type', 'content-length', 'content-encoding', 'content-language', 'content-disposition', 'transfer-encoding'];
+
+          for (const h of headers) {
             if (!h || typeof h !== 'object') continue;
-            const name = h.name ? String(h.name) : '';
-            const value = h.value != null ? String(h.value) : '';
+            const name = h.name ? String(h.name).toLowerCase() : '';
             if (!name) continue;
-            headerList.appendChild(el('div', { class: 'header-row' },
-              el('div', { class: 'header-name', text: name + ':' }),
-              el('div', { class: 'header-value', text: value })
+
+            if (securityHeaders.includes(name)) {
+              categories.security.headers.push(h);
+            } else if (cachingHeaders.includes(name)) {
+              categories.caching.headers.push(h);
+            } else if (contentHeaders.includes(name)) {
+              categories.content.headers.push(h);
+            } else {
+              categories.other.headers.push(h);
+            }
+          }
+          return categories;
+        }
+
+        if (isTerminal && (headerPairs.length || screenshotUrl || title || description || screenshotMeta)) {
+          // Page metadata cards
+          const pageMeta = el('div', { class: 'page-meta' });
+          if (title) {
+            pageMeta.appendChild(el('div', { class: 'page-meta-item' },
+              el('div', { class: 'page-meta-label', text: 'Page Title' }),
+              el('div', { class: 'page-meta-value', text: title })
+            ));
+          }
+          if (description) {
+            pageMeta.appendChild(el('div', { class: 'page-meta-item' },
+              el('div', { class: 'page-meta-label', text: 'Description' }),
+              el('div', { class: 'page-meta-value', text: description })
             ));
           }
 
-          const headersToggle = el('details', { class: 'mini-toggle', open: true });
-          const headersSummary = el('summary', { text: 'Hide Details' });
+          // Categorized headers
+          const categories = categorizeHeaders(headerPairs);
+          const headerList = el('div', { class: 'headers-list' });
+
+          for (const [catKey, cat] of Object.entries(categories)) {
+            if (!cat.headers.length) continue;
+            headerList.appendChild(el('div', { class: 'headers-category', text: cat.label }));
+            for (const h of cat.headers) {
+              const name = h.name ? String(h.name) : '';
+              const value = h.value != null ? String(h.value) : '';
+              headerList.appendChild(el('div', { class: 'header-row' },
+                el('div', { class: 'header-name', text: name + ':' }),
+                el('div', { class: 'header-value', text: value })
+              ));
+            }
+          }
+
+          const headersToggle = el('details', { class: 'mini-toggle' });
+          const headersSummary = el('summary', { text: 'Show Response Headers (' + headerPairs.length + ')' });
           headersToggle.addEventListener('toggle', () => {
-            headersSummary.textContent = headersToggle.open ? 'Hide Details' : 'Show Details';
+            headersSummary.textContent = headersToggle.open
+              ? 'Hide Response Headers'
+              : 'Show Response Headers (' + headerPairs.length + ')';
           });
           headersToggle.appendChild(headersSummary);
           headersToggle.appendChild(headerList);
 
           const left = el('div', null,
-            title ? el('div', { class: 'muted small', text: 'Title: ' + title }) : null,
-            description ? el('div', { class: 'muted small', text: 'Description: ' + description }) : null,
-            headersToggle
+            (title || description) ? pageMeta : null,
+            headerPairs.length ? headersToggle : null
           );
 
           const right = el('div', { class: 'screenshot' },
-            el('div', { class: 'muted small', text: 'Page Screenshot (Desktop View)' }),
+            el('div', { class: 'screenshot-label', text: 'Page Screenshot' }),
             screenshotUrl
               ? (() => {
                 const holder = el('div', { class: 'placeholder', text: 'Loading screenshot…' });
@@ -2784,30 +3021,105 @@
         // --- Network Information ---
         const dns = Array.isArray(netInfo && netInfo.dns_addresses) ? netInfo.dns_addresses : [];
         const whois = (netInfo && typeof netInfo.whois === 'object' && netInfo.whois) ? netInfo.whois : null;
+
+        // Calculate domain age helper
+        function calculateDomainAge(creationDateStr) {
+          try {
+            const created = new Date(creationDateStr);
+            if (isNaN(created.getTime())) return null;
+            const now = new Date();
+            const years = Math.floor((now - created) / (365.25 * 24 * 60 * 60 * 1000));
+            if (years < 1) {
+              const months = Math.floor((now - created) / (30.44 * 24 * 60 * 60 * 1000));
+              return months + ' month' + (months !== 1 ? 's' : '') + ' old';
+            }
+            return years + ' year' + (years !== 1 ? 's' : '') + ' old';
+          } catch (_) {
+            return null;
+          }
+        }
+
+        // Format ISO date string to readable format with timezone
+        function formatWhoisDate(dateStr) {
+          try {
+            const d = new Date(dateStr);
+            if (isNaN(d.getTime())) return String(dateStr);
+
+            const options = {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              timeZone: 'UTC',
+              timeZoneName: 'short'
+            };
+            return d.toLocaleDateString('en-US', options);
+          } catch (_) {
+            return String(dateStr);
+          }
+        }
+
         if (isTerminal && (dns.length || whois)) {
-          const dnsGrid = el('div', { class: 'dns-grid' }, ...dns.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) })));
+          const networkGrid = el('div', { class: 'network-grid' });
 
-          const whoisRows = [];
-          if (whois) {
-            if (whois.registrar) whoisRows.push(['Registrar', String(whois.registrar)]);
-            if (whois.creation_date) whoisRows.push(['Creation Date', String(whois.creation_date)]);
-            if (whois.expiration_date) whoisRows.push(['Expiration Date', String(whois.expiration_date)]);
-            if (whois.error) whoisRows.push(['WHOIS Error', String(whois.error)]);
+          // DNS Card
+          if (dns.length) {
+            const dnsCard = el('div', { class: 'network-card' });
+            dnsCard.appendChild(el('div', { class: 'network-card-header' },
+              el('div', { class: 'network-card-title' },
+                el('span', { class: 'network-card-icon', text: '🌐' }),
+                el('span', { text: 'DNS Addresses' })
+              ),
+              el('span', { class: 'network-card-badge', text: dns.length + ' IP' + (dns.length !== 1 ? 's' : '') })
+            ));
+            dnsCard.appendChild(el('div', { class: 'dns-grid' },
+              ...dns.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) }))
+            ));
+            networkGrid.appendChild(dnsCard);
           }
 
-          const whoisDl = el('dl', { class: 'kv' });
-          for (const [k, v] of whoisRows) {
-            const row = el('div', { class: 'kv-row' });
-            row.appendChild(el('dt', { text: k }));
-            row.appendChild(el('dd', { text: v }));
-            whoisDl.appendChild(row);
+          // WHOIS Card
+          if (whois && (whois.registrar || whois.creation_date || whois.expiration_date || whois.error)) {
+            const whoisCard = el('div', { class: 'network-card' });
+            const domainAge = whois.creation_date ? calculateDomainAge(whois.creation_date) : null;
+
+            whoisCard.appendChild(el('div', { class: 'network-card-header' },
+              el('div', { class: 'network-card-title' },
+                el('span', { class: 'network-card-icon', text: '📋' }),
+                el('span', { text: 'WHOIS Information' })
+              ),
+              domainAge ? el('span', { class: 'domain-age', text: domainAge }) : null
+            ));
+
+            const whoisGrid = el('div', { class: 'whois-grid' });
+            if (whois.registrar) {
+              whoisGrid.appendChild(el('div', { class: 'whois-row' },
+                el('span', { class: 'whois-label', text: 'Registrar' }),
+                el('span', { class: 'whois-value', text: String(whois.registrar) })
+              ));
+            }
+            if (whois.creation_date) {
+              whoisGrid.appendChild(el('div', { class: 'whois-row' },
+                el('span', { class: 'whois-label', text: 'Created' }),
+                el('span', { class: 'whois-value highlight', title: String(whois.creation_date), text: formatWhoisDate(whois.creation_date) })
+              ));
+            }
+            if (whois.expiration_date) {
+              whoisGrid.appendChild(el('div', { class: 'whois-row' },
+                el('span', { class: 'whois-label', text: 'Expires' }),
+                el('span', { class: 'whois-value', title: String(whois.expiration_date), text: formatWhoisDate(whois.expiration_date) })
+              ));
+            }
+            if (whois.error) {
+              whoisGrid.appendChild(el('div', { class: 'whois-row' },
+                el('span', { class: 'whois-label', text: 'Error' }),
+                el('span', { class: 'whois-value', text: String(whois.error) })
+              ));
+            }
+            whoisCard.appendChild(whoisGrid);
+            networkGrid.appendChild(whoisCard);
           }
 
-          const body = el('div', null,
-            dns.length ? el('div', null, el('div', { class: 'muted small', text: 'DNS Addresses' }), dnsGrid) : null,
-            whoisRows.length ? el('div', { style: 'margin-top:0.85rem' }, el('div', { class: 'muted small', text: 'WHOIS Information' }), whoisDl) : null
-          );
-          section('Network Information', body);
+          section('Network Information', networkGrid);
         }
 
         if (blocks.length === 0) {
