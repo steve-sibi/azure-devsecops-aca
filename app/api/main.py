@@ -45,6 +45,14 @@ from common.clamav_client import (
     clamd_version,
 )
 from common.config import ConsumerConfig
+from common.job_index import ALLOWED_JOB_STATUSES
+from common.job_index import api_key_hash as hash_api_key
+from common.job_index import build_job_index_record as build_job_record
+from common.job_index import (
+    job_index_partition_key,
+    list_jobs_async,
+    upsert_job_index_record_async,
+)
 from common.limits import get_api_limits, get_file_scan_limits
 from common.logging_config import (
     clear_correlation_id,
@@ -65,9 +73,6 @@ from common.screenshot_store import (
     get_screenshot_redis_async,
     redis_screenshot_key,
 )
-from common.job_index import ALLOWED_JOB_STATUSES, api_key_hash as hash_api_key
-from common.job_index import job_index_partition_key, list_jobs_async, upsert_job_index_record_async
-from common.job_index import build_job_index_record as build_job_record
 from common.url_dedupe import (
     UrlDedupeConfig,
     build_url_index_record,
@@ -110,8 +115,12 @@ REDIS_URL = _CONSUMER_CFG.redis_url
 REDIS_QUEUE_KEY = _CONSUMER_CFG.redis_queue_key
 REDIS_RESULT_PREFIX = _CONSUMER_CFG.redis_result_prefix
 REDIS_RESULT_TTL_SECONDS = _CONSUMER_CFG.redis_result_ttl_seconds
-REDIS_JOB_INDEX_ZSET_PREFIX = (os.getenv("REDIS_JOB_INDEX_ZSET_PREFIX", "jobsidx:") or "jobsidx:").strip()
-REDIS_JOB_INDEX_HASH_PREFIX = (os.getenv("REDIS_JOB_INDEX_HASH_PREFIX", "jobs:") or "jobs:").strip()
+REDIS_JOB_INDEX_ZSET_PREFIX = (
+    os.getenv("REDIS_JOB_INDEX_ZSET_PREFIX", "jobsidx:") or "jobsidx:"
+).strip()
+REDIS_JOB_INDEX_HASH_PREFIX = (
+    os.getenv("REDIS_JOB_INDEX_HASH_PREFIX", "jobs:") or "jobs:"
+).strip()
 
 # API-specific settings
 APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
@@ -140,7 +149,9 @@ BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in 
 )
 MAX_DASHBOARD_POLL_SECONDS = _API_LIMITS.max_dashboard_poll_seconds
 _URL_DEDUPE = UrlDedupeConfig.from_env()
-_DEFAULT_URL_VISIBILITY = (os.getenv("URL_RESULT_VISIBILITY_DEFAULT", "shared") or "shared").strip().lower()
+_DEFAULT_URL_VISIBILITY = (
+    (os.getenv("URL_RESULT_VISIBILITY_DEFAULT", "shared") or "shared").strip().lower()
+)
 if _DEFAULT_URL_VISIBILITY not in ("shared", "private"):
     _DEFAULT_URL_VISIBILITY = "shared"
 
@@ -186,9 +197,7 @@ class ScanRequest(BaseModel):
         max_length=SCAN_SOURCE_MAX_LENGTH,
     )
     metadata: Optional[dict] = Field(None, description="Optional metadata")
-    force: bool = Field(
-        False, description="Force a re-scan (ignore URL dedupe cache)"
-    )
+    force: bool = Field(False, description="Force a re-scan (ignore URL dedupe cache)")
     visibility: Optional[str] = Field(
         None,
         description="URL scan visibility: 'shared' (cacheable) or 'private' (no cache reuse)",
@@ -641,7 +650,51 @@ async def lifespan(app: FastAPI):
         await blob_service.__aexit__(None, None, None)
 
 
-app = FastAPI(title="Azure DevSecOps URL Scanner", lifespan=lifespan)
+# OpenAPI metadata for /docs
+API_TAGS_METADATA = [
+    {
+        "name": "URL Scanning",
+        "description": "Submit URLs for comprehensive security analysis including malware detection, phishing indicators, SSL/TLS validation, and content analysis.",
+    },
+    {
+        "name": "File Scanning",
+        "description": "Upload files for malware detection using ClamAV antivirus engine.",
+    },
+    {
+        "name": "Jobs",
+        "description": "View, manage, and retrieve results for submitted scan jobs.",
+    },
+    {
+        "name": "Health",
+        "description": "API health check and status monitoring.",
+    },
+]
+
+app = FastAPI(
+    title="URL Security Scanner",
+    description="""
+A cloud-native security scanning API for analyzing URLs and files for potential threats.
+
+## Features
+
+* **URL Security Analysis** - Comprehensive scanning including SSL/TLS validation, security headers, content analysis, and phishing detection
+* **Malware Detection** - File scanning powered by ClamAV antivirus engine
+* **YARA Rules** - Custom pattern matching for threat detection
+* **Async Processing** - Queue-based architecture for scalable scanning
+* **Screenshot Capture** - Visual evidence of scanned web pages
+
+## Authentication
+
+All endpoints require an API key passed via the `X-API-Key` header.
+""",
+    version="1.0.0",
+    license_info={
+        "name": "MIT",
+        "url": "https://opensource.org/licenses/MIT",
+    },
+    openapi_tags=API_TAGS_METADATA,
+    lifespan=lifespan,
+)
 
 
 @app.middleware("http")
@@ -854,7 +907,7 @@ async def otel_request_spans(request: Request, call_next):
         return response
 
 
-@app.get("/healthz")
+@app.get("/healthz", tags=["Health"])
 async def healthz():
     return {
         "ok": True,
@@ -875,7 +928,7 @@ async def favicon():
     return Response(status_code=204)
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def dashboard():
     template = DASHBOARD_TEMPLATE
     api_key_header_html = html.escape(API_KEY_HEADER or "")
@@ -889,7 +942,7 @@ async def dashboard():
     )
 
 
-@app.get("/file", response_class=HTMLResponse)
+@app.get("/file", response_class=HTMLResponse, include_in_schema=False)
 async def file_scanner():
     template = FILE_SCANNER_TEMPLATE
     api_key_header_html = html.escape(API_KEY_HEADER or "")
@@ -901,7 +954,7 @@ async def file_scanner():
     )
 
 
-@app.post("/file/scan")
+@app.post("/file/scan", tags=["File Scanning"], summary="Scan a file for malware")
 async def scan_file(
     file: Optional[UploadFile] = File(None),
     payload: Optional[str] = Form(None),
@@ -1027,7 +1080,7 @@ async def scan_file(
     return response
 
 
-@app.post("/scan")
+@app.post("/scan", tags=["URL Scanning"], summary="Submit a URL for security analysis")
 async def enqueue_scan(
     req: ScanRequest, api_key_hash: Optional[str] = Security(require_api_key)
 ):
@@ -1076,7 +1129,11 @@ async def enqueue_scan(
     await _validate_scan_url(run_payload["url"])
 
     url_index_key = None
-    if _URL_DEDUPE.enabled and visibility == "shared" and run_payload.get("type") == "url":
+    if (
+        _URL_DEDUPE.enabled
+        and visibility == "shared"
+        and run_payload.get("type") == "url"
+    ):
         try:
             url_index_key = make_url_index_key(
                 url=run_payload["url"], api_key_hash=api_key_hash, cfg=_URL_DEDUPE
@@ -1103,7 +1160,9 @@ async def enqueue_scan(
             if existing_run_id:
                 run_entity = await _get_result_entity(existing_run_id)
                 if run_entity:
-                    run_visibility = str(run_entity.get("visibility") or "").strip().lower()
+                    run_visibility = (
+                        str(run_entity.get("visibility") or "").strip().lower()
+                    )
                     if run_visibility != "shared":
                         # Do not reuse "private" (or legacy) runs across API keys.
                         run_entity = None
@@ -1113,7 +1172,9 @@ async def enqueue_scan(
                     )
                     run_scanned_at = run_entity.get("scanned_at") or None
                     run_error = run_entity.get("error") or None
-                    run_correlation_id = run_entity.get("correlation_id") or correlation_id
+                    run_correlation_id = (
+                        run_entity.get("correlation_id") or correlation_id
+                    )
 
                     # Create a per-request result record that resolves to the cached run.
                     await _upsert_result(
@@ -1306,7 +1367,7 @@ async def enqueue_scan(
         )
 
 
-@app.get("/jobs")
+@app.get("/jobs", tags=["Jobs"], summary="List scan jobs")
 async def list_jobs(
     request: Request,
     limit: int = Query(50, ge=1, le=500),
@@ -1356,7 +1417,11 @@ async def list_jobs(
         error_out = item.get("error") or None
         correlation_id_out = item.get("correlation_id") or None
         deduped_out = _coerce_bool(item.get("deduped"))
-        visibility_out = (item.get("visibility") or None) if isinstance(item.get("visibility"), str) else None
+        visibility_out = (
+            (item.get("visibility") or None)
+            if isinstance(item.get("visibility"), str)
+            else None
+        )
 
         if run_id:
             run_entity = await _get_result_entity(run_id)
@@ -1364,7 +1429,9 @@ async def list_jobs(
                 status_out = run_entity.get("status") or status_out
                 scanned_at_out = run_entity.get("scanned_at") or scanned_at_out
                 error_out = run_entity.get("error") or error_out
-                correlation_id_out = run_entity.get("correlation_id") or correlation_id_out
+                correlation_id_out = (
+                    run_entity.get("correlation_id") or correlation_id_out
+                )
 
         out.append(
             {
@@ -1384,7 +1451,7 @@ async def list_jobs(
     return {"jobs": out}
 
 
-@app.delete("/jobs")
+@app.delete("/jobs", tags=["Jobs"], summary="Clear all scan jobs")
 async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
     if RESULT_BACKEND == "table" and not table_client:
         raise HTTPException(status_code=503, detail="Result store not initialized")
@@ -1424,7 +1491,9 @@ async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
         if isinstance(results, list) and len(results) >= (2 * n):
             try:
                 deleted_job_index = sum(int(x or 0) for x in results[0 : 2 * n : 2])
-                deleted_request_results = sum(int(x or 0) for x in results[1 : 2 * n : 2])
+                deleted_request_results = sum(
+                    int(x or 0) for x in results[1 : 2 * n : 2]
+                )
             except Exception:
                 deleted_job_index = 0
                 deleted_request_results = 0
@@ -1448,7 +1517,9 @@ async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
 
                 if row_key:
                     try:
-                        await table_client.delete_entity(partition_key=pk, row_key=row_key)
+                        await table_client.delete_entity(
+                            partition_key=pk, row_key=row_key
+                        )
                         deleted_job_index += 1
                     except Exception:
                         pass
@@ -1473,10 +1544,12 @@ async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
             "deleted_request_results": deleted_request_results,
         }
 
-    raise HTTPException(status_code=500, detail=f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}")
+    raise HTTPException(
+        status_code=500, detail=f"Unsupported RESULT_BACKEND: {RESULT_BACKEND}"
+    )
 
 
-@app.get("/scan/{job_id}")
+@app.get("/scan/{job_id}", tags=["Jobs"], summary="Get scan result")
 async def get_scan_status(
     job_id: str,
     request: Request,
@@ -1506,7 +1579,11 @@ async def get_scan_status(
     if run_id:
         # This is a per-request record pointing at an underlying scan run.
         owner_hash = str(entity.get("api_key_hash") or "").strip()
-        if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+        if (
+            owner_hash
+            and api_key_hash
+            and not secrets.compare_digest(owner_hash, api_key_hash)
+        ):
             raise HTTPException(status_code=404, detail="Scan result not found")
 
         run_entity = await _get_result_entity(run_id)
@@ -1514,7 +1591,9 @@ async def get_scan_status(
             return {
                 "job_id": job_id,
                 "status": "pending",
-                "summary": {"url": entity.get("url") or None} if entity.get("url") else None,
+                "summary": (
+                    {"url": entity.get("url") or None} if entity.get("url") else None
+                ),
                 "deduped": _coerce_bool(entity.get("deduped")),
                 "visibility": (entity.get("visibility") or None),
             }
@@ -1552,7 +1631,11 @@ async def get_scan_status(
         return response
 
     owner_hash = str(entity.get("api_key_hash") or "").strip()
-    if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+    if (
+        owner_hash
+        and api_key_hash
+        and not secrets.compare_digest(owner_hash, api_key_hash)
+    ):
         raise HTTPException(status_code=404, detail="Scan result not found")
 
     details = _parse_details(entity.get("details"))
@@ -1591,7 +1674,7 @@ def _screenshot_blob_name(job_id: str) -> str:
     return f"{job_id}.{ext}"
 
 
-@app.get("/scan/{job_id}/screenshot")
+@app.get("/scan/{job_id}/screenshot", tags=["Jobs"], summary="Get scan screenshot")
 async def get_scan_screenshot(
     job_id: str, api_key_hash: Optional[str] = Security(require_api_key)
 ):
@@ -1612,12 +1695,20 @@ async def get_scan_screenshot(
     if run_id:
         # Request record: enforce access on the request, then resolve to the run for storage.
         owner_hash = str(entity.get("api_key_hash") or "").strip()
-        if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+        if (
+            owner_hash
+            and api_key_hash
+            and not secrets.compare_digest(owner_hash, api_key_hash)
+        ):
             raise HTTPException(status_code=404, detail="Screenshot not found")
         target_job_id = run_id
     else:
         owner_hash = str(entity.get("api_key_hash") or "").strip()
-        if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+        if (
+            owner_hash
+            and api_key_hash
+            and not secrets.compare_digest(owner_hash, api_key_hash)
+        ):
             raise HTTPException(status_code=404, detail="Screenshot not found")
 
     if RESULT_BACKEND == "redis":
