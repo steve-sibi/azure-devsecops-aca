@@ -443,10 +443,10 @@ def _web_scan(content: bytes, *, url: str, download: Optional[dict] = None) -> d
         for item in parsed.scripts:
             if not isinstance(item, dict):
                 continue
-            url = item.get("url")
-            typ = item.get("type")
-            if typ == "external" and isinstance(url, str) and url:
-                external_script_examples.append(url)
+            script_url = item.get("url")
+            script_type = item.get("type")
+            if script_type == "external" and isinstance(script_url, str) and script_url:
+                external_script_examples.append(script_url)
         external_script_examples = external_script_examples[:10]
 
         suspicious_ip_script_examples = list(
@@ -468,9 +468,9 @@ def _web_scan(content: bytes, *, url: str, download: Optional[dict] = None) -> d
             getattr(parsed, "fingerprinting_indicators", []) or []
         )[:10]
         eval_indicators = list(getattr(parsed, "eval_indicators", []) or [])[:10]
-        inner_html_indicators = list(getattr(parsed, "inner_html_indicators", []) or [])[
-            :10
-        ]
+        inner_html_indicators = list(
+            getattr(parsed, "inner_html_indicators", []) or []
+        )[:10]
         eval_occurrences = int(getattr(parsed, "eval_occurrences", 0) or 0)
         inner_html_occurrences = int(getattr(parsed, "inner_html_occurrences", 0) or 0)
 
