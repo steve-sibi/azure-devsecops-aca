@@ -956,13 +956,25 @@ async def file_scanner():
 
 @app.post("/file/scan", tags=["File Scanning"], summary="Scan a file for malware")
 async def scan_file(
+    request: Request,
     file: Optional[UploadFile] = File(None),
     payload: Optional[str] = Form(None),
     payload_base64: bool = Form(False),
-    _api_key_hash: Optional[str] = Security(require_api_key),
+    api_key_hash: Optional[str] = Security(require_api_key),
 ):
     if file is None and not (isinstance(payload, str) and payload.strip()):
         raise HTTPException(status_code=400, detail="Provide a file or payload")
+
+    can_store = bool(
+        (RESULT_BACKEND == "table" and table_client)
+        or (RESULT_BACKEND == "redis" and redis_client)
+    )
+
+    job_id = str(uuid4())
+    submitted_at = datetime.now(timezone.utc).isoformat()
+    correlation_id = getattr(getattr(request, "state", None), "request_id", None)
+    if not isinstance(correlation_id, str) or not correlation_id.strip():
+        correlation_id = str(uuid4())
 
     input_type = "file" if file is not None else "payload"
 
@@ -1052,9 +1064,13 @@ async def scan_file(
         except ClamAVError:
             version = None
 
+    scanned_at = datetime.now(timezone.utc).isoformat()
     response: dict = {
-        "scan_id": str(uuid4()),
-        "scanned_at": datetime.now(timezone.utc).isoformat(),
+        "job_id": job_id,
+        "scan_id": job_id,
+        "status": "completed",
+        "submitted_at": submitted_at,
+        "scanned_at": scanned_at,
         "input_type": input_type,
         "filename": filename,
         "content_type": content_type,
@@ -1068,6 +1084,7 @@ async def scan_file(
             "port": CLAMAV_PORT,
             "response": result.raw,
         },
+        "type": "file",
     }
 
     if result.signature:
@@ -1077,6 +1094,61 @@ async def scan_file(
     if version:
         response["clamav"]["version"] = version
 
+    stored = False
+    if can_store:
+        try:
+            await _upsert_result(
+                job_id,
+                status="completed",
+                details=response,
+                verdict=str(result.verdict or ""),
+                error=None,
+                extra={
+                    "submitted_at": submitted_at,
+                    "api_key_hash": api_key_hash or "",
+                    "correlation_id": correlation_id,
+                    "scanned_at": scanned_at,
+                    "size_bytes": len(data),
+                    "duration_ms": duration_ms,
+                    "type": "file",
+                },
+            )
+            if api_key_hash:
+                job_record = build_job_record(
+                    api_key_hash_value=api_key_hash,
+                    job_id=job_id,
+                    submitted_at=submitted_at,
+                    status="completed",
+                    url=None,
+                    scanned_at=scanned_at,
+                    updated_at=scanned_at,
+                    correlation_id=correlation_id,
+                    error=None,
+                )
+                job_record["type"] = "file"
+                job_record["input_type"] = input_type
+                job_record["filename"] = filename or ""
+                job_record["content_type"] = content_type or ""
+                job_record["sha256"] = sha256
+                job_record["verdict"] = str(result.verdict or "")
+                job_record["signature"] = (
+                    str(result.signature or "").strip() if result.signature else ""
+                )
+                job_record["size_bytes"] = str(len(data))
+                job_record["duration_ms"] = str(duration_ms)
+                await upsert_job_index_record_async(
+                    backend=RESULT_BACKEND,
+                    api_key_hash_value=api_key_hash,
+                    record=job_record,
+                    table_client=table_client,
+                    redis_client=redis_client,
+                    redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
+                )
+            stored = True
+        except Exception as e:
+            logger.warning("Failed to persist file scan result: %s", e)
+
+    response["stored"] = stored
     return response
 
 
@@ -1209,6 +1281,7 @@ async def enqueue_scan(
                             correlation_id=run_correlation_id,
                             error=run_error,
                         )
+                        job_record["type"] = "url"
                         job_record["run_id"] = existing_run_id
                         job_record["deduped"] = True
                         job_record["visibility"] = visibility
@@ -1302,6 +1375,7 @@ async def enqueue_scan(
                 correlation_id=correlation_id,
                 error=None,
             )
+            job_record["type"] = "url"
             job_record["run_id"] = run_id
             job_record["deduped"] = False
             job_record["visibility"] = visibility
@@ -1371,6 +1445,12 @@ async def enqueue_scan(
 async def list_jobs(
     request: Request,
     limit: int = Query(50, ge=1, le=500),
+    scan_type: Optional[str] = Query(
+        None,
+        alias="type",
+        description="Optional scan type filter (url or file)",
+        pattern="^(url|file)$",
+    ),
     status: Optional[str] = Query(
         None, description="Optional CSV status filter (e.g. queued,fetching,completed)"
     ),
@@ -1393,10 +1473,23 @@ async def list_jobs(
                 detail=f"Invalid status value(s): {', '.join(invalid)}",
             )
 
+    scan_type_norm = None
+    if isinstance(scan_type, str) and scan_type.strip():
+        scan_type_norm = scan_type.strip().lower()
+        if scan_type_norm not in ("url", "file"):
+            raise HTTPException(
+                status_code=400, detail="type must be 'url' or 'file'"
+            )
+
+    limit_n = max(1, int(limit or 0))
+    prefetch_limit = limit_n
+    if scan_type_norm or statuses:
+        prefetch_limit = min(5000, max(limit_n, limit_n * 10))
+
     items = await list_jobs_async(
         backend=RESULT_BACKEND,
         api_key_hash_value=api_key_hash,
-        limit=int(limit or 0),
+        limit=prefetch_limit,
         statuses=statuses,
         table_client=table_client,
         redis_client=redis_client,
@@ -1407,6 +1500,18 @@ async def list_jobs(
     for item in items:
         if not isinstance(item, dict):
             continue
+
+        item_type_raw = item.get("type")
+        item_type = (
+            str(item_type_raw).strip().lower()
+            if isinstance(item_type_raw, str) and item_type_raw.strip()
+            else "url"
+        )
+        if scan_type_norm == "file" and item_type != "file":
+            continue
+        if scan_type_norm == "url" and item_type == "file":
+            continue
+
         job_id = str(item.get("job_id") or "").strip()
         if not job_id:
             continue
@@ -1422,6 +1527,12 @@ async def list_jobs(
             if isinstance(item.get("visibility"), str)
             else None
         )
+        filename_out = item.get("filename") or None
+        content_type_out = item.get("content_type") or None
+        input_type_out = item.get("input_type") or None
+        sha256_out = item.get("sha256") or None
+        verdict_out = item.get("verdict") or None
+        signature_out = item.get("signature") or None
 
         if run_id:
             run_entity = await _get_result_entity(run_id)
@@ -1433,32 +1544,58 @@ async def list_jobs(
                     run_entity.get("correlation_id") or correlation_id_out
                 )
 
+        dashboard_path = "/file" if item_type == "file" else "/"
         out.append(
             {
                 "job_id": job_id,
+                "type": item_type,
                 "status": status_out,
                 "submitted_at": item.get("submitted_at") or None,
                 "scanned_at": scanned_at_out,
                 "url": item.get("url") or None,
+                "filename": filename_out,
+                "sha256": sha256_out,
+                "verdict": verdict_out,
+                "signature": signature_out,
+                "input_type": input_type_out,
+                "content_type": content_type_out,
                 "error": error_out,
                 "correlation_id": correlation_id_out,
                 "deduped": deduped_out,
                 "visibility": visibility_out,
-                "dashboard_url": f"{base_url}/?job={job_id}",
+                "dashboard_url": f"{base_url}{dashboard_path}?job={job_id}",
             }
         )
+        if len(out) >= limit_n:
+            break
 
     return {"jobs": out}
 
 
 @app.delete("/jobs", tags=["Jobs"], summary="Clear all scan jobs")
-async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
+async def clear_jobs(
+    scan_type: Optional[str] = Query(
+        None,
+        alias="type",
+        description="Optional scan type filter (url or file)",
+        pattern="^(url|file)$",
+    ),
+    api_key_hash: Optional[str] = Security(require_api_key),
+):
     if RESULT_BACKEND == "table" and not table_client:
         raise HTTPException(status_code=503, detail="Result store not initialized")
     if RESULT_BACKEND == "redis" and not redis_client:
         raise HTTPException(status_code=503, detail="Result store not initialized")
     if not api_key_hash:
         raise HTTPException(status_code=401, detail="Missing API key")
+
+    scan_type_norm = None
+    if isinstance(scan_type, str) and scan_type.strip():
+        scan_type_norm = scan_type.strip().lower()
+        if scan_type_norm not in ("url", "file"):
+            raise HTTPException(
+                status_code=400, detail="type must be 'url' or 'file'"
+            )
 
     deleted_job_index = 0
     deleted_request_results = 0
@@ -1476,23 +1613,54 @@ async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
             if s:
                 job_ids_norm.append(s)
 
+        if scan_type_norm:
+            # Filter ids by stored job type. Treat missing type as "url" for backwards compatibility.
+            try:
+                pipe = redis_client.pipeline()
+                hkeys: list[str] = []
+                for jid_s in job_ids_norm:
+                    hkey = f"{REDIS_JOB_INDEX_HASH_PREFIX}{api_key_hash}:{jid_s}"
+                    hkeys.append(hkey)
+                    pipe.hget(hkey, "type")
+                raw_types = await pipe.execute()
+            except Exception:
+                raw_types = []
+                hkeys = []
+
+            filtered: list[str] = []
+            for jid_s, raw_t in zip(job_ids_norm, raw_types):
+                jt = (
+                    str(raw_t or "").strip().lower()
+                    if isinstance(raw_t, str) and str(raw_t).strip()
+                    else "url"
+                )
+                if scan_type_norm == "file" and jt == "file":
+                    filtered.append(jid_s)
+                if scan_type_norm == "url" and jt != "file":
+                    filtered.append(jid_s)
+            job_ids_norm = filtered
+
         try:
             pipe = redis_client.pipeline()
             for jid_s in job_ids_norm:
                 pipe.delete(f"{REDIS_JOB_INDEX_HASH_PREFIX}{api_key_hash}:{jid_s}")
                 pipe.delete(f"{REDIS_RESULT_PREFIX}{jid_s}")
-            pipe.delete(zkey)
+                if scan_type_norm:
+                    pipe.zrem(zkey, jid_s)
+            if not scan_type_norm:
+                pipe.delete(zkey)
             results = await pipe.execute()
         except Exception:
             results = []
 
         # Each DEL returns the number of keys removed (0/1).
         n = len(job_ids_norm)
-        if isinstance(results, list) and len(results) >= (2 * n):
+        if isinstance(results, list) and n > 0:
             try:
-                deleted_job_index = sum(int(x or 0) for x in results[0 : 2 * n : 2])
+                step = 3 if scan_type_norm else 2
+                deleted_job_index = sum(int(x or 0) for x in results[0 : step * n : step])
                 deleted_request_results = sum(
-                    int(x or 0) for x in results[1 : 2 * n : 2]
+                    int(x or 0) for x in results[1 : step * n : step]
                 )
             except Exception:
                 deleted_job_index = 0
@@ -1500,6 +1668,7 @@ async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
         return {
             "backend": "redis",
             "api_key_hash": api_key_hash,
+            "type": scan_type_norm,
             "deleted_job_index_records": deleted_job_index,
             "deleted_request_results": deleted_request_results,
         }
@@ -1512,6 +1681,18 @@ async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
             async for entity in pager:
                 if not isinstance(entity, dict):
                     continue
+
+                item_type_raw = entity.get("type")
+                item_type = (
+                    str(item_type_raw).strip().lower()
+                    if isinstance(item_type_raw, str) and item_type_raw.strip()
+                    else "url"
+                )
+                if scan_type_norm == "file" and item_type != "file":
+                    continue
+                if scan_type_norm == "url" and item_type == "file":
+                    continue
+
                 row_key = str(entity.get("RowKey") or "").strip()
                 request_id = str(entity.get("job_id") or "").strip()
 
@@ -1538,6 +1719,7 @@ async def clear_jobs(api_key_hash: Optional[str] = Security(require_api_key)):
         return {
             "backend": "table",
             "api_key_hash": api_key_hash,
+            "type": scan_type_norm,
             "job_index_partition_key": pk,
             "result_partition_key": RESULT_PARTITION,
             "deleted_job_index_records": deleted_job_index,
@@ -1600,6 +1782,17 @@ async def get_scan_status(
 
         details = _parse_details(run_entity.get("details"))
         summary = _build_summary(run_entity, details)
+        scan_type_out = None
+        if isinstance(details, dict):
+            t = details.get("type")
+            if isinstance(t, str) and t.strip().lower() in ("url", "file"):
+                scan_type_out = t.strip().lower()
+            elif isinstance(details.get("url"), str) and details.get("url"):
+                scan_type_out = "url"
+            elif isinstance(details.get("filename"), str) and details.get("filename"):
+                scan_type_out = "file"
+        if not scan_type_out:
+            scan_type_out = "url"
 
         log_with_context(
             logger,
@@ -1612,10 +1805,13 @@ async def get_scan_status(
         )
 
         base_url = str(request.base_url).rstrip("/")
+        dashboard_path = "/file" if scan_type_out == "file" else "/"
         response = {
             "job_id": job_id,
             "status": run_entity.get("status", "unknown"),
-            "dashboard_url": f"{base_url}/?job={job_id}",
+            "type": scan_type_out,
+            "verdict": run_entity.get("verdict") or None,
+            "dashboard_url": f"{base_url}{dashboard_path}?job={job_id}",
             "error": run_entity.get("error") or None,
             "submitted_at": entity.get("submitted_at"),
             "scanned_at": run_entity.get("scanned_at"),
@@ -1640,6 +1836,17 @@ async def get_scan_status(
 
     details = _parse_details(entity.get("details"))
     summary = _build_summary(entity, details)
+    scan_type_out = None
+    if isinstance(details, dict):
+        t = details.get("type")
+        if isinstance(t, str) and t.strip().lower() in ("url", "file"):
+            scan_type_out = t.strip().lower()
+        elif isinstance(details.get("url"), str) and details.get("url"):
+            scan_type_out = "url"
+        elif isinstance(details.get("filename"), str) and details.get("filename"):
+            scan_type_out = "file"
+    if not scan_type_out:
+        scan_type_out = "url"
 
     log_with_context(
         logger,
@@ -1651,10 +1858,13 @@ async def get_scan_status(
     )
 
     base_url = str(request.base_url).rstrip("/")
+    dashboard_path = "/file" if scan_type_out == "file" else "/"
     response = {
         "job_id": job_id,
         "status": entity.get("status", "unknown"),
-        "dashboard_url": f"{base_url}/?job={job_id}",
+        "type": scan_type_out,
+        "verdict": entity.get("verdict") or None,
+        "dashboard_url": f"{base_url}{dashboard_path}?job={job_id}",
         "error": entity.get("error") or None,
         "submitted_at": entity.get("submitted_at"),
         "scanned_at": entity.get("scanned_at"),

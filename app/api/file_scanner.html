@@ -1138,7 +1138,7 @@
             <span id="historyPageInfo" class="muted small"></span>
             <button id="historyNext" type="button">Next</button>
           </div>
-          <p class="muted small">History is stored locally in your browser.</p>
+          <p class="muted small">History is tied to your API key and stored server-side.</p>
         </section>
 
         <section class="card full" aria-labelledby="result-heading">
@@ -1173,7 +1173,6 @@
       const LS = {
         apiKey: 'acaScanner.apiKey',
         legacyApiKey: 'apiKey',
-        history: 'acaScanner.fileScanHistory.v1',
       };
 
       const apiKeyEl = document.getElementById('apiKey');
@@ -1196,8 +1195,13 @@
       const historyPageInfoEl = document.getElementById('historyPageInfo');
 
       const HISTORY_PAGE_SIZE = 5;
+      const HISTORY_FETCH_LIMIT = 500;
       let historyPage = 1;
       let historyLastRenderedAt = null;
+      let historyLoading = false;
+      let historyLoadError = null;
+      let historyLastLoadedAt = null;
+      let historyRefreshTimer = null;
       const fileHelpEl = document.getElementById('fileHelp');
       const toastContainerEl = document.getElementById('toastContainer');
 
@@ -1342,20 +1346,6 @@
         return el('span', { class: 'timestamp-value', title: String(isoStr), text: formatted });
       }
 
-      function readJson(key, fallback) {
-        try {
-          const raw = localStorage.getItem(key);
-          if (!raw) return fallback;
-          return JSON.parse(raw);
-        } catch (_) {
-          return fallback;
-        }
-      }
-
-      function writeJson(key, value) {
-        localStorage.setItem(key, JSON.stringify(value));
-      }
-
       function el(tag, attrs) {
         const node = document.createElement(tag);
         if (attrs) {
@@ -1427,49 +1417,117 @@
         }
       }
 
-      function makeLocalId(prefix) {
-        const p = String(prefix || 'local');
-        try {
-          if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-            return p + '-' + window.crypto.randomUUID();
-          }
-        } catch (_) { /* ignore */ }
-        return p + '-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
-      }
-
       function saveApiKey() {
         const v = apiKeyEl.value.trim();
         if (v) localStorage.setItem(LS.apiKey, v);
       }
 
-      function loadHistory() {
-        const items = readJson(LS.history, []);
-        if (!Array.isArray(items)) return [];
-        return items.filter(Boolean).slice(0, 50);
+      function scheduleHistoryRefresh(ms) {
+        if (historyRefreshTimer) clearTimeout(historyRefreshTimer);
+        historyRefreshTimer = setTimeout(() => {
+          historyPage = 1;
+          refreshHistoryFromServer({ silent: true });
+        }, Math.max(0, Number(ms || 0)) || 450);
       }
 
-      function saveHistory() {
-        writeJson(LS.history, history.slice(0, 50));
-      }
+      async function refreshHistoryFromServer(opts) {
+        const silent = opts && opts.silent;
+        historyLoadError = null;
 
-      function upsertHistory(entry) {
-        const idx = history.findIndex(x => x && x.scan_id === entry.scan_id);
-        if (idx >= 0) history[idx] = Object.assign({}, history[idx], entry);
-        else history.unshift(entry);
-        history = history.slice(0, 50);
-        saveHistory();
+        const key = apiKeyEl.value.trim();
+        if (!key) {
+          historyLoading = false;
+          historyLoadError = null;
+          history = [];
+          historyLastLoadedAt = null;
+          renderHistory();
+          return;
+        }
+
+        historyLoading = true;
         renderHistory();
+        try {
+          const res = await apiJson('/jobs?limit=' + HISTORY_FETCH_LIMIT + '&type=file', 'GET');
+          const jobs = res && res.jobs;
+          if (!Array.isArray(jobs)) {
+            throw Object.assign(new Error('Invalid /jobs response'), { data: res });
+          }
+          history = jobs;
+          historyLastLoadedAt = new Date().toISOString();
+          if (!silent) showToast('History refreshed', 'success', 2500);
+        } catch (e) {
+          const msg = (e && e.data && e.data.detail)
+            ? e.data.detail
+            : (e && e.message ? e.message : String(e || 'Failed to load history'));
+          history = [];
+          historyLoadError = msg;
+          if (!silent) showToast(msg, 'error', 6000);
+        } finally {
+          historyLoading = false;
+          renderHistory();
+        }
       }
 
-      function clearHistory() {
-        history = [];
-        saveHistory();
-        renderHistory();
+      async function clearHistoryServer() {
+        const key = apiKeyEl.value.trim();
+        if (!key) {
+          historyLoading = false;
+          historyLoadError = null;
+          history = [];
+          renderHistory();
+          return;
+        }
+        try {
+          await apiJson('/jobs?type=file', 'DELETE');
+          showToast('History cleared', 'success', 2500);
+        } catch (e) {
+          const msg = (e && e.data && e.data.detail)
+            ? e.data.detail
+            : (e && e.message ? e.message : String(e || 'Failed to clear history'));
+          showToast(msg, 'error', 6000);
+        } finally {
+          await refreshHistoryFromServer({ silent: true });
+        }
+      }
+
+      async function viewJob(jobId) {
+        const id = String(jobId || '').trim();
+        if (!id) return;
+        try {
+          const resp = await apiJson('/scan/' + encodeURIComponent(id) + '?view=full', 'GET');
+          showResult(resp);
+        } catch (e) {
+          const msg = (e && e.data && e.data.detail)
+            ? e.data.detail
+            : (e && e.message ? e.message : String(e || 'Failed to load result'));
+          showToast(msg, 'error', 6000);
+        }
       }
 
       function renderHistory() {
         historyBodyEl.textContent = '';
         const q = (historyFilterEl.value || '').trim().toLowerCase();
+
+        if (historyLoading) {
+          historyPageInfoEl.textContent = 'Loading…';
+          historyBodyEl.appendChild(
+            el('tr', null,
+              el('td', { class: 'muted', colspan: '5', text: 'Loading history…' })
+            )
+          );
+          return;
+        }
+
+        if (historyLoadError) {
+          historyPageInfoEl.textContent = 'Error';
+          historyBodyEl.appendChild(
+            el('tr', null,
+              el('td', { class: 'muted', colspan: '5', text: historyLoadError })
+            )
+          );
+          return;
+        }
+
         const items = history.filter(x => {
           if (!q) return true;
           const hay = [
@@ -1497,7 +1555,7 @@
         historyNextEl.disabled = historyPage >= totalPages;
 
         historyLastRenderedAt = new Date();
-        const updated = historyLastRenderedAt ? formatRelativeTime(historyLastRenderedAt.toISOString()) : '';
+        const updated = historyLastLoadedAt ? formatRelativeTime(historyLastLoadedAt) : '';
         historyPageInfoEl.textContent = `Page ${historyPage}/${totalPages} · ${total} scan${total === 1 ? '' : 's'}${updated ? ' · Updated ' + updated : ''}`;
 
         if (!items.length) {
@@ -1518,12 +1576,7 @@
 
           const viewBtn = el('button', { type: 'button' }, 'View');
           viewBtn.addEventListener('click', () => {
-            const result = item.result || item;
-            // Ensure submitted_at is available in the result for display
-            if (item.submitted_at && !result.submitted_at) {
-              result.submitted_at = item.submitted_at;
-            }
-            showResult(result);
+            viewJob(item.job_id);
           });
 
           const actions = el('div', { class: 'job-actions' }, viewBtn);
@@ -1653,10 +1706,34 @@
         outEl.textContent = JSON.stringify(resp || {}, null, 2);
       }
 
+      function normalizeFileResult(obj) {
+        if (!obj || typeof obj !== 'object') return {};
+
+        // If this is a generic /scan/{job_id} response, flatten the stored file-scan details.
+        if (obj.details && typeof obj.details === 'object') {
+          const d = obj.details;
+          const merged = Object.assign({}, d);
+
+          if (obj.job_id && !merged.job_id) merged.job_id = obj.job_id;
+          if (obj.job_id && !merged.scan_id) merged.scan_id = obj.job_id;
+          if (obj.status && !merged.status) merged.status = obj.status;
+          if (obj.submitted_at && !merged.submitted_at) merged.submitted_at = obj.submitted_at;
+          if (obj.scanned_at && !merged.scanned_at) merged.scanned_at = obj.scanned_at;
+          if (obj.size_bytes != null && merged.size_bytes == null) merged.size_bytes = obj.size_bytes;
+          if (obj.duration_ms != null && merged.duration_ms == null) merged.duration_ms = obj.duration_ms;
+          if (obj.verdict && !merged.verdict) merged.verdict = obj.verdict;
+          if (obj.error && !merged.error) merged.error = obj.error;
+
+          return merged;
+        }
+
+        return obj;
+      }
+
       function showResult(obj) {
-        lastResult = obj;
-        renderSummary(obj);
-        if (activeTab === 'raw') renderRaw(obj);
+        lastResult = normalizeFileResult(obj);
+        renderSummary(lastResult);
+        if (activeTab === 'raw') renderRaw(lastResult);
         const verdict = lastResult && typeof lastResult === 'object' ? String(lastResult.verdict || '').toLowerCase() : '';
         setButtonsEnabled(Boolean(lastResult) && verdict !== 'pending');
       }
@@ -1679,6 +1756,23 @@
         tabInputPayloadEl.setAttribute('aria-selected', isFile ? 'false' : 'true');
         panelInputFileEl.classList.toggle('hidden', !isFile);
         panelInputPayloadEl.classList.toggle('hidden', isFile);
+      }
+
+      async function apiJson(path, method) {
+        const headers = { accept: 'application/json' };
+        const key = apiKeyEl.value.trim();
+        if (key) headers[API_KEY_HEADER] = key;
+        const res = await fetch(path, { method: method || 'GET', headers });
+        const text = await res.text();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { data = { raw: text }; }
+        if (!res.ok) {
+          const err = new Error('HTTP ' + res.status);
+          err.status = res.status;
+          err.data = data;
+          throw err;
+        }
+        return data;
       }
 
       async function apiForm(path, formData) {
@@ -1706,8 +1800,7 @@
 
         const startedAt = new Date().toISOString();
         const inputType = activeInput;
-        const pendingId = makeLocalId('pending');
-        let pendingInserted = false;
+        const pendingId = 'pending-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
         let label = '';
         let sizeBytes = null;
         let contentType = null;
@@ -1753,64 +1846,34 @@
             clamav: {},
           };
           showResult(pending);
-          upsertHistory({
-            scan_id: pendingId,
-            submitted_at: startedAt,
-            scanned_at: startedAt,
-            filename: label,
-            sha256: '',
-            verdict: 'pending',
-            signature: '',
-            result: pending,
-          });
-          pendingInserted = true;
 
           const resp = await apiForm('/file/scan', fd);
-          resp.submitted_at = startedAt; // Preserve submitted time
           showResult(resp);
-          history = history.filter(x => x && x.scan_id !== pendingId);
-          upsertHistory({
-            scan_id: resp.scan_id || (Math.random().toString(16).slice(2)),
-            submitted_at: startedAt,
-            scanned_at: resp.scanned_at,
-            filename: resp.filename || label,
-            sha256: resp.sha256,
-            verdict: resp.verdict,
-            signature: resp.signature,
-            result: resp,
-          });
 
           const verdictType = verdictKind(resp.verdict);
           const toastType = verdictType === 'ok' ? 'success' : (verdictType === 'bad' ? 'error' : 'info');
           showToast('Scan completed: ' + String(resp.verdict || 'unknown').toUpperCase(), toastType);
           setStatus(verdictKind(resp.verdict), 'Completed: ' + String(resp.verdict || 'unknown'));
+
+          if (resp && resp.stored === false) {
+            showToast('Result was not saved server-side (history may not include it)', 'warn', 6000);
+          } else {
+            await refreshHistoryFromServer({ silent: true });
+          }
         } catch (e) {
           const msg = e && e.data && e.data.detail ? e.data.detail : (e && e.message ? e.message : String(e || 'Unknown error'));
           showToast(msg, 'error', 6000);
           setStatus('bad', msg);
-          if (pendingInserted) {
-            const errObj = {
-              scan_id: pendingId,
-              submitted_at: startedAt,
-              scanned_at: startedAt,
-              input_type: inputType,
-              filename: label,
-              engine: 'clamav',
-              verdict: 'error',
-              clamav: { error: msg },
-            };
-            showResult(errObj);
-            upsertHistory({
-              scan_id: pendingId,
-              submitted_at: startedAt,
-              scanned_at: startedAt,
-              filename: errObj.filename || 'scan failed',
-              sha256: '',
-              verdict: 'error',
-              signature: '',
-              result: errObj,
-            });
-          }
+          const errObj = {
+            submitted_at: startedAt,
+            scanned_at: startedAt,
+            input_type: inputType,
+            filename: label,
+            engine: 'clamav',
+            verdict: 'error',
+            clamav: { error: msg },
+          };
+          showResult(errObj);
         } finally {
           setButtonLoading(startEl, false);
           startEl.disabled = false;
@@ -1824,7 +1887,7 @@
 
       function init() {
         loadApiKey();
-        history = loadHistory();
+        history = [];
         renderHistory();
         setActiveInput('file');
         setActiveTab('summary');
@@ -1848,7 +1911,7 @@
         tabRawEl.addEventListener('click', () => setActiveTab('raw'));
 
         startEl.addEventListener('click', startScan);
-        clearHistoryEl.addEventListener('click', clearHistory);
+        clearHistoryEl.addEventListener('click', clearHistoryServer);
         historyFilterEl.addEventListener('input', () => {
           historyPage = 1;
           renderHistory();
@@ -1872,13 +1935,24 @@
         apiKeyEl.addEventListener('input', () => {
           const v = apiKeyEl.value.trim();
           apiKeySavedEl.style.display = v ? 'inline-flex' : 'none';
-          if (!v) return;
-          localStorage.setItem(LS.apiKey, v);
+          if (v) localStorage.setItem(LS.apiKey, v);
+          scheduleHistoryRefresh();
         });
 
         setButtonsEnabled(false);
         renderSummary({});
         renderRaw({});
+
+        refreshHistoryFromServer({ silent: true });
+
+        const jobId = new URLSearchParams(window.location.search).get('job');
+        if (jobId) {
+          if (!apiKeyEl.value.trim()) {
+            showToast('Enter an API key to view this job', 'warn', 6000);
+          } else {
+            viewJob(jobId);
+          }
+        }
       }
 
       init();

@@ -2412,7 +2412,7 @@
         historyLoading = true;
         renderHistory();
         try {
-          const res = await api('/jobs?limit=' + HISTORY_FETCH_LIMIT, 'GET');
+          const res = await api('/jobs?limit=' + HISTORY_FETCH_LIMIT + '&type=url', 'GET');
           const jobs = res && res.jobs;
           if (!Array.isArray(jobs)) {
             throw Object.assign(new Error('Invalid /jobs response'), { data: res });
