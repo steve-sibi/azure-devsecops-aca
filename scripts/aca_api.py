@@ -392,39 +392,93 @@ def cmd_jobs(config: Config, args):
     """Handler for 'jobs' command."""
     config.require_api_key()
 
-    params = [f"limit={args.limit}"]
-    if args.status:
-        params.append(f"status={args.status}")
+    def _fetch_jobs(scan_type: str) -> list[dict]:
+        params = [f"limit={args.limit}"]
+        if args.status:
+            params.append(f"status={args.status}")
+        if scan_type and scan_type != "all":
+            params.append(f"type={scan_type}")
+        path = f"/jobs?{'&'.join(params)}"
+        _, _, body = make_request(config, "GET", path)
 
-    path = f"/jobs?{'&'.join(params)}"
-    status, _, body = make_request(config, "GET", path)
+        try:
+            data = json.loads(body)
+        except json.JSONDecodeError:
+            die("/jobs did not return JSON.")
+
+        jobs = data.get("jobs")
+        if not isinstance(jobs, list):
+            die("unexpected /jobs response shape (missing 'jobs' list)")
+        return [j for j in jobs if isinstance(j, dict)]
+
+    def _print_url_jobs(jobs: list[dict]) -> None:
+        print(
+            f"{'job_id':36}  {'status':12}  {'submitted_at':20}  {'scanned_at':20}  url"
+        )
+        for j in jobs:
+            jid = str(j.get("job_id") or "")
+            jst = str(j.get("status") or "")
+            sub = str(j.get("submitted_at") or "")
+            scan = str(j.get("scanned_at") or "")
+            url = str(j.get("url") or "")
+            if len(url) > 80:
+                url = url[:77] + "..."
+            print(f"{jid:36}  {jst:12}  {sub[:20]:20}  {scan[:20]:20}  {url}")
+
+    def _print_file_jobs(jobs: list[dict]) -> None:
+        print(
+            f"{'job_id':36}  {'status':12}  {'submitted_at':20}  {'scanned_at':20}  {'verdict':10}  {'sha256':12}  filename"
+        )
+        for j in jobs:
+            jid = str(j.get("job_id") or "")
+            jst = str(j.get("status") or "")
+            sub = str(j.get("submitted_at") or "")
+            scan = str(j.get("scanned_at") or "")
+            verdict = str(j.get("verdict") or "")
+            sha = str(j.get("sha256") or "")
+            sha_short = sha[:12] if sha else ""
+            filename = str(j.get("filename") or "")
+            if len(filename) > 60:
+                filename = filename[:57] + "..."
+            print(
+                f"{jid:36}  {jst:12}  {sub[:20]:20}  {scan[:20]:20}  {verdict[:10]:10}  {sha_short:12}  {filename}"
+            )
+
+    scan_type = getattr(args, "scan_type", None)
+    if scan_type is not None:
+        scan_type = str(scan_type).strip().lower()
+        if scan_type not in ("url", "file"):
+            die("--type must be one of: url, file")
 
     if args.format == "json":
-        emit_json(body, config)
+        if scan_type is None:
+            out = {
+                "url_jobs": _fetch_jobs("url"),
+                "file_jobs": _fetch_jobs("file"),
+            }
+            emit_json(out, config)
+            return
+        out = {"jobs": _fetch_jobs(scan_type)}
+        emit_json(out, config)
         return
 
     # Lines format
-    try:
-        data = json.loads(body)
-    except json.JSONDecodeError:
-        die("/jobs did not return JSON.")
+    if scan_type is None:
+        url_jobs = _fetch_jobs("url")
+        file_jobs = _fetch_jobs("file")
 
-    jobs = data.get("jobs")
-    if not isinstance(jobs, list):
-        die("unexpected /jobs response shape (missing 'jobs' list)")
+        print("URL scans:")
+        _print_url_jobs(url_jobs)
+        print("")
+        print("File scans:")
+        _print_file_jobs(file_jobs)
+        return
 
-    print(f"{'job_id':36}  {'status':12}  {'submitted_at':20}  {'scanned_at':20}  url")
-    for j in jobs:
-        if not isinstance(j, dict):
-            continue
-        jid = str(j.get("job_id") or "")
-        jst = str(j.get("status") or "")
-        sub = str(j.get("submitted_at") or "")
-        scan = str(j.get("scanned_at") or "")
-        url = str(j.get("url") or "")
-        if len(url) > 80:
-            url = url[:77] + "..."
-        print(f"{jid:36}  {jst:12}  {sub[:20]:20}  {scan[:20]:20}  {url}")
+    jobs = _fetch_jobs(scan_type)
+    if scan_type == "file":
+        _print_file_jobs(jobs)
+    else:
+        _print_url_jobs(jobs)
 
 
 def cmd_history(config: Config, args):
@@ -445,7 +499,16 @@ def cmd_clear_history(config: Config, args):
 def cmd_clear_server_history(config: Config, args):
     """Handler for 'clear-server-history' command."""
     config.require_api_key()
-    status, _, body = make_request(config, "DELETE", "/jobs")
+    scan_type = getattr(args, "scan_type", None)
+    if scan_type is not None:
+        scan_type = str(scan_type).strip().lower()
+        if scan_type not in ("url", "file"):
+            die("--type must be one of: url, file")
+
+    path = "/jobs"
+    if scan_type is not None:
+        path = f"{path}?type={scan_type}"
+    status, _, body = make_request(config, "DELETE", path)
     emit_json(body, config)
 
 
@@ -622,6 +685,12 @@ def main():
     p_jobs = subparsers.add_parser("jobs", help="List jobs")
     p_jobs.add_argument("--limit", type=int, default=20, help="Max jobs to return")
     p_jobs.add_argument("--status", help="Comma-separated statuses")
+    p_jobs.add_argument(
+        "--type",
+        dest="scan_type",
+        choices=["url", "file"],
+        help="Filter by scan type (default: show both)",
+    )
     p_jobs.add_argument("--format", default="lines", choices=["lines", "json"])
 
     # History
@@ -630,8 +699,14 @@ def main():
 
     # Clear History
     subparsers.add_parser("clear-history", help="Clear local history")
-    subparsers.add_parser(
+    p_clear_server = subparsers.add_parser(
         "clear-server-history", help="Clear server history (for API key)"
+    )
+    p_clear_server.add_argument(
+        "--type",
+        dest="scan_type",
+        choices=["url", "file"],
+        help="Which jobs to clear (default: all)",
     )
 
     # Screenshot
