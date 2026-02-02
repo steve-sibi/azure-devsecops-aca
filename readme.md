@@ -12,10 +12,14 @@ End-to-end, cloud-native **URL scanning pipeline** (two-stage fetch + analyze) p
 What this project demonstrates:
 
 - **DevSecOps approach**: Focused on implementing infrastructure in an automated, shift-left manner
-- **Secure API surface**: `X-API-Key` auth + per-key rate limiting + SSRF protections
+- **Secure API surface**: `X-API-Key` auth + per-key rate limiting + SSRF protections + URL canonicalization
 - **Async job processing**: API enqueues scan jobs to **Service Bus** (or Redis locally), fetcher downloads artifacts, worker analyzes (KEDA autoscaling on Azure)
+- **URL dedupe/cache**: Shared URL scan cache with configurable TTLs to avoid redundant work (based on canonical URLs)
 - **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`) (or Redis locally); optional screenshots served at `GET /scan/{job_id}/screenshot`
+- **Per-user job history**: API key-based job isolation with `GET /jobs` for viewing your submission history
 - **File scanning**: `/file/scan` scans an uploaded file/payload via **ClamAV** (sidecar in ACA; service in Docker Compose)
+- **Web content analysis**: HTML parsing, resource classification, tracking detection (adblock filters), security headers, cookies, YARA rules, WHOIS/RDAP lookups
+- **Structured logging**: JSON logs with correlation IDs for distributed tracing (Azure Monitor/App Insights compatible)
 - **DevSecOps CI/CD**: Ruff/pytest + Terraform validate + Hadolint + Checkov + Trivy (SARIF uploads)
 - **Cloud-native secrets**: **Key Vault** stores secrets, resolved by **UAMI** at deploy/runtime
 - **Built-in UI**: dashboard at `/`, file scanner UI at `/file`, Swagger at `/docs`
