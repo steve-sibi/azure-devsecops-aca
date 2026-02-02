@@ -29,10 +29,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from http import HTTPStatus
 from pathlib import Path
-from typing import Optional
+from typing import Any, Mapping, Optional
 from uuid import uuid4
 
-from azure.data.tables.aio import TableServiceClient
+from azure.data.tables.aio import TableClient, TableServiceClient
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus.exceptions import ServiceBusError
@@ -175,8 +175,8 @@ FILE_SCANNER_TEMPLATE = (
 sb_client: Optional[ServiceBusClient] = None
 sb_sender: Optional[ServiceBusSender] = None
 table_service: Optional[TableServiceClient] = None
-table_client = None
-redis_client = None
+table_client: Optional[TableClient] = None
+redis_client: Any = None
 blob_service = None
 
 api_key_scheme = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
@@ -376,14 +376,34 @@ async def _enqueue_json(
     *,
     schema: str,
     message_id: str,
-    application_properties: Optional[dict] = None,
+    application_properties: Optional[Mapping[str, Any]] = None,
 ):
+    def _normalize_application_properties(
+        raw: Optional[Mapping[str, Any]],
+    ) -> dict[str, str]:
+        if not raw:
+            return {}
+        out: dict[str, str] = {}
+        for k, v in raw.items():
+            if v is None:
+                continue
+            key = str(k)
+            if isinstance(v, str):
+                out[key] = v
+            elif isinstance(v, (bytes, bytearray)):
+                out[key] = bytes(v).decode("utf-8", "replace")
+            elif isinstance(v, datetime):
+                out[key] = v.isoformat()
+            else:
+                out[key] = str(v)
+        return out
+
     if QUEUE_BACKEND == "servicebus":
         if not sb_sender:
             raise HTTPException(status_code=503, detail="Queue not initialized")
-        props = {"schema": schema}
+        props: dict[str | bytes, Any] = {"schema": schema}
         if application_properties:
-            props.update(application_properties)
+            props.update(_normalize_application_properties(application_properties))
         msg = ServiceBusMessage(
             json.dumps(payload),
             content_type="application/json",
@@ -403,7 +423,9 @@ async def _enqueue_json(
             "payload": payload,
         }
         if application_properties:
-            envelope["application_properties"] = application_properties
+            envelope["application_properties"] = _normalize_application_properties(
+                application_properties
+            )
         await redis_client.rpush(REDIS_QUEUE_KEY, json.dumps(envelope))
         return
 
@@ -1477,9 +1499,7 @@ async def list_jobs(
     if isinstance(scan_type, str) and scan_type.strip():
         scan_type_norm = scan_type.strip().lower()
         if scan_type_norm not in ("url", "file"):
-            raise HTTPException(
-                status_code=400, detail="type must be 'url' or 'file'"
-            )
+            raise HTTPException(status_code=400, detail="type must be 'url' or 'file'")
 
     limit_n = max(1, int(limit or 0))
     prefetch_limit = limit_n
@@ -1593,9 +1613,7 @@ async def clear_jobs(
     if isinstance(scan_type, str) and scan_type.strip():
         scan_type_norm = scan_type.strip().lower()
         if scan_type_norm not in ("url", "file"):
-            raise HTTPException(
-                status_code=400, detail="type must be 'url' or 'file'"
-            )
+            raise HTTPException(status_code=400, detail="type must be 'url' or 'file'")
 
     deleted_job_index = 0
     deleted_request_results = 0
@@ -1658,7 +1676,9 @@ async def clear_jobs(
         if isinstance(results, list) and n > 0:
             try:
                 step = 3 if scan_type_norm else 2
-                deleted_job_index = sum(int(x or 0) for x in results[0 : step * n : step])
+                deleted_job_index = sum(
+                    int(x or 0) for x in results[0 : step * n : step]
+                )
                 deleted_request_results = sum(
                     int(x or 0) for x in results[1 : step * n : step]
                 )
@@ -1674,10 +1694,13 @@ async def clear_jobs(
         }
 
     if RESULT_BACKEND == "table":
+        if not table_client:
+            raise HTTPException(status_code=503, detail="Result store not initialized")
+        tc = table_client
         pk = job_index_partition_key(api_key_hash_value=api_key_hash)
         filt = f"PartitionKey eq '{pk}'"
         try:
-            pager = table_client.query_entities(query_filter=filt, results_per_page=200)
+            pager = tc.query_entities(query_filter=filt, results_per_page=200)
             async for entity in pager:
                 if not isinstance(entity, dict):
                     continue
@@ -1698,16 +1721,14 @@ async def clear_jobs(
 
                 if row_key:
                     try:
-                        await table_client.delete_entity(
-                            partition_key=pk, row_key=row_key
-                        )
+                        await tc.delete_entity(partition_key=pk, row_key=row_key)
                         deleted_job_index += 1
                     except Exception:
                         pass
 
                 if request_id:
                     try:
-                        await table_client.delete_entity(
+                        await tc.delete_entity(
                             partition_key=RESULT_PARTITION, row_key=request_id
                         )
                         deleted_request_results += 1
