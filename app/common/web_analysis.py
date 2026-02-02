@@ -14,7 +14,6 @@ from typing import Optional
 from urllib.parse import parse_qsl, urljoin, urlparse
 
 from bs4 import BeautifulSoup
-from common.http_parsing import parse_set_cookie_headers
 
 try:
     from adblockparser import AdblockRules
@@ -130,11 +129,12 @@ def _tld_extractor():
     try:
         return tldextract.TLDExtract(
             cache_dir=cache_dir,
-            suffix_list_urls=None,
+            # Avoid network fetches; rely on the packaged PSL snapshot.
+            suffix_list_urls=(),
         )
     except Exception:
         try:
-            return tldextract.TLDExtract(suffix_list_urls=None)
+            return tldextract.TLDExtract(suffix_list_urls=())
         except Exception:
             return None
 
@@ -482,7 +482,9 @@ def analyze_html(
 
         if is_stylesheet and len(styles) < max_items and resolved not in seen_styles:
             seen_styles.add(resolved)
-            rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+            rtype = classify_internal_external(
+                resource_url=resolved, page_host=page_host
+            )
             styles.append({"url": resolved, "type": rtype})
             _maybe_add_mixed(mixed_content, resolved)
             if _is_tracking_resource(resolved, page_host=page_host, kind="style"):
@@ -514,7 +516,9 @@ def analyze_html(
 
         if is_image and len(images) < max_items and resolved not in seen_images:
             seen_images.add(resolved)
-            rtype = classify_internal_external(resource_url=resolved, page_host=page_host)
+            rtype = classify_internal_external(
+                resource_url=resolved, page_host=page_host
+            )
             images.append({"url": resolved, "type": rtype})
             _maybe_add_mixed(mixed_content, resolved)
             if _is_tracking_resource(resolved, page_host=page_host, kind="image"):
