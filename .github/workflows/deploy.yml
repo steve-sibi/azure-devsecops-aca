@@ -34,7 +34,8 @@ on:
 concurrency:
   # Prevent deploy/destroy/keda runs from overlapping for the same environment
   group: aca-${{ inputs.prefix }}-${{ inputs.resource_group }}
-  cancel-in-progress: false
+  # If an App Deploy (CD) run is already in progress for this environment, cancel it so infra deploy can proceed.
+  cancel-in-progress: true
 
 # NOTE: Keep inputs in sync with destroy.yml to avoid configuration drift
 env:

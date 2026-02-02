@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/ci.yml/badge.svg)](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/ci.yml)
 [![Deploy](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/deploy.yml/badge.svg)](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/deploy.yml)
+[![App Deploy (CD)](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/app-deploy.yml/badge.svg)](https://github.com/steve-sibi/azure-devsecops-aca/actions/workflows/app-deploy.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11+-3776ab.svg)](https://www.python.org/)
 [![Terraform 1.6+](https://img.shields.io/badge/Terraform-1.6+-844fba.svg)](https://www.terraform.io/)
@@ -376,7 +377,26 @@ azure-devsecops-aca/
     - end-to-end scan: `POST /scan` then poll `GET /scan/{job_id}` until `completed`
 
 > Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI; Deploy is manual (`workflow_dispatch`).
-    
+
+### App Deploy (CD) (`.github/workflows/app-deploy.yml`)
+
+Fast path for code changes **after the Azure environment already exists**:
+
+- Trigger: `push` to `main` when `app/**` changes (also supports manual `workflow_dispatch`)
+- Builds & pushes images to **existing ACR** (API, worker, ClamAV; tagged with commit SHA)
+- Updates existing Container Apps in-place via `az containerapp update` (no Terraform):
+  - `${prefix}-api` (`api` + `clamav` containers)
+  - `${prefix}-fetcher` (`fetcher` container; uses worker image)
+  - `${prefix}-worker` (`worker` container)
+- Optional smoke test: `GET /healthz` (enabled by default; disable via `smoke_test=false`)
+
+Configuration (recommended):
+
+- Set GitHub Actions **Variables**:
+  - `ACA_PREFIX` (e.g. `devsecopsaca`)
+  - `ACA_RESOURCE_GROUP` (e.g. `rg-devsecops-aca`)
+- Secrets remain the same as Deploy: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
+
 ### KEDA Scale Test (`.github/workflows/keda-scale-test.yml`)
 
 Manual workflow (`workflow_dispatch`) to validate **KEDA scale-out**:
