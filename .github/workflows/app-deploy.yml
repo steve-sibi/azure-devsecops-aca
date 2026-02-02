@@ -1,0 +1,163 @@
+name: App Deploy (CD)
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "app/**"
+      - ".dockerignore"
+      - "docker-compose.yml"
+      - ".github/workflows/app-deploy.yml"
+      - "scripts/gha/deploy_app_rollout.sh"
+  workflow_dispatch:
+    inputs:
+      prefix:
+        description: Resource prefix (lowercase; used for most resource names)
+        required: false
+        default: ""
+      resource_group:
+        description: Resource group name (e.g. rg-devsecops-aca)
+        required: false
+        default: ""
+      smoke_test:
+        description: Run GET /healthz smoke test (true/false)
+        required: false
+        default: "true"
+
+concurrency:
+  # Match deploy.yml/destroy.yml grouping so workflows don't overlap for the same env
+  group: aca-${{ inputs.prefix || vars.ACA_PREFIX || 'devsecopsaca' }}-${{ inputs.resource_group || vars.ACA_RESOURCE_GROUP || 'rg-devsecops-aca' }}
+  cancel-in-progress: false
+
+env:
+  PREFIX: ${{ inputs.prefix || vars.ACA_PREFIX || 'devsecopsaca' }}
+  RG: ${{ inputs.resource_group || vars.ACA_RESOURCE_GROUP || 'rg-devsecops-aca' }}
+  SMOKE_TEST: ${{ inputs.smoke_test || 'true' }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: { id-token: write, contents: read }
+    outputs:
+      acr_login_server: ${{ steps.acr.outputs.login_server }}
+      api_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
+      worker_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
+      clamav_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ACR login server
+        id: acr
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACR="$(az acr show -g "${RG}" -n "${PREFIX}acr" --query loginServer -o tsv)"
+          echo "login_server=${ACR}" >> "$GITHUB_OUTPUT"
+
+      - name: ACR login
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name "${PREFIX}acr"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push API
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/api/Dockerfile
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push Worker
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/worker/Dockerfile.sidecar
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build & push ClamAV
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/clamav/Dockerfile
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary (images)
+        if: always()
+        shell: bash
+        env:
+          ACR_LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
+          API_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
+          WORKER_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
+          CLAMAV_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          python3 .github/scripts/deploy_summary.py build-push
+
+  rollout:
+    needs: [build-and-push]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions: { id-token: write, contents: read }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Roll out images to Container Apps
+        shell: bash
+        env:
+          API_IMAGE: ${{ needs.build-and-push.outputs.api_image }}
+          WORKER_IMAGE: ${{ needs.build-and-push.outputs.worker_image }}
+          CLAMAV_IMAGE: ${{ needs.build-and-push.outputs.clamav_image }}
+        run: |
+          set -euo pipefail
+          bash scripts/gha/deploy_app_rollout.sh
+
+      - name: Summary (deployment)
+        if: always()
+        shell: bash
+        env:
+          API_IMAGE: ${{ needs.build-and-push.outputs.api_image }}
+          WORKER_IMAGE: ${{ needs.build-and-push.outputs.worker_image }}
+          CLAMAV_IMAGE: ${{ needs.build-and-push.outputs.clamav_image }}
+        run: |
+          {
+            echo "## App rollout"
+            echo ""
+            echo "| Component | Image |"
+            echo "|---|---|"
+            echo "| API | \`${API_IMAGE}\` |"
+            echo "| Worker/Fetcher | \`${WORKER_IMAGE}\` |"
+            echo "| ClamAV | \`${CLAMAV_IMAGE}\` |"
+            echo ""
+            echo "**Resource Group:** \`${RG}\`"
+            echo ""
+            echo "**Prefix:** \`${PREFIX}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
