@@ -31,7 +31,20 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, NoReturn, Optional, Tuple, Union
 
+__version__ = "1.0.0"
+
 # --- Configuration & Helpers ---
+
+SCAN_STATUS_CHOICES = (
+    "pending",
+    "queued",
+    "fetching",
+    "queued_scan",
+    "retrying",
+    "completed",
+    "error",
+)
+RESULT_VIEW_CHOICES = ("summary", "full")
 
 
 def load_dotenv(path: Path) -> dict:
@@ -338,7 +351,7 @@ def cmd_scan_url(config: Config, args):
 
     # Wait logic
     wait_args = argparse.Namespace(
-        job_id=job_id, interval=2, timeout=120, view=args.view
+        job_id=job_id, interval=args.interval, timeout=args.timeout, view=args.view
     )
     cmd_wait(config, wait_args)
 
@@ -391,6 +404,15 @@ def cmd_wait(config: Config, args):
 def cmd_jobs(config: Config, args):
     """Handler for 'jobs' command."""
     config.require_api_key()
+
+    if args.status:
+        statuses = [s.strip() for s in str(args.status).split(",") if s.strip()]
+        invalid = sorted(set(statuses) - set(SCAN_STATUS_CHOICES))
+        if invalid:
+            die(
+                f"--status contains invalid value(s): {', '.join(invalid)}; choices: {', '.join(SCAN_STATUS_CHOICES)}"
+            )
+        args.status = ",".join(statuses)
 
     def _fetch_jobs(scan_type: str) -> list[dict]:
         params = [f"limit={args.limit}"]
@@ -523,17 +545,31 @@ def cmd_screenshot(config: Config, args):
     if not isinstance(body_bytes, bytes):
         die("Expected bytes response for screenshot")
 
+    ctype = headers.get("Content-Type", "")
+    ext = "bin"
+    if "image/jpeg" in ctype:
+        ext = "jpg"
+    elif "image/png" in ctype:
+        ext = "png"
+
+    default_name = f"{args.job_id}.{ext}"
+
     out_path = args.out
-    if not out_path:
-        ctype = headers.get("Content-Type", "")
-        ext = "bin"
-        if "image/jpeg" in ctype:
-            ext = "jpg"
-        elif "image/png" in ctype:
-            ext = "png"
-        out_path = f"./{args.job_id}.{ext}"
+    if out_path:
+        out_path_obj = Path(out_path)
+        # Allow `--out` to be a directory (existing directory or a path ending in a separator).
+        if out_path_obj.exists() and out_path_obj.is_dir():
+            out_path_obj = out_path_obj / default_name
+        elif str(out_path).endswith(("/", "\\")):
+            out_path_obj = out_path_obj / default_name
+        out_path = str(out_path_obj)
+    elif args.out_dir:
+        out_path = str(Path(args.out_dir) / default_name)
+    else:
+        out_path = f"./{default_name}"
 
     try:
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
         with open(out_path, "wb") as f:
             f.write(body_bytes)
         print(out_path)
@@ -633,15 +669,57 @@ def cmd_scan_payload(config: Config, args):
 
 
 def main():
+    epilog = """\
+Examples:
+  ./scripts/aca_api.py scan-url https://example.com --wait
+  ./scripts/aca_api.py jobs --limit 50
+  ./scripts/aca_api.py history --limit 10
+  ./scripts/aca_api.py scan-file ./readme.md
+  ./scripts/aca_api.py scan-payload "hello world"
+  ./scripts/aca_api.py screenshot <job_id>
+  ./scripts/aca_api.py help
+
+Azure:
+  API_URL="https://<api-fqdn>" API_KEY="..." ./scripts/aca_api.py scan-url https://example.com --wait
+
+Configuration precedence (highest first):
+  Base URL:   --base-url,  ACA_BASE_URL,  API_URL,  http://localhost:8000
+  API key:    --api-key,   ACA_API_KEY,   API_KEY,  repo .env (ACA_API_KEY/API_KEY)
+  Key header: --api-key-header, ACA_API_KEY_HEADER, API_KEY_HEADER, X-API-Key
+  History:    --history,   ACA_API_HISTORY, <repo>/.aca_api_history
+
+Scan status lifecycle:
+  pending, queued, fetching, queued_scan, retrying, completed, error
+"""
+
     parser = argparse.ArgumentParser(
-        description="Terminal helper for the FastAPI scanner."
+        description="CLI helper for the FastAPI scanner service.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=epilog,
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
     )
 
     # Global options
-    parser.add_argument("-b", "--base-url", help="Base API URL")
-    parser.add_argument("-k", "--api-key", help="API key")
-    parser.add_argument("--api-key-header", help="Header name (default: X-API-Key)")
-    parser.add_argument("--history", help="Job history file")
+    parser.add_argument(
+        "-b",
+        "--base-url",
+        help="Base API URL (or ACA_BASE_URL / API_URL; default: http://localhost:8000)",
+    )
+    parser.add_argument(
+        "-k",
+        "--api-key",
+        help="API key (or ACA_API_KEY / API_KEY; also read from repo .env)",
+    )
+    parser.add_argument(
+        "--api-key-header",
+        help="API key header (or ACA_API_KEY_HEADER / API_KEY_HEADER; default: X-API-Key)",
+    )
+    parser.add_argument(
+        "--history",
+        help="Local history file (or ACA_API_HISTORY; default: <repo>/.aca_api_history)",
+    )
     parser.add_argument(
         "--raw", action="store_true", help="Print raw response (no pretty-print)"
     )
@@ -649,59 +727,118 @@ def main():
         "-v", "--verbose", action="store_true", help="Extra progress output"
     )
 
-    subparsers = parser.add_subparsers(dest="command", title="Commands")
+    subparsers = parser.add_subparsers(dest="command", title="Commands", metavar="")
     subparsers.required = True
 
+    cmd_parsers: dict[str, argparse.ArgumentParser] = {}
+
     # Health
-    subparsers.add_parser("health", help="Check health")
+    cmd_parsers["health"] = subparsers.add_parser(
+        "health", help="Check API health (no auth)"
+    )
 
     # Scan URL
     p_scan = subparsers.add_parser("scan-url", help="Scan a URL")
+    cmd_parsers["scan-url"] = p_scan
     p_scan.add_argument("url", help="URL to scan")
-    p_scan.add_argument("--source", help="Source identifier")
+    p_scan.add_argument("--source", help="Optional source identifier (free-form)")
     p_scan.add_argument(
-        "--meta", action="append", help="Metadata key=value", default=[]
+        "--meta",
+        action="append",
+        help="Metadata key=value (repeatable; merged into metadata object)",
+        default=[],
     )
-    p_scan.add_argument("--meta-json", help="Metadata JSON object")
-    p_scan.add_argument("--force", action="store_true", help="Force scan")
-    p_scan.add_argument("--wait", action="store_true", help="Wait for completion")
     p_scan.add_argument(
-        "--view", default="summary", choices=["summary", "full"], help="View type"
+        "--meta-json",
+        help='Metadata JSON object (merged with --meta), e.g. \'{"env":"dev"}\'',
+    )
+    p_scan.add_argument("--force", action="store_true", help="Force a new scan")
+    p_scan.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for completion and print final result (otherwise prints submit response)",
+    )
+    p_scan.add_argument(
+        "--interval",
+        type=int,
+        default=2,
+        help="When using --wait, poll interval in seconds (default: 2)",
+    )
+    p_scan.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="When using --wait, timeout in seconds (0 = no timeout; default: 120)",
+    )
+    p_scan.add_argument(
+        "--view",
+        default="summary",
+        choices=list(RESULT_VIEW_CHOICES),
+        help="Result view (summary is smaller; full includes details)",
     )
 
     # Status
     p_status = subparsers.add_parser("status", help="Get job status")
+    cmd_parsers["status"] = p_status
     p_status.add_argument("job_id", help="Job ID")
-    p_status.add_argument("--view", default="summary", choices=["summary", "full"])
+    p_status.add_argument(
+        "--view",
+        default="summary",
+        choices=list(RESULT_VIEW_CHOICES),
+        help="Result view (summary is smaller; full includes details)",
+    )
 
     # Wait
     p_wait = subparsers.add_parser("wait", help="Wait for job")
+    cmd_parsers["wait"] = p_wait
     p_wait.add_argument("job_id", help="Job ID")
     p_wait.add_argument("--interval", type=int, default=2, help="Poll interval (s)")
-    p_wait.add_argument("--timeout", type=int, default=120, help="Timeout (s)")
-    p_wait.add_argument("--view", default="summary", choices=["summary", "full"])
+    p_wait.add_argument(
+        "--timeout", type=int, default=120, help="Timeout (s); 0 = no timeout"
+    )
+    p_wait.add_argument(
+        "--view",
+        default="summary",
+        choices=list(RESULT_VIEW_CHOICES),
+        help="Result view (summary is smaller; full includes details)",
+    )
 
     # Jobs
     p_jobs = subparsers.add_parser("jobs", help="List jobs")
+    cmd_parsers["jobs"] = p_jobs
     p_jobs.add_argument("--limit", type=int, default=20, help="Max jobs to return")
-    p_jobs.add_argument("--status", help="Comma-separated statuses")
+    p_jobs.add_argument(
+        "--status",
+        help=f"Comma-separated statuses (choices: {', '.join(SCAN_STATUS_CHOICES)})",
+    )
     p_jobs.add_argument(
         "--type",
         dest="scan_type",
         choices=["url", "file"],
         help="Filter by scan type (default: show both)",
     )
-    p_jobs.add_argument("--format", default="lines", choices=["lines", "json"])
+    p_jobs.add_argument(
+        "--format",
+        default="lines",
+        choices=["lines", "json"],
+        help="Output format (lines = tables; json = machine-readable)",
+    )
 
     # History
-    p_hist = subparsers.add_parser("history", help="Local client history")
-    p_hist.add_argument("--limit", type=int, default=0, help="Max lines")
+    p_hist = subparsers.add_parser(
+        "history", help="Show local history (most recent jobs submitted)"
+    )
+    cmd_parsers["history"] = p_hist
+    p_hist.add_argument("--limit", type=int, default=0, help="Max lines (0 = all)")
 
     # Clear History
-    subparsers.add_parser("clear-history", help="Clear local history")
+    cmd_parsers["clear-history"] = subparsers.add_parser(
+        "clear-history", help="Clear local history"
+    )
     p_clear_server = subparsers.add_parser(
         "clear-server-history", help="Clear server history (for API key)"
     )
+    cmd_parsers["clear-server-history"] = p_clear_server
     p_clear_server.add_argument(
         "--type",
         dest="scan_type",
@@ -711,21 +848,63 @@ def main():
 
     # Screenshot
     p_screen = subparsers.add_parser("screenshot", help="Download screenshot")
+    cmd_parsers["screenshot"] = p_screen
     p_screen.add_argument("job_id", help="Job ID")
-    p_screen.add_argument("-o", "--out", help="Output path")
+    out_group = p_screen.add_mutually_exclusive_group()
+    out_group.add_argument(
+        "-o",
+        "--out",
+        help="Output file path or directory (default: ./<job_id>.png|.jpg based on Content-Type)",
+    )
+    out_group.add_argument(
+        "--out-dir",
+        help="Output directory (filename auto-generated as <job_id>.png|.jpg based on Content-Type)",
+    )
 
     # Scan File
     p_file = subparsers.add_parser("scan-file", help="Scan a file (multipart)")
-    p_file.add_argument("path", help="File path")
+    cmd_parsers["scan-file"] = p_file
+    p_file.add_argument("path", help="File path to upload to /file/scan")
 
     # Scan Payload
     p_payload = subparsers.add_parser("scan-payload", help="Scan text payload")
-    p_payload.add_argument("text", help="Text payload")
+    cmd_parsers["scan-payload"] = p_payload
+    p_payload.add_argument("text", help="Text payload to send as multipart form field")
     p_payload.add_argument(
-        "--base64", action="store_true", help="Payload is base64 encoded"
+        "--base64",
+        action="store_true",
+        help="Indicate payload is base64 encoded (sets payload_base64=true)",
+    )
+
+    # Help
+    p_help = subparsers.add_parser(
+        "help", help="Show detailed help for all commands or one command"
+    )
+    cmd_parsers["help"] = p_help
+    p_help.add_argument(
+        "topic",
+        nargs="?",
+        help="Optional command to show help for (e.g. scan-url, screenshot)",
     )
 
     args = parser.parse_args()
+
+    if args.command == "help":
+        topic = getattr(args, "topic", None)
+        if topic:
+            topic = str(topic).strip()
+            if topic not in cmd_parsers:
+                die(
+                    f"Unknown help topic: {topic}. Try one of: {', '.join(sorted(cmd_parsers.keys()))}"
+                )
+            print(cmd_parsers[topic].format_help().rstrip())
+        else:
+            print(parser.format_help().rstrip())
+            print("\n---\n")
+            for name in sorted(k for k in cmd_parsers.keys() if k != "help"):
+                print(cmd_parsers[name].format_help().rstrip())
+                print("\n---\n")
+        return
 
     config = Config(args)
 

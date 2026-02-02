@@ -578,6 +578,9 @@ The included helper script (`scripts/aca_api.py`) wraps API calls and handles JS
 ./scripts/aca_api.py scan-url https://example.com --wait
 ./scripts/aca_api.py jobs --limit 50
 ./scripts/aca_api.py scan-file ./readme.md
+./scripts/aca_api.py screenshot <job_id> --out-dir ./screenshots/
+./scripts/aca_api.py help               # show all commands + options
+./scripts/aca_api.py help screenshot    # show options for one command
 
 # Azure: set API_URL + API_KEY (see "Azure quickstart" above)
 API_URL="https://<api-fqdn>" API_KEY="..." ./scripts/aca_api.py scan-url https://example.com --wait
@@ -803,7 +806,7 @@ terraform plan \
         
     2. **Terraform destroy** (recommended; only removes Terraform-managed resources):
         
-        ```bashclear
+        ```bash
         cd infra
         terraform destroy \
           -var="prefix=devsecopsaca" \
