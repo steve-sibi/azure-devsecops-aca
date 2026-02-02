@@ -22,7 +22,6 @@ from typing import Any, Callable, Optional, Tuple
 
 from azure.servicebus import ServiceBusClient
 from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
-
 from common.errors import classify_exception
 
 
@@ -41,7 +40,9 @@ def install_signal_handlers(flag: ShutdownFlag) -> None:
 
 def decode_servicebus_body(msg) -> dict:
     """Decode an Azure Service Bus message body into a dict."""
-    body_bytes = b"".join(bytes(b) if isinstance(b, memoryview) else b for b in msg.body)
+    body_bytes = b"".join(
+        bytes(b) if isinstance(b, memoryview) else b for b in msg.body
+    )
     return json.loads(body_bytes.decode("utf-8"))
 
 
@@ -72,9 +73,27 @@ def decode_redis_body(
             task = decoded
             envelope = {"schema": "unknown", "delivery_count": 1, "payload": decoded}
             return task, envelope, 1, None
-        return None, None, 1, ValueError("invalid message payload (expected JSON object)")
+        return (
+            None,
+            None,
+            1,
+            ValueError("invalid message payload (expected JSON object)"),
+        )
     except Exception as e:
         return None, None, 1, e
+
+
+def _safe_delivery_count(msg) -> int:
+    """Best-effort conversion for SDK delivery_count (can be None in stubs)."""
+    try:
+        if msg is None:
+            return 0
+        value = getattr(msg, "delivery_count", None)
+        if value is None:
+            return 0
+        return int(value)
+    except Exception:
+        return 0
 
 
 def run_consumer(
@@ -88,7 +107,9 @@ def run_consumer(
     prefetch: int,
     max_retries: int,
     process: Callable[[dict], Any],
-    on_exception: Optional[Callable[[Optional[dict], Exception, int, int], None]] = None,
+    on_exception: Optional[
+        Callable[[Optional[dict], Exception, int, int], None]
+    ] = None,
     servicebus_conn: Optional[str] = None,
     redis_client: Any = None,
     redis_queue_key: Optional[str] = None,
@@ -126,7 +147,9 @@ def run_consumer(
                 info = classify_exception(e)
                 retrying = info.retryable and delivery_count < max_retries
                 job_id = task.get("job_id") if isinstance(task, dict) else None
-                correlation_id = task.get("correlation_id") if isinstance(task, dict) else None
+                correlation_id = (
+                    task.get("correlation_id") if isinstance(task, dict) else None
+                )
 
                 if retrying:
                     next_envelope = envelope or {
@@ -193,7 +216,9 @@ def run_consumer(
 
     if queue_backend == "servicebus":
         if not servicebus_conn:
-            raise RuntimeError("SERVICEBUS_CONN env var is required when QUEUE_BACKEND=servicebus")
+            raise RuntimeError(
+                "SERVICEBUS_CONN env var is required when QUEUE_BACKEND=servicebus"
+            )
 
         client = ServiceBusClient.from_connection_string(
             servicebus_conn, logging_enable=True
@@ -223,13 +248,24 @@ def run_consumer(
                                 receiver.complete_message(msg)
                             except Exception as e:
                                 duration_ms = int((time.time() - started_at) * 1000)
+                                delivery_count = _safe_delivery_count(msg)
                                 if on_exception:
-                                    on_exception(task, e, msg.delivery_count, duration_ms)
+                                    on_exception(task, e, delivery_count, duration_ms)
 
                                 info = classify_exception(e)
-                                retrying = info.retryable and msg.delivery_count < max_retries
-                                job_id = task.get("job_id") if isinstance(task, dict) else None
-                                correlation_id = task.get("correlation_id") if isinstance(task, dict) else None
+                                retrying = (
+                                    info.retryable and delivery_count < max_retries
+                                )
+                                job_id = (
+                                    task.get("job_id")
+                                    if isinstance(task, dict)
+                                    else None
+                                )
+                                correlation_id = (
+                                    task.get("correlation_id")
+                                    if isinstance(task, dict)
+                                    else None
+                                )
 
                                 if retrying:
                                     receiver.abandon_message(msg)
@@ -239,7 +275,7 @@ def run_consumer(
                                             component,
                                             job_id,
                                             correlation_id,
-                                            msg.delivery_count,
+                                            delivery_count,
                                             info.code,
                                             info.message,
                                         )
@@ -249,17 +285,19 @@ def run_consumer(
                                             component,
                                             job_id,
                                             correlation_id,
-                                            msg.delivery_count,
+                                            delivery_count,
                                             info.code,
                                             info.message,
                                         )
                                 else:
                                     dlq_reason = info.code or "error"
                                     dlq_description = info.message
-                                    if info.retryable and msg.delivery_count >= max_retries:
+                                    if info.retryable and delivery_count >= max_retries:
                                         dlq_reason = "max-retries-exceeded"
                                         if info.code and info.message:
-                                            dlq_description = f"{info.code}: {info.message}"
+                                            dlq_description = (
+                                                f"{info.code}: {info.message}"
+                                            )
 
                                     receiver.dead_letter_message(
                                         msg,
@@ -272,7 +310,7 @@ def run_consumer(
                                             component,
                                             job_id,
                                             correlation_id,
-                                            msg.delivery_count,
+                                            delivery_count,
                                             dlq_reason,
                                             info.code,
                                             info.message,
@@ -283,7 +321,7 @@ def run_consumer(
                                             component,
                                             job_id,
                                             correlation_id,
-                                            msg.delivery_count,
+                                            delivery_count,
                                             dlq_reason,
                                             info.code,
                                             info.message,
