@@ -14,7 +14,14 @@ from typing import Optional
 from urllib.parse import parse_qsl, urljoin, urlparse
 
 from bs4 import BeautifulSoup
+from common.http_parsing import parse_set_cookie_headers
 
+__all__ = [
+    "ParsedPage",
+    "analyze_html",
+    "classify_internal_external",
+    "parse_set_cookie_headers",
+]
 try:
     from adblockparser import AdblockRules
 except Exception:  # pragma: no cover
