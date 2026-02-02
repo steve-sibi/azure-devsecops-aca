@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-
 _STATUS_RANKS: dict[str, int] = {
     "queued": 10,
     "fetching": 20,
@@ -33,7 +32,9 @@ class JobIndexConfig:
 
     @staticmethod
     def from_env() -> "JobIndexConfig":
-        partition_prefix = (os.getenv("JOB_INDEX_PARTITION_PREFIX", "jobs") or "jobs").strip()
+        partition_prefix = (
+            os.getenv("JOB_INDEX_PARTITION_PREFIX", "jobs") or "jobs"
+        ).strip()
         redis_zset_prefix = (
             os.getenv("REDIS_JOB_INDEX_ZSET_PREFIX", "jobsidx:") or "jobsidx:"
         ).strip()
@@ -132,7 +133,7 @@ def build_job_index_record(
     error: Optional[str] = None,
 ) -> dict[str, Any]:
     submitted = (submitted_at or "").strip() or datetime.now(timezone.utc).isoformat()
-    record = {
+    record: dict[str, Any] = {
         "PartitionKey": job_index_partition_key(api_key_hash_value=api_key_hash_value),
         "RowKey": job_index_row_key(submitted_at=submitted, job_id=job_id),
         "job_id": job_id,
@@ -177,7 +178,9 @@ async def upsert_job_index_record_async(
             )
         except Exception:
             existing = None
-        if _should_skip_regression(existing=existing, new_status=new_status, new_rank=new_rank):
+        if _should_skip_regression(
+            existing=existing, new_status=new_status, new_rank=new_rank
+        ):
             return True
         try:
             await table_client.upsert_entity(entity=record)
@@ -189,7 +192,10 @@ async def upsert_job_index_record_async(
         if not redis_client:
             return False
         zkey = _redis_zset_key(api_key_hash_value=api_key_hash_value)
-        hkey = _redis_hash_key(api_key_hash_value=api_key_hash_value, job_id=str(record.get("job_id") or ""))
+        hkey = _redis_hash_key(
+            api_key_hash_value=api_key_hash_value,
+            job_id=str(record.get("job_id") or ""),
+        )
 
         new_status = str(record.get("status") or "").strip().lower()
         new_rank = _status_rank(new_status)
@@ -197,12 +203,21 @@ async def upsert_job_index_record_async(
             existing = await redis_client.hgetall(hkey)
         except Exception:
             existing = None
-        if _should_skip_regression(existing=existing, new_status=new_status, new_rank=new_rank):
+        if _should_skip_regression(
+            existing=existing, new_status=new_status, new_rank=new_rank
+        ):
             return True
         try:
-            await redis_client.hset(hkey, mapping={k: "" if v is None else str(v) for k, v in record.items()})
+            await redis_client.hset(
+                hkey,
+                mapping={k: "" if v is None else str(v) for k, v in record.items()},
+            )
             # Use submitted_at (or updated_at) as score (epoch ms) for ordering.
-            ts = _parse_dt(record.get("submitted_at")) or _parse_dt(record.get("updated_at")) or datetime.now(timezone.utc)
+            ts = (
+                _parse_dt(record.get("submitted_at"))
+                or _parse_dt(record.get("updated_at"))
+                or datetime.now(timezone.utc)
+            )
             score = _epoch_ms(ts)
             await redis_client.zadd(zkey, {str(record.get("job_id") or ""): score})
             ttl = int(redis_ttl_seconds or 0)
@@ -236,7 +251,9 @@ def upsert_job_index_record_sync(
             )
         except Exception:
             existing = None
-        if _should_skip_regression(existing=existing, new_status=new_status, new_rank=new_rank):
+        if _should_skip_regression(
+            existing=existing, new_status=new_status, new_rank=new_rank
+        ):
             return True
         try:
             table_client.upsert_entity(entity=record)
@@ -259,7 +276,9 @@ def upsert_job_index_record_sync(
             existing = redis_client.hgetall(hkey)
         except Exception:
             existing = None
-        if _should_skip_regression(existing=existing, new_status=new_status, new_rank=new_rank):
+        if _should_skip_regression(
+            existing=existing, new_status=new_status, new_rank=new_rank
+        ):
             return True
         try:
             redis_client.hset(
@@ -307,7 +326,9 @@ async def list_jobs_async(
 
         out: list[dict[str, Any]] = []
         try:
-            pager = table_client.query_entities(query_filter=filt, results_per_page=min(200, limit_n))
+            pager = table_client.query_entities(
+                query_filter=filt, results_per_page=min(200, limit_n)
+            )
             async for entity in pager:
                 out.append(entity)
                 if len(out) >= limit_n:
@@ -326,7 +347,9 @@ async def list_jobs_async(
             return []
         out: list[dict[str, Any]] = []
         for jid in job_ids:
-            hkey = _redis_hash_key(api_key_hash_value=api_key_hash_value, job_id=str(jid))
+            hkey = _redis_hash_key(
+                api_key_hash_value=api_key_hash_value, job_id=str(jid)
+            )
             try:
                 data = await redis_client.hgetall(hkey)
             except Exception:
