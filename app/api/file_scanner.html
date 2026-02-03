@@ -1554,7 +1554,7 @@
         historyNextEl.disabled = historyPage >= totalPages;
 
         historyLastRenderedAt = new Date();
-        const updated = historyLastLoadedAt ? formatRelativeTime(historyLastLoadedAt) : '';
+        const updated = historyLastLoadedAt ? formatWhen(historyLastLoadedAt) : '';
         historyPageInfoEl.textContent = `Page ${historyPage}/${totalPages} · ${total} scan${total === 1 ? '' : 's'}${updated ? ' · Updated ' + updated : ''}`;
 
         if (!items.length) {
