@@ -2319,7 +2319,8 @@
 
       let history = [];
       let currentJobId = null;
-      let isPolling = false;
+      let isSubmitting = false;
+      const activePolls = new Map(); // job_id -> Promise
       let activeTab = 'summary'; // 'summary' | 'raw'
 
       let lastSummary = null; // most recent response for summary view
@@ -3783,8 +3784,35 @@
         throw new Error('Timed out waiting for result');
       }
 
+      function startPoll(jobId) {
+        const id = String(jobId || '').trim();
+        if (!id || activePolls.has(id)) return;
+        const pollPromise = (async () => {
+          try {
+            const result = await pollJob(id);
+            if (result && currentJobId === id) {
+              if (result.status === 'completed') {
+                showToast('Scan completed successfully!', 'success');
+                setStatus('ok', 'Completed');
+              } else {
+                showToast('Scan finished with errors', 'error');
+                setStatus('bad', 'Error');
+              }
+            }
+          } catch (e) {
+            if (currentJobId === id) {
+              const info = formatApiError(e);
+              showToast(info.message, 'error', 6000);
+              setStatus('bad', info.message);
+            }
+          }
+        })();
+        activePolls.set(id, pollPromise);
+        pollPromise.finally(() => activePolls.delete(id));
+      }
+
       async function startScan() {
-        if (isPolling) return;
+        if (isSubmitting) return;
         let target = '';
         try {
           target = toHttpsUrl(urlEl.value);
@@ -3800,6 +3828,7 @@
           return;
         }
 
+        isSubmitting = true;
         setStatus('info', 'Submitting scan...');
         showSummary({
           status: 'submitting',
@@ -3840,24 +3869,15 @@
             setStatus('bad', 'No job_id returned');
             return;
           }
-
-          isPolling = true;
           setStatus('info', 'Job queued; polling for results...');
-          const result = await pollJob(currentJobId);
-          if (result && result.status === 'completed') {
-            showToast('Scan completed successfully!', 'success');
-            setStatus('ok', 'Completed');
-          } else {
-            showToast('Scan finished with errors', 'error');
-            setStatus('bad', 'Error');
-          }
+          startPoll(currentJobId);
         } catch (e) {
           const info = formatApiError(e);
           showToast(info.message, 'error', 6000);
           setStatus('bad', info.message);
           showSummary({ status: 'error', error: info.message, summary: { url: target }, problem: info.problem || null });
         } finally {
-          isPolling = false;
+          isSubmitting = false;
           setButtonLoading(startEl, false);
           startEl.disabled = false;
           setButtonsEnabled(true);
@@ -3898,7 +3918,7 @@
         urlEl.addEventListener('keydown', (e) => {
           if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
             e.preventDefault();
-            if (!startEl.disabled && !isPolling) {
+            if (!startEl.disabled && !isSubmitting) {
               startScan();
             }
           }
@@ -3908,7 +3928,7 @@
         urlEl.addEventListener('keydown', (e) => {
           if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey && !e.shiftKey) {
             e.preventDefault();
-            if (!startEl.disabled && !isPolling) {
+            if (!startEl.disabled && !isSubmitting) {
               startScan();
             }
           }
