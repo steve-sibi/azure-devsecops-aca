@@ -119,8 +119,8 @@ jobs:
           file: app/api/Dockerfile
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api,ignore-error=true
 
       - name: Build & push Worker
         if: ${{ env.DEPLOY_WORKER == 'true' }}
@@ -130,8 +130,8 @@ jobs:
           file: app/worker/Dockerfile.sidecar
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker,ignore-error=true
 
       - name: Build & push ClamAV
         if: ${{ env.DEPLOY_CLAMAV == 'true' }}
@@ -141,8 +141,8 @@ jobs:
           file: app/clamav/Dockerfile
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=clamav
+          cache-to: type=gha,mode=max,scope=clamav,ignore-error=true
 
       - name: Summary (images)
         if: always()

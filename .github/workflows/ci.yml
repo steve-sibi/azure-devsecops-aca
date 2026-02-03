@@ -412,8 +412,8 @@ jobs:
           push: false
           load: true # load into local Docker so Trivy can scan
           tags: ${{ matrix.name }}:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }},ignore-error=true
 
       - name: Trivy scan ${{ matrix.name }} image → SARIF
         id: trivy_scan
