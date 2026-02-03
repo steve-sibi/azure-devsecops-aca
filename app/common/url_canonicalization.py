@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import ipaddress
 import posixpath
 import re
+import string
+from dataclasses import dataclass
 from urllib.parse import SplitResult, urlsplit, urlunsplit
 
-
-_UNRESERVED = set("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+_UNRESERVED = set(string.ascii_letters + string.digits + "-._~")
 _PCT_RE = re.compile(r"%([0-9A-Fa-f]{2})")
 
 
@@ -183,4 +183,3 @@ def canonicalize_url(url: str) -> CanonicalUrl:
         has_userinfo=has_userinfo,
         removed_fragment=removed_fragment,
     )
-
