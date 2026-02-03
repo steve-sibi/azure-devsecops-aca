@@ -1,14 +1,38 @@
 name: App Deploy (CD)
 
 on:
-  push:
-    branches: [ main ]
-    paths:
-      - "app/**"
-      - ".dockerignore"
-      - "docker-compose.yml"
-      - ".github/workflows/app-deploy.yml"
-      - "scripts/gha/deploy_app_rollout.sh"
+  workflow_call:
+    inputs:
+      prefix:
+        description: Resource prefix (lowercase; used for most resource names)
+        required: false
+        default: ""
+        type: string
+      resource_group:
+        description: Resource group name (e.g. rg-devsecops-aca)
+        required: false
+        default: ""
+        type: string
+      smoke_test:
+        description: Run GET /healthz smoke test (true/false)
+        required: false
+        default: "true"
+        type: string
+      deploy_api:
+        description: Deploy API container (true/false)
+        required: false
+        default: "true"
+        type: string
+      deploy_worker:
+        description: Deploy Worker/Fetcher containers (true/false)
+        required: false
+        default: "true"
+        type: string
+      deploy_clamav:
+        description: Deploy ClamAV sidecar container (true/false)
+        required: false
+        default: "true"
+        type: string
   workflow_dispatch:
     inputs:
       prefix:
@@ -23,6 +47,18 @@ on:
         description: Run GET /healthz smoke test (true/false)
         required: false
         default: "true"
+      deploy_api:
+        description: Deploy API container (true/false)
+        required: false
+        default: "true"
+      deploy_worker:
+        description: Deploy Worker/Fetcher containers (true/false)
+        required: false
+        default: "true"
+      deploy_clamav:
+        description: Deploy ClamAV sidecar container (true/false)
+        required: false
+        default: "true"
 
 concurrency:
   # Match deploy.yml/destroy.yml grouping so workflows don't overlap for the same env
@@ -33,6 +69,9 @@ env:
   PREFIX: ${{ inputs.prefix || vars.ACA_PREFIX || 'devsecopsaca' }}
   RG: ${{ inputs.resource_group || vars.ACA_RESOURCE_GROUP || 'rg-devsecops-aca' }}
   SMOKE_TEST: ${{ inputs.smoke_test || 'true' }}
+  DEPLOY_API: ${{ inputs.deploy_api || 'true' }}
+  DEPLOY_WORKER: ${{ inputs.deploy_worker || 'true' }}
+  DEPLOY_CLAMAV: ${{ inputs.deploy_clamav || 'true' }}
 
 jobs:
   build-and-push:
@@ -73,6 +112,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build & push API
+        if: ${{ env.DEPLOY_API == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: ./app
@@ -83,6 +123,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build & push Worker
+        if: ${{ env.DEPLOY_WORKER == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: ./app
@@ -93,6 +134,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build & push ClamAV
+        if: ${{ env.DEPLOY_CLAMAV == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: ./app

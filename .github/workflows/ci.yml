@@ -14,6 +14,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      app_changed: ${{ steps.filter.outputs.app }}
+      api_changed: ${{ steps.filter.outputs.api }}
+      worker_changed: ${{ steps.filter.outputs.worker }}
+      clamav_changed: ${{ steps.filter.outputs.clamav }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect app changes
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            api:
+              - "app/api/**"
+              - "app/common/**"
+            worker:
+              - "app/worker/**"
+              - "app/common/**"
+            clamav:
+              - "app/clamav/**"
+            app:
+              - "app/**"
+
   python-quality:
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -489,3 +520,20 @@ jobs:
             ${{ env.LOG_DIR }}
             trivy-${{ matrix.name }}.sarif
           if-no-files-found: ignore
+
+  app-deploy:
+    name: App Deploy (CD)
+    needs: [changes, python-quality, iac-and-docker-lint, build-and-scan]
+    if: >-
+      ${{ github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && needs.changes.outputs.app_changed == 'true' }}
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/app-deploy.yml
+    secrets: inherit
+    with:
+      deploy_api: ${{ needs.changes.outputs.api_changed }}
+      deploy_worker: ${{ needs.changes.outputs.worker_changed }}
+      deploy_clamav: ${{ needs.changes.outputs.clamav_changed }}

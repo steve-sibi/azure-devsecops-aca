@@ -353,10 +353,12 @@ azure-devsecops-aca/
 ## 5) CI/CD workflow
 ### CI (`.github/workflows/ci.yml`)
 
+- Runs on PRs and pushes to `main` (docs-only changes are ignored).
+- On `main` pushes with app changes, **CD runs only after CI succeeds** (CI calls `app-deploy.yml`).
 - Python: Ruff (syntax) + `python -m compileall` + pytest
 - Terraform: `terraform fmt` + `terraform validate` + Checkov (SARIF upload)
 - Containers: Hadolint + build images (api/worker/clamav) + Trivy scan (SARIF upload)
-    
+	    
 
 ### Deploy (`.github/workflows/deploy.yml`)
 
@@ -382,8 +384,11 @@ azure-devsecops-aca/
 
 Fast path for code changes **after the Azure environment already exists**:
 
-- Trigger: `push` to `main` when `app/**` changes (also supports manual `workflow_dispatch`)
+- Trigger (automatic): invoked by CI after a successful `push` to `main` when app-related files change
+- Trigger (manual): `workflow_dispatch`
 - Builds & pushes images to **existing ACR** (API, worker, ClamAV; tagged with commit SHA)
+- Only builds/rolls out the containers that changed (API / Worker+Fetcher / ClamAV); manual runs can override with `deploy_api`, `deploy_worker`, `deploy_clamav`.
+- Terraform ignores container image changes; **CD is the source of truth** for running image versions.
 - Updates existing Container Apps in-place via `az containerapp update` (no Terraform):
   - `${prefix}-api` (`api` + `clamav` containers)
   - `${prefix}-fetcher` (`fetcher` container; uses worker image)

@@ -37,11 +37,11 @@ is_truthy() {
 
 require_env RG
 require_env PREFIX
-require_env API_IMAGE
-require_env WORKER_IMAGE
-require_env CLAMAV_IMAGE
 
 SMOKE_TEST="${SMOKE_TEST:-true}"
+DEPLOY_API="${DEPLOY_API:-true}"
+DEPLOY_WORKER="${DEPLOY_WORKER:-true}"
+DEPLOY_CLAMAV="${DEPLOY_CLAMAV:-true}"
 
 command -v az >/dev/null 2>&1 || { echo "az CLI not found" >&2; exit 1; }
 
@@ -61,13 +61,30 @@ update_container_image() {
 
 echo "[rollout] Updating Container Apps images..."
 
-# API app (api + clamav sidecar)
-update_container_image "${PREFIX}-api" "api" "${API_IMAGE}"
-update_container_image "${PREFIX}-api" "clamav" "${CLAMAV_IMAGE}"
+if is_truthy "${DEPLOY_API}"; then
+  require_env API_IMAGE
+  # API app (api container)
+  update_container_image "${PREFIX}-api" "api" "${API_IMAGE}"
+else
+  echo "[rollout] DEPLOY_API=${DEPLOY_API}; skipping API container image update."
+fi
 
-# Fetcher/Worker apps (same worker image, different WORKER_MODE)
-update_container_image "${PREFIX}-fetcher" "fetcher" "${WORKER_IMAGE}"
-update_container_image "${PREFIX}-worker" "worker" "${WORKER_IMAGE}"
+if is_truthy "${DEPLOY_CLAMAV}"; then
+  require_env CLAMAV_IMAGE
+  # API app (clamav sidecar)
+  update_container_image "${PREFIX}-api" "clamav" "${CLAMAV_IMAGE}"
+else
+  echo "[rollout] DEPLOY_CLAMAV=${DEPLOY_CLAMAV}; skipping ClamAV container image update."
+fi
+
+if is_truthy "${DEPLOY_WORKER}"; then
+  require_env WORKER_IMAGE
+  # Fetcher/Worker apps (same worker image, different WORKER_MODE)
+  update_container_image "${PREFIX}-fetcher" "fetcher" "${WORKER_IMAGE}"
+  update_container_image "${PREFIX}-worker" "worker" "${WORKER_IMAGE}"
+else
+  echo "[rollout] DEPLOY_WORKER=${DEPLOY_WORKER}; skipping Worker/Fetcher image updates."
+fi
 
 if ! is_truthy "${SMOKE_TEST}"; then
   echo "[rollout] SMOKE_TEST=${SMOKE_TEST}; skipping /healthz check."

@@ -191,6 +191,13 @@ resource "azurerm_container_app" "api" {
     max_replicas = var.api_max_replicas
   }
 
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+      template[0].container[1].image,
+    ]
+  }
+
   depends_on = [
     azurerm_role_assignment.kv_secrets_uami,
     azurerm_role_assignment.acr_pull_uami,
@@ -329,6 +336,12 @@ resource "azurerm_container_app" "fetcher" {
         trigger_parameter = "connection"
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+    ]
   }
 
   depends_on = [
@@ -471,6 +484,12 @@ resource "azurerm_container_app" "worker" {
         trigger_parameter = "connection"
       }
     }
+  }
+
+  lifecycle {
+    ignore_changes = [
+      template[0].container[0].image,
+    ]
   }
 
   depends_on = [
