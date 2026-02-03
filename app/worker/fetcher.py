@@ -84,6 +84,11 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 def _enqueue_scan(payload: dict, *, message_id: str):
+    app_props = {"schema": "scan-artifact-v1"}
+    correlation_id = payload.get("correlation_id")
+    if correlation_id is not None:
+        app_props["correlation_id"] = str(correlation_id)
+
     if QUEUE_BACKEND == "redis":
         if not redis_client:
             raise RuntimeError("Redis client not initialized")
@@ -92,10 +97,7 @@ def _enqueue_scan(payload: dict, *, message_id: str):
             "message_id": message_id,
             "delivery_count": 1,
             "payload": payload,
-            "application_properties": {
-                "schema": "scan-artifact-v1",
-                "correlation_id": payload.get("correlation_id"),
-            },
+            "application_properties": app_props,
         }
         redis_client.rpush(REDIS_SCAN_QUEUE_KEY, json.dumps(envelope))
         return
@@ -111,10 +113,7 @@ def _enqueue_scan(payload: dict, *, message_id: str):
                     json.dumps(payload),
                     content_type="application/json",
                     message_id=message_id,
-                    application_properties={
-                        "schema": "scan-artifact-v1",
-                        "correlation_id": payload.get("correlation_id"),
-                    },
+                    application_properties=app_props,
                 )
                 sender.send_messages(msg)
         return
