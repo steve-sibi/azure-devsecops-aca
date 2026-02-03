@@ -33,3 +33,5 @@ venv/
 
 # Terminal helper history
 .aca_api_history
+
+.ruff_cache/
