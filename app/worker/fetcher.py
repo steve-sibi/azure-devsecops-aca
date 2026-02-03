@@ -19,6 +19,7 @@ from typing import Optional
 
 from azure.data.tables import TableClient
 from azure.servicebus import ServiceBusClient, ServiceBusMessage
+from azure.servicebus._common.message import PrimitiveTypes
 from common.config import (
     ConsumerConfig,
     ResultPersister,
@@ -84,7 +85,7 @@ def _atomic_write(path: Path, data: bytes) -> None:
 
 
 def _enqueue_scan(payload: dict, *, message_id: str):
-    app_props = {"schema": "scan-artifact-v1"}
+    app_props: dict[str | bytes, PrimitiveTypes] = {"schema": "scan-artifact-v1"}
     correlation_id = payload.get("correlation_id")
     if correlation_id is not None:
         app_props["correlation_id"] = str(correlation_id)
