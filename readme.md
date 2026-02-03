@@ -356,8 +356,12 @@ azure-devsecops-aca/
 - Runs on PRs and pushes to `main` (docs-only changes are ignored).
 - On `main` pushes with app changes, **CD runs only after CI succeeds** (CI calls `app-deploy.yml`).
 - Python: Ruff (syntax) + `python -m compileall` + pytest
-- Terraform: `terraform fmt` + `terraform validate` + Checkov (SARIF upload)
-- Containers: Hadolint + build images (api/worker/clamav) + Trivy scan (SARIF upload)
+- Terraform: `terraform fmt` + `terraform validate`
+- Containers: Hadolint (only for changed Dockerfiles)
+- Security scans:
+  - **Main**: Checkov + Trivy (SARIF uploads) run as part of CI.
+  - **PRs**: Checkov/Trivy run **only** when `RUN_PR_SECURITY_SCANS=true` (repo variable).
+- On `main`, CI now **builds & pushes images once** (API/worker/ClamAV) and passes tags to CD to avoid double builds.
 	    
 
 ### Deploy (`.github/workflows/deploy.yml`)
@@ -386,8 +390,9 @@ Fast path for code changes **after the Azure environment already exists**:
 
 - Trigger (automatic): invoked by CI after a successful `push` to `main` when app-related files change
 - Trigger (manual): `workflow_dispatch`
-- Builds & pushes images to **existing ACR** (API, worker, ClamAV; tagged with commit SHA)
-- Only builds/rolls out the containers that changed (API / Worker+Fetcher / ClamAV); manual runs can override with `deploy_api`, `deploy_worker`, `deploy_clamav`.
+- **Default (from CI):** images are already built in CI; CD **skips build** and only rolls out.
+- **Manual runs:** can build & push images by setting `build_images=true` (default for manual).
+- Only rolls out the containers that changed (API / Worker+Fetcher / ClamAV); manual runs can override with `deploy_api`, `deploy_worker`, `deploy_clamav`.
 - Terraform ignores container image changes; **CD is the source of truth** for running image versions.
 - Updates existing Container Apps in-place via `az containerapp update` (no Terraform):
   - `${prefix}-api` (`api` + `clamav` containers)
@@ -400,6 +405,7 @@ Configuration (recommended):
 - Set GitHub Actions **Variables**:
   - `ACA_PREFIX` (e.g. `devsecopsaca`)
   - `ACA_RESOURCE_GROUP` (e.g. `rg-devsecops-aca`)
+  - `RUN_PR_SECURITY_SCANS` (optional, `true` to enable Checkov/Trivy on PRs)
 - Secrets remain the same as Deploy: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
 
 ### KEDA Scale Test (`.github/workflows/keda-scale-test.yml`)
