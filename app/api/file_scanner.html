@@ -1724,6 +1724,22 @@
         summaryOutEl.textContent = '';
         const r = resp && typeof resp === 'object' ? resp : {};
         const verdict = String(r.verdict || '');
+        const hasData = Boolean(
+          verdict ||
+          r.signature ||
+          r.submitted_at ||
+          r.scanned_at ||
+          r.duration_ms != null ||
+          r.input_type ||
+          r.filename ||
+          r.size_bytes != null ||
+          r.sha256 ||
+          (r.clamav && typeof r.clamav === 'object' && Object.keys(r.clamav).length)
+        );
+        if (!hasData) {
+          summaryOutEl.appendChild(el('div', { class: 'muted', text: 'No data yet.' }));
+          return;
+        }
         const tone = verdictKind(verdict) === 'ok' ? 'ok' : (verdictKind(verdict) === 'bad' ? 'bad' : 'info');
 
         const verdictRows = [
@@ -1848,13 +1864,13 @@
         setStatus('pending', 'Analyzing…');
         setButtonLoading(startEl, true);
         setButtonsEnabled(false);
+        lastResult = null;
+        renderSummary(null);
+        if (activeTab === 'raw') renderRaw({});
 
         const startedAt = new Date().toISOString();
         const inputType = activeInput;
-        const pendingId = 'pending-' + Date.now().toString(16) + '-' + Math.random().toString(16).slice(2);
         let label = '';
-        let sizeBytes = null;
-        let contentType = null;
 
         try {
           const fd = new FormData();
@@ -1870,8 +1886,6 @@
             }
             fd.append('file', f, f.name);
             label = f.name;
-            sizeBytes = f.size;
-            contentType = f.type || 'application/octet-stream';
           } else {
             const payload = String(payloadEl.value || '').trim();
             if (!payload) {
@@ -1881,22 +1895,7 @@
             fd.append('payload', payload);
             fd.append('payload_base64', payloadBase64El.checked ? 'true' : 'false');
             label = payloadBase64El.checked ? 'payload (base64)' : 'payload (text)';
-            contentType = payloadBase64El.checked ? 'application/octet-stream' : 'text/plain; charset=utf-8';
           }
-
-          const pending = {
-            scan_id: pendingId,
-            submitted_at: startedAt,
-            scanned_at: startedAt,
-            input_type: inputType,
-            filename: label,
-            content_type: contentType,
-            size_bytes: sizeBytes,
-            engine: 'clamav',
-            verdict: 'pending',
-            clamav: {},
-          };
-          showResult(pending);
 
           const resp = await apiForm('/file/scan', fd);
           showResult(resp);
