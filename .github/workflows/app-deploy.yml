@@ -3,6 +3,11 @@ name: App Deploy (CD)
 on:
   workflow_call:
     inputs:
+      build_images:
+        description: Build/push images before rollout (true/false)
+        required: false
+        default: "true"
+        type: string
       prefix:
         description: Resource prefix (lowercase; used for most resource names)
         required: false
@@ -32,9 +37,33 @@ on:
         description: Deploy ClamAV sidecar container (true/false)
         required: false
         default: "true"
+        type: string
+      acr_login_server:
+        description: ACR login server (when skipping build)
+        required: false
+        default: ""
+        type: string
+      api_image:
+        description: Full API image reference (when skipping build)
+        required: false
+        default: ""
+        type: string
+      worker_image:
+        description: Full Worker image reference (when skipping build)
+        required: false
+        default: ""
+        type: string
+      clamav_image:
+        description: Full ClamAV image reference (when skipping build)
+        required: false
+        default: ""
         type: string
   workflow_dispatch:
     inputs:
+      build_images:
+        description: Build/push images before rollout (true/false)
+        required: false
+        default: "true"
       prefix:
         description: Resource prefix (lowercase; used for most resource names)
         required: false
@@ -59,6 +88,22 @@ on:
         description: Deploy ClamAV sidecar container (true/false)
         required: false
         default: "true"
+      acr_login_server:
+        description: ACR login server (when skipping build)
+        required: false
+        default: ""
+      api_image:
+        description: Full API image reference (when skipping build)
+        required: false
+        default: ""
+      worker_image:
+        description: Full Worker image reference (when skipping build)
+        required: false
+        default: ""
+      clamav_image:
+        description: Full ClamAV image reference (when skipping build)
+        required: false
+        default: ""
 
 concurrency:
   # Match deploy.yml/destroy.yml grouping so workflows don't overlap for the same env
@@ -72,6 +117,7 @@ env:
   DEPLOY_API: ${{ inputs.deploy_api || 'true' }}
   DEPLOY_WORKER: ${{ inputs.deploy_worker || 'true' }}
   DEPLOY_CLAMAV: ${{ inputs.deploy_clamav || 'true' }}
+  BUILD_IMAGES: ${{ inputs.build_images || 'true' }}
 
 jobs:
   build-and-push:
@@ -79,15 +125,16 @@ jobs:
     timeout-minutes: 20
     permissions: { id-token: write, contents: read }
     outputs:
-      acr_login_server: ${{ steps.acr.outputs.login_server }}
-      api_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
-      worker_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
-      clamav_image: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+      acr_login_server: ${{ steps.images.outputs.acr_login_server }}
+      api_image: ${{ steps.images.outputs.api_image }}
+      worker_image: ${{ steps.images.outputs.worker_image }}
+      clamav_image: ${{ steps.images.outputs.clamav_image }}
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Azure Login (OIDC)
+        if: ${{ env.BUILD_IMAGES == 'true' }}
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
@@ -97,6 +144,7 @@ jobs:
       - name: Get ACR login server
         id: acr
         shell: bash
+        if: ${{ env.BUILD_IMAGES == 'true' }}
         run: |
           set -euo pipefail
           ACR="$(az acr show -g "${RG}" -n "${PREFIX}acr" --query loginServer -o tsv)"
@@ -104,15 +152,17 @@ jobs:
 
       - name: ACR login
         shell: bash
+        if: ${{ env.BUILD_IMAGES == 'true' }}
         run: |
           set -euo pipefail
           az acr login --name "${PREFIX}acr"
 
       - name: Set up Docker Buildx
+        if: ${{ env.BUILD_IMAGES == 'true' }}
         uses: docker/setup-buildx-action@v3
 
       - name: Build & push API
-        if: ${{ env.DEPLOY_API == 'true' }}
+        if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_API == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: ./app
@@ -123,7 +173,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=api,ignore-error=true
 
       - name: Build & push Worker
-        if: ${{ env.DEPLOY_WORKER == 'true' }}
+        if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_WORKER == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: ./app
@@ -134,7 +184,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=worker,ignore-error=true
 
       - name: Build & push ClamAV
-        if: ${{ env.DEPLOY_CLAMAV == 'true' }}
+        if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_CLAMAV == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: ./app
@@ -144,14 +194,69 @@ jobs:
           cache-from: type=gha,scope=clamav
           cache-to: type=gha,mode=max,scope=clamav,ignore-error=true
 
+      - name: Resolve image refs
+        id: images
+        shell: bash
+        env:
+          INPUT_ACR: ${{ inputs.acr_login_server }}
+          INPUT_API_IMAGE: ${{ inputs.api_image }}
+          INPUT_WORKER_IMAGE: ${{ inputs.worker_image }}
+          INPUT_CLAMAV_IMAGE: ${{ inputs.clamav_image }}
+        run: |
+          set -euo pipefail
+
+          is_truthy() {
+            case "${1,,}" in
+              1|true|yes|y|on) return 0 ;;
+              *) return 1 ;;
+            esac
+          }
+
+          acr="${INPUT_ACR}"
+          if [ -z "$acr" ] && [ "${BUILD_IMAGES}" = "true" ]; then
+            acr="${{ steps.acr.outputs.login_server }}"
+          fi
+
+          api_image="${INPUT_API_IMAGE}"
+          worker_image="${INPUT_WORKER_IMAGE}"
+          clamav_image="${INPUT_CLAMAV_IMAGE}"
+
+          if [ -z "$api_image" ] && [ -n "$acr" ]; then
+            api_image="${acr}/${PREFIX}-api:${GITHUB_SHA}"
+          fi
+          if [ -z "$worker_image" ] && [ -n "$acr" ]; then
+            worker_image="${acr}/${PREFIX}-worker:${GITHUB_SHA}"
+          fi
+          if [ -z "$clamav_image" ] && [ -n "$acr" ]; then
+            clamav_image="${acr}/${PREFIX}-clamav:${GITHUB_SHA}"
+          fi
+
+          if is_truthy "${DEPLOY_API}" && [ -z "$api_image" ]; then
+            echo "Missing api_image for DEPLOY_API=true." >&2
+            exit 1
+          fi
+          if is_truthy "${DEPLOY_WORKER}" && [ -z "$worker_image" ]; then
+            echo "Missing worker_image for DEPLOY_WORKER=true." >&2
+            exit 1
+          fi
+          if is_truthy "${DEPLOY_CLAMAV}" && [ -z "$clamav_image" ]; then
+            echo "Missing clamav_image for DEPLOY_CLAMAV=true." >&2
+            exit 1
+          fi
+
+          echo "acr_login_server=${acr}" >> "$GITHUB_OUTPUT"
+          echo "api_image=${api_image}" >> "$GITHUB_OUTPUT"
+          echo "worker_image=${worker_image}" >> "$GITHUB_OUTPUT"
+          echo "clamav_image=${clamav_image}" >> "$GITHUB_OUTPUT"
+
       - name: Summary (images)
         if: always()
         shell: bash
         env:
-          ACR_LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
-          API_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
-          WORKER_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
-          CLAMAV_IMAGE: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          ACR_LOGIN_SERVER: ${{ steps.images.outputs.acr_login_server }}
+          API_IMAGE: ${{ steps.images.outputs.api_image }}
+          WORKER_IMAGE: ${{ steps.images.outputs.worker_image }}
+          CLAMAV_IMAGE: ${{ steps.images.outputs.clamav_image }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           python3 .github/scripts/deploy_summary.py build-push

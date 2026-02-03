@@ -13,6 +13,7 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+
 jobs:
   changes:
     runs-on: ubuntu-latest
@@ -24,6 +25,8 @@ jobs:
       api_changed: ${{ steps.filter.outputs.api }}
       worker_changed: ${{ steps.filter.outputs.worker }}
       clamav_changed: ${{ steps.filter.outputs.clamav }}
+      infra_changed: ${{ steps.filter.outputs.infra }}
+      run_pr_scans: ${{ steps.flags.outputs.run_pr_scans }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,6 +47,17 @@ jobs:
               - "app/clamav/**"
             app:
               - "app/**"
+            infra:
+              - "infra/**"
+              - "checkov.yml"
+
+      - name: Expose PR security scan flag
+        id: flags
+        shell: bash
+        env:
+          RUN_PR_SECURITY_SCANS: ${{ vars.RUN_PR_SECURITY_SCANS || 'false' }}
+        run: |
+          echo "run_pr_scans=${RUN_PR_SECURITY_SCANS}" >> "$GITHUB_OUTPUT"
 
   python-quality:
     runs-on: ubuntu-latest
@@ -57,6 +71,15 @@ jobs:
 
       - uses: actions/setup-python@v6
         with: { python-version: "3.11" }
+
+      - name: Cache pip
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pip
+          key: pip-ubuntu-python-quality-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
+          restore-keys: |
+            pip-ubuntu-python-quality-
+            pip-ubuntu-
 
       - name: Prepare logs
         run: mkdir -p "$LOG_DIR"
@@ -157,6 +180,8 @@ jobs:
           fi
 
   iac-and-docker-lint:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.infra_changed == 'true' || needs.changes.outputs.app_changed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -164,13 +189,44 @@ jobs:
       security-events: write
     env:
       LOG_DIR: .ci-logs
+      TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v6
+        if: >-
+          ${{ needs.changes.outputs.infra_changed == 'true'
+            && (github.event_name == 'push' && github.ref == 'refs/heads/main'
+              || needs.changes.outputs.run_pr_scans == 'true') }}
         with: { python-version: "3.11" }
 
       - uses: hashicorp/setup-terraform@v3
+
+      - name: Cache Terraform plugins
+        if: ${{ needs.changes.outputs.infra_changed == 'true' }}
+        uses: actions/cache@v5
+        with:
+          path: ${{ env.TF_PLUGIN_CACHE_DIR }}
+          key: terraform-ubuntu-${{ hashFiles('infra/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-ubuntu-
+
+      - name: Cache pip (Checkov)
+        if: >-
+          ${{ needs.changes.outputs.infra_changed == 'true'
+            && (github.event_name == 'push' && github.ref == 'refs/heads/main'
+              || needs.changes.outputs.run_pr_scans == 'true') }}
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/pip
+          key: pip-ubuntu-checkov-${{ hashFiles('checkov.yml') }}
+          restore-keys: |
+            pip-ubuntu-checkov-
+            pip-ubuntu-
+
+      - name: Prepare cache dirs
+        if: ${{ needs.changes.outputs.infra_changed == 'true' }}
+        run: mkdir -p "$TF_PLUGIN_CACHE_DIR"
 
       - name: Prepare logs
         run: mkdir -p "$LOG_DIR"
@@ -179,6 +235,7 @@ jobs:
         id: terraform_fmt
         continue-on-error: true
         shell: bash
+        if: ${{ needs.changes.outputs.infra_changed == 'true' }}
         run: |
           set -euo pipefail
           terraform fmt -check -recursive infra 2>&1 | tee "$LOG_DIR/terraform-fmt.log"
@@ -187,6 +244,7 @@ jobs:
         id: terraform_init
         continue-on-error: true
         shell: bash
+        if: ${{ needs.changes.outputs.infra_changed == 'true' }}
         run: |
           set -euo pipefail
           terraform -chdir=infra init -backend=false 2>&1 | tee "$LOG_DIR/terraform-init.log"
@@ -195,22 +253,31 @@ jobs:
         id: terraform_validate
         continue-on-error: true
         shell: bash
+        if: ${{ needs.changes.outputs.infra_changed == 'true' }}
         run: |
           set -euo pipefail
           terraform -chdir=infra validate -no-color 2>&1 | tee "$LOG_DIR/terraform-validate.log"
 
       - name: Install Checkov
+        if: >-
+          ${{ needs.changes.outputs.infra_changed == 'true'
+            && (github.event_name == 'push' && github.ref == 'refs/heads/main'
+              || needs.changes.outputs.run_pr_scans == 'true') }}
         run: pip install checkov
 
       - name: Checkov (Terraform → SARIF)
         id: checkov
+        if: >-
+          ${{ needs.changes.outputs.infra_changed == 'true'
+            && (github.event_name == 'push' && github.ref == 'refs/heads/main'
+              || needs.changes.outputs.run_pr_scans == 'true') }}
         run: |
           set -euo pipefail
           checkov -d infra --framework terraform --config-file checkov.yml --skip-download --quiet -o sarif --output-file checkov.sarif 2>&1 | tee "$LOG_DIR/checkov.log" || true
 
       - name: Prepare Checkov SARIF
         id: checkov_sarif
-        if: ${{ always() }}
+        if: ${{ always() && steps.checkov.outcome != 'skipped' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -249,6 +316,7 @@ jobs:
       - name: Hadolint (API)
         id: hadolint_api
         continue-on-error: true
+        if: ${{ needs.changes.outputs.api_changed == 'true' }}
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/api/Dockerfile
@@ -256,6 +324,7 @@ jobs:
       - name: Hadolint (Worker)
         id: hadolint_worker
         continue-on-error: true
+        if: ${{ needs.changes.outputs.worker_changed == 'true' }}
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/worker/Dockerfile.sidecar
@@ -263,6 +332,7 @@ jobs:
       - name: Hadolint (ClamAV)
         id: hadolint_clamav
         continue-on-error: true
+        if: ${{ needs.changes.outputs.clamav_changed == 'true' }}
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: app/clamav/Dockerfile
@@ -307,8 +377,11 @@ jobs:
             fi
 
             echo "### Checkov findings"
+            checkov_outcome="${{ steps.checkov.outcome }}"
             checkov_sarif="${{ steps.checkov_sarif.outputs.sarif_file }}"
-            if [ -n "$checkov_sarif" ] && [ -f "$checkov_sarif" ]; then
+            if [ "$checkov_outcome" = "skipped" ]; then
+              echo "- Checkov skipped."
+            elif [ -n "$checkov_sarif" ] && [ -f "$checkov_sarif" ]; then
               SARIF_FILE="$checkov_sarif" python - <<'PY'
           import json
           import os
@@ -326,16 +399,23 @@ jobs:
             echo ""
 
             echo "### Recommended fixes"
-            if [ "${{ steps.terraform_fmt.outcome }}" != "success" ]; then
+            if [ "${{ steps.terraform_fmt.outcome }}" = "failure" ]; then
               echo "- Run \`terraform fmt -recursive infra\` (then re-run CI)."
             fi
-            if [ "${{ steps.terraform_validate.outcome }}" != "success" ]; then
+            if [ "${{ steps.terraform_validate.outcome }}" = "failure" ]; then
               echo "- Run \`terraform -chdir=infra init -backend=false\` then \`terraform -chdir=infra validate\` locally."
             fi
-            if [ "${{ steps.hadolint_api.outcome }}" != "success" ] || \
-               [ "${{ steps.hadolint_worker.outcome }}" != "success" ] || \
-               [ "${{ steps.hadolint_clamav.outcome }}" != "success" ]; then
+            if [ "${{ steps.hadolint_api.outcome }}" = "failure" ] || \
+               [ "${{ steps.hadolint_worker.outcome }}" = "failure" ] || \
+               [ "${{ steps.hadolint_clamav.outcome }}" = "failure" ]; then
               echo "- Fix Dockerfile lint violations (see Hadolint step logs)."
+            fi
+            if [ "${{ steps.terraform_fmt.outcome }}" != "failure" ] && \
+               [ "${{ steps.terraform_validate.outcome }}" != "failure" ] && \
+               [ "${{ steps.hadolint_api.outcome }}" != "failure" ] && \
+               [ "${{ steps.hadolint_worker.outcome }}" != "failure" ] && \
+               [ "${{ steps.hadolint_clamav.outcome }}" != "failure" ]; then
+              echo "- No action needed."
             fi
             echo ""
 
@@ -367,17 +447,24 @@ jobs:
         if: ${{ always() }}
         shell: bash
         run: |
-          if [ "${{ steps.terraform_fmt.outcome }}" != "success" ] || \
-             [ "${{ steps.terraform_init.outcome }}" != "success" ] || \
-             [ "${{ steps.terraform_validate.outcome }}" != "success" ] || \
-             [ "${{ steps.hadolint_api.outcome }}" != "success" ] || \
-             [ "${{ steps.hadolint_worker.outcome }}" != "success" ] || \
-             [ "${{ steps.hadolint_clamav.outcome }}" != "success" ]; then
-            exit 1
+          fail=0
+          if [ "${{ steps.terraform_fmt.outcome }}" = "failure" ] || \
+             [ "${{ steps.terraform_init.outcome }}" = "failure" ] || \
+             [ "${{ steps.terraform_validate.outcome }}" = "failure" ] || \
+             [ "${{ steps.hadolint_api.outcome }}" = "failure" ] || \
+             [ "${{ steps.hadolint_worker.outcome }}" = "failure" ] || \
+             [ "${{ steps.hadolint_clamav.outcome }}" = "failure" ]; then
+            fail=1
           fi
+          exit "$fail"
 
-  build-and-scan:
-    needs: [python-quality, iac-and-docker-lint]
+  build-and-scan-api:
+    needs: [changes]
+    if: >-
+      ${{ github.event_name == 'pull_request'
+        && needs.changes.outputs.run_pr_scans == 'true'
+        && needs.changes.outputs.app_changed == 'true'
+        && needs.changes.outputs.api_changed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -385,56 +472,53 @@ jobs:
       security-events: write
     env:
       LOG_DIR: .ci-logs
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: api
-            dockerfile: app/api/Dockerfile
-          - name: worker
-            dockerfile: app/worker/Dockerfile.sidecar
-          - name: clamav
-            dockerfile: app/clamav/Dockerfile
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build ${{ matrix.name }} (cache)
+      - name: Cache Trivy DB
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-ubuntu
+          restore-keys: |
+            trivy-db-ubuntu-
+
+      - name: Build api (cache)
         id: docker_build
         uses: docker/build-push-action@v6
         with:
           context: ./app
-          file: ./${{ matrix.dockerfile }}
+          file: app/api/Dockerfile
           platforms: linux/amd64
-          pull: true # ensure base images are up-to-date for security scans
+          pull: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           push: false
           load: true # load into local Docker so Trivy can scan
-          tags: ${{ matrix.name }}:ci
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.name }},ignore-error=true
+          tags: api:ci
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api,ignore-error=true
 
-      - name: Trivy scan ${{ matrix.name }} image → SARIF
+      - name: Trivy scan api image → SARIF
         id: trivy_scan
         continue-on-error: true
         uses: aquasecurity/trivy-action@0.20.0
         with:
-          image-ref: ${{ matrix.name }}:ci
+          image-ref: api:ci
           ignore-unfixed: true
           severity: HIGH,CRITICAL
           format: sarif
-          # Use a workspace-relative path (the Trivy action runs in a container, so host-absolute
-          # paths like ${{ github.workspace }} may not be writable/visible).
-          output: trivy-${{ matrix.name }}.sarif
-          exit-code: '0' # keep pipeline green; review SARIF for issues
-      - name: Prepare Trivy SARIF (${{ matrix.name }})
+          output: trivy-api.sarif
+          exit-code: '0'
+
+      - name: Prepare Trivy SARIF (api)
         id: trivy_sarif
         if: ${{ always() }}
         shell: bash
         run: |
           set -euo pipefail
-          sarif_file="$GITHUB_WORKSPACE/trivy-${{ matrix.name }}.sarif"
+          sarif_file="$GITHUB_WORKSPACE/trivy-api.sarif"
           scan_outcome="${{ steps.trivy_scan.outcome }}"
 
           if [ -s "$sarif_file" ]; then
@@ -455,7 +539,8 @@ jobs:
 
           echo "found=false" >> "$GITHUB_OUTPUT"
           echo "sarif_file=" >> "$GITHUB_OUTPUT"
-      - name: Upload Trivy SARIF (${{ matrix.name }})
+
+      - name: Upload Trivy SARIF (api)
         if: >-
           ${{ always()
             && steps.trivy_sarif.outputs.found == 'true'
@@ -463,18 +548,18 @@ jobs:
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}
-          category: trivy-${{ matrix.name }}
+          category: trivy-api
 
       - name: Prepare logs
         if: ${{ always() }}
         run: mkdir -p "$LOG_DIR"
 
-      - name: Job summary (build-and-scan)
+      - name: Job summary (build-and-scan api)
         if: ${{ always() }}
         shell: bash
         run: |
           {
-            echo "## Build & scan (${{ matrix.name }})"
+            echo "## Build & scan (api)"
             echo ""
             echo "| Step | Result |"
             echo "|---|---|"
@@ -482,7 +567,7 @@ jobs:
             echo "| Trivy scan | ${{ steps.trivy_scan.outcome }} |"
             echo ""
 
-            sarif_file="trivy-${{ matrix.name }}.sarif"
+            sarif_file="trivy-api.sarif"
             if [ -f "$sarif_file" ]; then
               echo "### Trivy findings"
               python3 - <<PY
@@ -511,19 +596,555 @@ jobs:
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload logs (build-and-scan)
+      - name: Upload logs (build-and-scan api)
         if: ${{ always() }}
         uses: actions/upload-artifact@v4
         with:
-          name: ci-logs-build-and-scan-${{ matrix.name }}
+          name: ci-logs-build-and-scan-api
           path: |
             ${{ env.LOG_DIR }}
-            trivy-${{ matrix.name }}.sarif
+            trivy-api.sarif
           if-no-files-found: ignore
+
+  build-and-scan-worker:
+    needs: [changes]
+    if: >-
+      ${{ github.event_name == 'pull_request'
+        && needs.changes.outputs.run_pr_scans == 'true'
+        && needs.changes.outputs.app_changed == 'true'
+        && needs.changes.outputs.worker_changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      LOG_DIR: .ci-logs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-ubuntu
+          restore-keys: |
+            trivy-db-ubuntu-
+
+      - name: Build worker (cache)
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/worker/Dockerfile.sidecar
+          platforms: linux/amd64
+          pull: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: false
+          load: true # load into local Docker so Trivy can scan
+          tags: worker:ci
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker,ignore-error=true
+
+      - name: Trivy scan worker image → SARIF
+        id: trivy_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: worker:ci
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-worker.sarif
+          exit-code: '0'
+
+      - name: Prepare Trivy SARIF (worker)
+        id: trivy_sarif
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sarif_file="$GITHUB_WORKSPACE/trivy-worker.sarif"
+          scan_outcome="${{ steps.trivy_scan.outcome }}"
+
+          if [ -s "$sarif_file" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
+
+          if [ "$scan_outcome" = "success" ]; then
+            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
+            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Trivy SARIF (worker)
+        if: >-
+          ${{ always()
+            && steps.trivy_sarif.outputs.found == 'true'
+            && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}
+          category: trivy-worker
+
+      - name: Prepare logs
+        if: ${{ always() }}
+        run: mkdir -p "$LOG_DIR"
+
+      - name: Job summary (build-and-scan worker)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "## Build & scan (worker)"
+            echo ""
+            echo "| Step | Result |"
+            echo "|---|---|"
+            echo "| Docker build | ${{ steps.docker_build.outcome }} |"
+            echo "| Trivy scan | ${{ steps.trivy_scan.outcome }} |"
+            echo ""
+
+            sarif_file="trivy-worker.sarif"
+            if [ -f "$sarif_file" ]; then
+              echo "### Trivy findings"
+              python3 - <<PY
+          import json
+          from pathlib import Path
+
+          sarif = Path("$sarif_file")
+          data = json.loads(sarif.read_text(encoding="utf-8"))
+          runs = data.get("runs") or []
+          results = (runs[0].get("results") if runs else []) or []
+          by_level = {}
+          for r in results:
+            level = r.get("level") or "unknown"
+            by_level[level] = by_level.get(level, 0) + 1
+
+          total = len(results)
+          print(f"- Results: {total}")
+          for level, count in sorted(by_level.items()):
+            print(f"- {level}: {count}")
+          PY
+              echo ""
+            fi
+
+            echo "### Recommended fixes"
+            echo "- Review GitHub Code Scanning results for details (Trivy SARIF upload)."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs (build-and-scan worker)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-build-and-scan-worker
+          path: |
+            ${{ env.LOG_DIR }}
+            trivy-worker.sarif
+          if-no-files-found: ignore
+
+  build-and-scan-clamav:
+    needs: [changes]
+    if: >-
+      ${{ github.event_name == 'pull_request'
+        && needs.changes.outputs.run_pr_scans == 'true'
+        && needs.changes.outputs.app_changed == 'true'
+        && needs.changes.outputs.clamav_changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      LOG_DIR: .ci-logs
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-ubuntu
+          restore-keys: |
+            trivy-db-ubuntu-
+
+      - name: Build clamav (cache)
+        id: docker_build
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/clamav/Dockerfile
+          platforms: linux/amd64
+          pull: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          push: false
+          load: true # load into local Docker so Trivy can scan
+          tags: clamav:ci
+          cache-from: type=gha,scope=clamav
+          cache-to: type=gha,mode=max,scope=clamav,ignore-error=true
+
+      - name: Trivy scan clamav image → SARIF
+        id: trivy_scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: clamav:ci
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-clamav.sarif
+          exit-code: '0'
+
+      - name: Prepare Trivy SARIF (clamav)
+        id: trivy_sarif
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sarif_file="$GITHUB_WORKSPACE/trivy-clamav.sarif"
+          scan_outcome="${{ steps.trivy_scan.outcome }}"
+
+          if [ -s "$sarif_file" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
+
+          if [ "$scan_outcome" = "success" ]; then
+            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
+            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Trivy SARIF (clamav)
+        if: >-
+          ${{ always()
+            && steps.trivy_sarif.outputs.found == 'true'
+            && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}
+          category: trivy-clamav
+
+      - name: Prepare logs
+        if: ${{ always() }}
+        run: mkdir -p "$LOG_DIR"
+
+      - name: Job summary (build-and-scan clamav)
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "## Build & scan (clamav)"
+            echo ""
+            echo "| Step | Result |"
+            echo "|---|---|"
+            echo "| Docker build | ${{ steps.docker_build.outcome }} |"
+            echo "| Trivy scan | ${{ steps.trivy_scan.outcome }} |"
+            echo ""
+
+            sarif_file="trivy-clamav.sarif"
+            if [ -f "$sarif_file" ]; then
+              echo "### Trivy findings"
+              python3 - <<PY
+          import json
+          from pathlib import Path
+
+          sarif = Path("$sarif_file")
+          data = json.loads(sarif.read_text(encoding="utf-8"))
+          runs = data.get("runs") or []
+          results = (runs[0].get("results") if runs else []) or []
+          by_level = {}
+          for r in results:
+            level = r.get("level") or "unknown"
+            by_level[level] = by_level.get(level, 0) + 1
+
+          total = len(results)
+          print(f"- Results: {total}")
+          for level, count in sorted(by_level.items()):
+            print(f"- {level}: {count}")
+          PY
+              echo ""
+            fi
+
+            echo "### Recommended fixes"
+            echo "- Review GitHub Code Scanning results for details (Trivy SARIF upload)."
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs (build-and-scan clamav)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-logs-build-and-scan-clamav
+          path: |
+            ${{ env.LOG_DIR }}
+            trivy-clamav.sarif
+          if-no-files-found: ignore
+
+  build-and-push:
+    needs: [changes, python-quality, iac-and-docker-lint]
+    if: >-
+      ${{ github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && needs.changes.outputs.app_changed == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      id-token: write
+      security-events: write
+    env:
+      LOG_DIR: .ci-logs
+      PREFIX: ${{ vars.ACA_PREFIX || 'devsecopsaca' }}
+      RG: ${{ vars.ACA_RESOURCE_GROUP || 'rg-devsecops-aca' }}
+    outputs:
+      acr_login_server: ${{ steps.acr.outputs.login_server }}
+      api_image: ${{ steps.images.outputs.api_image }}
+      worker_image: ${{ steps.images.outputs.worker_image }}
+      clamav_image: ${{ steps.images.outputs.clamav_image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Get ACR login server
+        id: acr
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACR="$(az acr show -g "${RG}" -n "${PREFIX}acr" --query loginServer -o tsv)"
+          echo "login_server=${ACR}" >> "$GITHUB_OUTPUT"
+
+      - name: ACR login
+        shell: bash
+        run: |
+          set -euo pipefail
+          az acr login --name "${PREFIX}acr"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v5
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-ubuntu
+          restore-keys: |
+            trivy-db-ubuntu-
+
+      - name: Build & push API
+        if: ${{ needs.changes.outputs.api_changed == 'true' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/api/Dockerfile
+          pull: true
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,mode=max,scope=api,ignore-error=true
+
+      - name: Build & push Worker
+        if: ${{ needs.changes.outputs.worker_changed == 'true' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/worker/Dockerfile.sidecar
+          pull: true
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
+          cache-from: type=gha,scope=worker
+          cache-to: type=gha,mode=max,scope=worker,ignore-error=true
+
+      - name: Build & push ClamAV
+        if: ${{ needs.changes.outputs.clamav_changed == 'true' }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          file: app/clamav/Dockerfile
+          pull: true
+          push: true
+          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          cache-from: type=gha,scope=clamav
+          cache-to: type=gha,mode=max,scope=clamav,ignore-error=true
+
+      - name: Trivy scan API image → SARIF
+        id: trivy_api
+        if: ${{ needs.changes.outputs.api_changed == 'true' }}
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-api.sarif
+          exit-code: '0'
+
+      - name: Prepare Trivy SARIF (API)
+        id: trivy_api_sarif
+        if: ${{ always() && needs.changes.outputs.api_changed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sarif_file="$GITHUB_WORKSPACE/trivy-api.sarif"
+          scan_outcome="${{ steps.trivy_api.outcome }}"
+          if [ -s "$sarif_file" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
+          if [ "$scan_outcome" = "success" ]; then
+            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
+            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Trivy SARIF (API)
+        if: >-
+          ${{ always()
+            && steps.trivy_api_sarif.outputs.found == 'true' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.trivy_api_sarif.outputs.sarif_file }}
+          category: trivy-api
+
+      - name: Trivy scan Worker image → SARIF
+        id: trivy_worker
+        if: ${{ needs.changes.outputs.worker_changed == 'true' }}
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-worker.sarif
+          exit-code: '0'
+
+      - name: Prepare Trivy SARIF (Worker)
+        id: trivy_worker_sarif
+        if: ${{ always() && needs.changes.outputs.worker_changed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sarif_file="$GITHUB_WORKSPACE/trivy-worker.sarif"
+          scan_outcome="${{ steps.trivy_worker.outcome }}"
+          if [ -s "$sarif_file" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
+          if [ "$scan_outcome" = "success" ]; then
+            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
+            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Trivy SARIF (Worker)
+        if: >-
+          ${{ always()
+            && steps.trivy_worker_sarif.outputs.found == 'true' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.trivy_worker_sarif.outputs.sarif_file }}
+          category: trivy-worker
+
+      - name: Trivy scan ClamAV image → SARIF
+        id: trivy_clamav
+        if: ${{ needs.changes.outputs.clamav_changed == 'true' }}
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          ignore-unfixed: true
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-clamav.sarif
+          exit-code: '0'
+
+      - name: Prepare Trivy SARIF (ClamAV)
+        id: trivy_clamav_sarif
+        if: ${{ always() && needs.changes.outputs.clamav_changed == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sarif_file="$GITHUB_WORKSPACE/trivy-clamav.sarif"
+          scan_outcome="${{ steps.trivy_clamav.outcome }}"
+          if [ -s "$sarif_file" ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
+          if [ "$scan_outcome" = "success" ]; then
+            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
+            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
+            echo "found=true" >> "$GITHUB_OUTPUT"
+            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "found=false" >> "$GITHUB_OUTPUT"
+          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Trivy SARIF (ClamAV)
+        if: >-
+          ${{ always()
+            && steps.trivy_clamav_sarif.outputs.found == 'true' }}
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.trivy_clamav_sarif.outputs.sarif_file }}
+          category: trivy-clamav
+
+      - name: Set image outputs
+        id: images
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACR="${{ steps.acr.outputs.login_server }}"
+          echo "api_image=${ACR}/${PREFIX}-api:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "worker_image=${ACR}/${PREFIX}-worker:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "clamav_image=${ACR}/${PREFIX}-clamav:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
   app-deploy:
     name: App Deploy (CD)
-    needs: [changes, python-quality, iac-and-docker-lint, build-and-scan]
+    needs: [changes, python-quality, iac-and-docker-lint, build-and-push]
     if: >-
       ${{ github.event_name == 'push'
         && github.ref == 'refs/heads/main'
@@ -534,6 +1155,11 @@ jobs:
     uses: ./.github/workflows/app-deploy.yml
     secrets: inherit
     with:
+      build_images: "false"
+      acr_login_server: ${{ needs.build-and-push.outputs.acr_login_server }}
+      api_image: ${{ needs.build-and-push.outputs.api_image }}
+      worker_image: ${{ needs.build-and-push.outputs.worker_image }}
+      clamav_image: ${{ needs.build-and-push.outputs.clamav_image }}
       deploy_api: ${{ needs.changes.outputs.api_changed }}
       deploy_worker: ${{ needs.changes.outputs.worker_changed }}
       deploy_clamav: ${{ needs.changes.outputs.clamav_changed }}
