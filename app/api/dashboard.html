@@ -3708,7 +3708,10 @@
 
       async function refreshJob(jobId, showOutput) {
         if (!jobId) return null;
-        setStatus('info', 'Fetching status for ' + jobId + '...');
+        const isCurrent = !currentJobId || currentJobId === jobId;
+        if (isCurrent) {
+          setStatus('info', 'Fetching status for ' + jobId + '...');
+        }
         try {
           const view = activeTab === 'raw' ? 'full' : 'summary';
           const s = await api('/scan/' + jobId + '?view=' + encodeURIComponent(view), 'GET');
@@ -3725,19 +3728,23 @@
             scanned_at: s.scanned_at || null,
             last_checked_at: now
           });
-          if (showOutput) {
-            if (view === 'full') showFull(s);
-            else showSummary(s);
-          } else {
-            // Still update summary so the UI stays current while polling.
-            showSummary(s);
+          if (isCurrent) {
+            if (showOutput) {
+              if (view === 'full') showFull(s);
+              else showSummary(s);
+            } else {
+              // Still update summary so the UI stays current while polling.
+              showSummary(s);
+            }
+            setStatus(statusKind(s.status), 'Job ' + jobId + ' is ' + s.status);
           }
-          setStatus(statusKind(s.status), 'Job ' + jobId + ' is ' + s.status);
           return s;
         } catch (e) {
           const info = formatApiError(e);
-          setStatus('bad', info.message);
-          if (showOutput) showSummary({ status: 'error', error: info.message, problem: info.problem || null });
+          if (isCurrent) {
+            setStatus('bad', info.message);
+            if (showOutput) showSummary({ status: 'error', error: info.message, problem: info.problem || null });
+          }
           return null;
         }
       }
