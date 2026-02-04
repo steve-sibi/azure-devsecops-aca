@@ -18,6 +18,7 @@ What this project demonstrates:
 - **URL dedupe/cache**: Shared URL scan cache with configurable TTLs to avoid redundant work (based on canonical URLs)
 - **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`) (or Redis locally); optional screenshots served at `GET /scan/{job_id}/screenshot`
 - **Per-user job history**: API key-based job isolation with `GET /jobs` for viewing your submission history
+- **Realtime status updates**: optional **Azure Web PubSub** integration for dashboard live updates (with polling fallback)
 - **File scanning**: `/file/scan` scans an uploaded file/payload via **ClamAV** (sidecar in ACA; service in Docker Compose)
 - **Web content analysis**: HTML parsing, resource classification, tracking detection (adblock filters), security headers, cookies, YARA rules, WHOIS/RDAP lookups
 - **Structured logging**: JSON logs with correlation IDs for distributed tracing (Azure Monitor/App Insights compatible)
@@ -192,6 +193,14 @@ sequenceDiagram
 - Results are written to **Table Storage** (`scanresults`) and can be fetched via `GET /scan/{job_id}`
 - Logs land in **Log Analytics**; optional traces in **App Insights**
 
+*Realtime update path (optional, Web PubSub)*
+- API issues request-scoped IDs (`job_id`) and underlying scan-run IDs (`run_id`).
+- Worker/fetcher publish status changes to Web PubSub groups:
+  - `run:<run_id>` for run-level updates
+  - `apikey:<api_key_hash>` for user-scoped updates
+- Dashboard negotiates a user-scoped WebSocket (`POST /pubsub/negotiate-user`) and updates all visible jobs for that API key without per-row polling.
+- If Web PubSub is unavailable, the dashboard automatically falls back to polling `GET /scan/{job_id}`.
+
 
 ## 2) What Terraform Deploys
 
@@ -216,6 +225,12 @@ sequenceDiagram
         
         - Fetch queue (`tasks`): `api-send` (**Send**), `worker-listen` (**Listen**), `scale-manage` (**Manage**)
         - Scan queue (`<tasks>-scan`): `fetcher-send` (**Send**), `worker-scan-listen` (**Listen**), `scale-manage-scan` (**Manage**)
+
+- **Web PubSub**:
+
+    - Service: `<prefix>-wps` (Azure Web PubSub)
+    - Hub: configurable (`webpubsub_hub_name`, default `scans`)
+    - KV secret: `WebPubSubConn` (primary connection string used by API/fetcher/worker)
             
 - **Storage (results)**:
     
@@ -256,6 +271,7 @@ sequenceDiagram
 - KEDA scale rule auth uses KV secrets **(manage)**: `sb-manage` (fetch queue) + `sb-scan-manage` (scan queue) (not injected into container)
     
 - API/worker env `RESULT_STORE_CONN` and `RESULT_TABLE` for scan status storage (from Storage Table)
+- API/fetcher/worker env `WEBPUBSUB_CONNECTION_STRING` + `WEBPUBSUB_HUB` for realtime update publish/subscribe token negotiation
 
 > The apps use the connection string path by default. You can toggle **Managed Identity** in the API for Service Bus (`USE_MANAGED_IDENTITY=true` + `SERVICEBUS_FQDN`), but it’s optional.
 
@@ -274,6 +290,18 @@ sequenceDiagram
         
 
 > The workflows create the **RG, ACR, KV, LA, TF state storage** if missing, and recover a **soft-deleted KV** automatically.
+
+### One-time Azure provider registration (required for Web PubSub)
+
+Web PubSub creation fails with `MissingSubscriptionRegistration` unless the provider is registered in your subscription.
+
+```bash
+az account show --query "{name:name,id:id,tenantId:tenantId}" -o table
+az provider register --namespace Microsoft.SignalRService --wait
+az provider show --namespace Microsoft.SignalRService --query registrationState -o tsv
+```
+
+Expected state: `Registered`.
 
 ### One-time setup (Azure + GitHub OIDC checklist)
 
@@ -297,6 +325,8 @@ azure-devsecops-aca/
 │  ├─ workflows/
 │  │  ├─ ci.yml              # lint/test + security scans
 │  │  ├─ deploy.yml          # infra bootstrap + build/push + deploy
+│  │  ├─ infra-only.yml      # infra bootstrap + terraform apply (no image rollout)
+│  │  ├─ app-deploy.yml      # fast container rollout to existing ACA apps
 │  │  ├─ destroy.yml         # terraform destroy (+ RG delete)
 │  │  └─ keda-scale-test.yml # validate KEDA scale-out
 │  └─ scripts/
@@ -383,6 +413,15 @@ azure-devsecops-aca/
     - end-to-end scan: `POST /scan` then poll `GET /scan/{job_id}` until `completed`
 
 > Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI; Deploy is manual (`workflow_dispatch`).
+
+### Infra Only (`.github/workflows/infra-only.yml`)
+
+Manual workflow for infrastructure updates without rolling new app images:
+
+- Bootstraps foundation resources (RG/KV/ACR/LA/TF state).
+- Runs Terraform apply for infra changes.
+- Preserves existing apps when present (`create_apps` auto-detection in bootstrap script).
+- Useful for changes like networking, queues, storage, Key Vault wiring, or Web PubSub resources/secrets.
 
 ### App Deploy (CD) (`.github/workflows/app-deploy.yml`)
 
@@ -487,6 +526,26 @@ terraform apply \
 - **Rate limiting**: `60` requests/minute per API key (configure via Terraform var `api_rate_limit_rpm`).
 - **Defense in depth**: the worker re-validates targets and validates every redirect hop.
 
+### Live updates (Web PubSub, optional)
+
+Enable real-time scan status updates (no polling) by setting:
+
+- `WEBPUBSUB_CONNECTION_STRING`: Web PubSub connection string
+- `WEBPUBSUB_HUB`: hub name (default `scans`)
+- `WEBPUBSUB_TOKEN_TTL_MINUTES`: client token TTL (default `60`)
+- `WEBPUBSUB_GROUP_PREFIX`: group prefix for run IDs (default `run`)
+- `WEBPUBSUB_USER_GROUP_PREFIX`: group prefix for API-key-hash user groups (default `apikey`)
+
+If `WEBPUBSUB_CONNECTION_STRING` is unset, the dashboard falls back to polling.
+
+Realtime model notes:
+
+- The API returns both:
+  - `job_id`: request ID shown in history
+  - `run_id`: underlying scan run ID (shared across deduped requests)
+- Dashboard subscribes once per API key via `POST /pubsub/negotiate-user`.
+- Worker/fetcher publish events to both `run:<run_id>` and `apikey:<api_key_hash>` groups so one socket can update all of a user’s jobs.
+
 ### URL dedupe / cache (optional)
 
 To avoid wasting resources re-scanning the same URL, `POST /scan` maintains a **shared URL cache** keyed by the **canonical URL**. When a URL was scanned recently (or is still in progress), a new `POST /scan` request can reuse the existing underlying scan run instead of scanning again (but still returns a new `job_id` for the request). The URL canonicalization normalizes host casing, dot-segments, default ports, and strips fragments.
@@ -533,6 +592,15 @@ docker compose up --build
 Default API key: `local-dev-key` (change via `.env` using `ACA_API_KEY`).
 
 > Note: URL scanning runs built-in web analysis only. The dashboard provides external links to URLScan.io and VirusTotal for optional follow-up checks.
+
+To verify realtime mode locally:
+
+```bash
+curl -s http://localhost:8000/ | rg WEBPUBSUB_ENABLED
+```
+
+- `true`: dashboard will use Web PubSub (if it can negotiate).
+- `false`: dashboard will use polling only.
 
 #### Docker “\<none\>” images (dangling)
 
@@ -590,6 +658,8 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `GET /jobs?limit=N&status=csv` (requires API key; lists your recent jobs)
 - `GET /scan/{job_id}?view=summary|full` (requires API key; `summary` is default)
 - `GET /scan/{job_id}/screenshot` (requires API key; only if a screenshot was captured)
+- `POST /pubsub/negotiate-user` (requires API key; dashboard live updates)
+- `POST /pubsub/negotiate` (requires API key; run-scoped negotiation; mostly for direct/testing use)
 - `POST /file/scan` (requires API key; ClamAV scan)
 
 ### Scan status lifecycle
@@ -873,6 +943,8 @@ To restart later, just re-run the **Deploy** workflow.
 
 - `GET /scan/{job_id}/screenshot` -> serves an optional worker-captured screenshot (stored in Blob Storage when `RESULT_BACKEND=table`, or Redis when `RESULT_BACKEND=redis`).
 
+- `POST /pubsub/negotiate-user` -> creates a user-scoped Web PubSub client token for the dashboard (`apikey:<api_key_hash>` group).
+
 - `POST /file/scan` -> requires `X-API-Key`, scans an uploaded file or pasted payload with ClamAV, and returns an immediate verdict (UI at `/file`).
     
 - `GET /healthz` -> basic health.
@@ -881,11 +953,13 @@ To restart later, just re-run the **Deploy** workflow.
 **Fetcher (`app/worker/fetcher.py`)**
 - Receives `scan-v1` jobs from the **fetch queue** (`tasks` by default).
 - Downloads bytes with SSRF protections, writes an artifact into `ARTIFACT_DIR` (Azure Files on ACA; a Docker volume locally), updates status (`fetching` → `queued_scan`), and forwards a `scan-artifact-v1` message to the **scan queue** (`<queue>-scan`).
+- Publishes status updates to Web PubSub when configured.
 
 **Analyzer/Worker (`app/worker/worker.py`)**
 - Receives `scan-artifact-v1` jobs from the **scan queue** and reads the artifact bytes.
 - Runs lightweight web analysis (HTML/resources/cookies/security headers/tracking/YARA rules) and writes the final `completed/error` result to the configured result backend; optionally captures a Playwright screenshot and stores it for `/scan/{job_id}/screenshot`.
 - Web analysis rules live in `app/common/tracking_filters.txt` and `app/common/web_yara_rules.yar` (override via `WEB_TRACKING_FILTERS_PATH` / `WEB_YARA_RULES_PATH`).
+- Publishes terminal and intermediate status updates to Web PubSub when configured.
 
 ## 14) Extending this project (future work)
 
