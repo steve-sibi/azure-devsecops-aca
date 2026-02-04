@@ -1,0 +1,87 @@
+name: Infra Only
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Azure region (e.g. eastus)
+        required: true
+        default: eastus
+      prefix:
+        description: Resource prefix (lowercase; used for most resource names)
+        required: true
+        default: devsecopsaca
+      resource_group:
+        description: Resource group name (e.g. rg-devsecops-aca)
+        required: true
+        default: rg-devsecops-aca
+      tfstate_sa:
+        description: Terraform state storage account name (globally unique; lowercase letters/numbers only)
+        required: true
+        default: stdevsecopsacatfstate
+      tfstate_container:
+        description: Terraform state container name
+        required: true
+        default: tfstate
+      tfstate_key:
+        description: Terraform state blob name
+        required: true
+        default: devsecopsaca.tfstate
+      queue_name:
+        description: Service Bus queue name
+        required: true
+        default: tasks
+
+concurrency:
+  # Prevent deploy/destroy/infra-only/keda runs from overlapping for the same environment
+  group: aca-${{ inputs.prefix }}-${{ inputs.resource_group }}
+  cancel-in-progress: true
+
+env:
+  REGION: ${{ inputs.region }}
+  PREFIX: ${{ inputs.prefix }}
+  RG: ${{ inputs.resource_group }}
+  TFSTATE_SA: ${{ inputs.tfstate_sa }}
+  TFSTATE_CONTAINER: ${{ inputs.tfstate_container }}
+  TFSTATE_KEY: ${{ inputs.tfstate_key }}
+  QUEUE_NAME: ${{ inputs.queue_name }}
+
+jobs:
+  infra-bootstrap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: { id-token: write, contents: read }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@v3
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@v5
+        with:
+          path: ${{ runner.temp }}/.terraform-plugin-cache
+          key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-
+
+      - name: Bootstrap infra (foundation + state + apply)
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/.terraform-plugin-cache
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          bash scripts/gha/deploy_infra_bootstrap.sh
+
+      - name: Write infra summary
+        if: always()
+        shell: bash
+        run: |
+          python3 .github/scripts/deploy_summary.py infra-bootstrap
