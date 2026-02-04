@@ -79,6 +79,24 @@ variable "servicebus_sku" {
   description = "SKU for the Service Bus namespace."
 }
 
+variable "webpubsub_sku" {
+  type        = string
+  default     = "Free_F1"
+  description = "SKU for the Web PubSub service (e.g., Free_F1 or Standard_S1)."
+}
+
+variable "webpubsub_capacity" {
+  type        = number
+  default     = 1
+  description = "Capacity units for Web PubSub (1 for Free_F1)."
+}
+
+variable "webpubsub_hub_name" {
+  type        = string
+  default     = "scans"
+  description = "Hub name used for scan status updates."
+}
+
 variable "results_table_name" {
   type        = string
   default     = "scanresults"

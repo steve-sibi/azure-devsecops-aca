@@ -30,6 +30,7 @@ locals {
   clamav_name       = "${var.prefix}-clamav"
   fetcher_name      = "${var.prefix}-fetcher"
   worker_name       = "${var.prefix}-worker"
+  webpubsub_name    = "${var.prefix}-wps"
   artifacts_share   = "${var.prefix}-artifacts"
   artifacts_storage = "artifacts"
   uami_name         = "${var.prefix}-uami"

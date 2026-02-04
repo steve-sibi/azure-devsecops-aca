@@ -101,6 +101,12 @@ resource "azurerm_container_app" "api" {
   }
 
   secret {
+    name                = "webpubsub-conn"
+    key_vault_secret_id = azurerm_key_vault_secret.webpubsub_conn.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
+  secret {
     name                = "api-key"
     key_vault_secret_id = azurerm_key_vault_secret.api_key.id
     identity            = azurerm_user_assigned_identity.uami.id
@@ -132,6 +138,14 @@ resource "azurerm_container_app" "api" {
       env {
         name        = "RESULT_STORE_CONN"
         secret_name = "results-conn"
+      }
+      env {
+        name        = "WEBPUBSUB_CONNECTION_STRING"
+        secret_name = "webpubsub-conn"
+      }
+      env {
+        name  = "WEBPUBSUB_HUB"
+        value = var.webpubsub_hub_name
       }
       env {
         name  = "RESULT_TABLE"
@@ -247,6 +261,12 @@ resource "azurerm_container_app" "fetcher" {
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
+  secret {
+    name                = "webpubsub-conn"
+    key_vault_secret_id = azurerm_key_vault_secret.webpubsub_conn.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
   # KEDA scaler needs Manage to read queue metrics
   secret {
     name                = "sb-manage"
@@ -292,6 +312,14 @@ resource "azurerm_container_app" "fetcher" {
       env {
         name        = "RESULT_STORE_CONN"
         secret_name = "results-conn"
+      }
+      env {
+        name        = "WEBPUBSUB_CONNECTION_STRING"
+        secret_name = "webpubsub-conn"
+      }
+      env {
+        name  = "WEBPUBSUB_HUB"
+        value = var.webpubsub_hub_name
       }
       env {
         name  = "RESULT_TABLE"
@@ -394,6 +422,12 @@ resource "azurerm_container_app" "worker" {
     identity            = azurerm_user_assigned_identity.uami.id
   }
 
+  secret {
+    name                = "webpubsub-conn"
+    key_vault_secret_id = azurerm_key_vault_secret.webpubsub_conn.id
+    identity            = azurerm_user_assigned_identity.uami.id
+  }
+
   template {
     container {
       name   = "worker"
@@ -420,6 +454,14 @@ resource "azurerm_container_app" "worker" {
       env {
         name        = "RESULT_STORE_CONN"
         secret_name = "results-conn"
+      }
+      env {
+        name        = "WEBPUBSUB_CONNECTION_STRING"
+        secret_name = "webpubsub-conn"
+      }
+      env {
+        name  = "WEBPUBSUB_HUB"
+        value = var.webpubsub_hub_name
       }
       env {
         name  = "RESULT_TABLE"

@@ -135,6 +135,20 @@ resource "azurerm_key_vault_secret" "results_conn" {
   depends_on = [azurerm_role_assignment.kv_tf]
 }
 
+resource "azurerm_key_vault_secret" "webpubsub_conn" {
+  name            = "WebPubSubConn"
+  value           = azurerm_web_pubsub.wps.primary_connection_string
+  key_vault_id    = data.azurerm_key_vault.kv.id
+  content_type    = "webpubsub-connection-string"
+  expiration_date = timeadd(timestamp(), "8760h")
+
+  lifecycle {
+    ignore_changes = [expiration_date]
+  }
+
+  depends_on = [azurerm_role_assignment.kv_tf]
+}
+
 # RBAC (preferred for KV): allow UAMI to read secrets
 resource "azurerm_role_assignment" "kv_secrets_uami" {
   scope                = data.azurerm_key_vault.kv.id
