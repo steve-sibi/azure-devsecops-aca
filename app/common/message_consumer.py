@@ -25,6 +25,23 @@ from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 from common.errors import classify_exception
 
 
+def _is_http_4xx(code: str) -> bool:
+    if not isinstance(code, str):
+        return False
+    if not code.startswith("http_"):
+        return False
+    try:
+        status = int(code.split("_", 1)[1])
+    except Exception:
+        return False
+    return 400 <= status < 500
+
+
+def _should_soft_complete(info) -> bool:
+    # Treat upstream 4xx as terminal-but-expected (avoid DLQ noise).
+    return _is_http_4xx(getattr(info, "code", ""))
+
+
 @dataclass
 class ShutdownFlag:
     shutdown: bool = False
@@ -179,6 +196,17 @@ def run_consumer(
                             info.message,
                         )
                 else:
+                    if _should_soft_complete(info):
+                        logging.warning(
+                            "[%s] Soft-failed message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
+                            component,
+                            job_id,
+                            correlation_id,
+                            delivery_count,
+                            info.code,
+                            info.message,
+                        )
+                        continue
                     dlq_reason = info.code
                     if info.retryable:
                         dlq_reason = "max-retries-exceeded"
@@ -290,6 +318,28 @@ def run_consumer(
                                             info.message,
                                         )
                                 else:
+                                    if _should_soft_complete(info):
+                                        try:
+                                            receiver.complete_message(msg)
+                                            logging.warning(
+                                                "[%s] Soft-completed message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
+                                                component,
+                                                job_id,
+                                                correlation_id,
+                                                delivery_count,
+                                                info.code,
+                                                info.message,
+                                            )
+                                        except Exception as complete_exc:
+                                            logging.error(
+                                                "[%s] Failed to complete soft-failed message (job_id=%s correlation_id=%s delivery_count=%s): %s",
+                                                component,
+                                                job_id,
+                                                correlation_id,
+                                                delivery_count,
+                                                complete_exc,
+                                            )
+                                        continue
                                     dlq_reason = info.code or "error"
                                     dlq_description = info.message
                                     if info.retryable and delivery_count >= max_retries:

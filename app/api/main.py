@@ -36,62 +36,34 @@ from azure.data.tables.aio import TableClient, TableServiceClient
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus.exceptions import ServiceBusError
-from common.clamav_client import (
-    ClamAVConnectionError,
-    ClamAVError,
-    ClamAVProtocolError,
-    clamd_ping,
-    clamd_scan_bytes,
-    clamd_version,
-)
+from common.clamav_client import (ClamAVConnectionError, ClamAVError,
+                                  ClamAVProtocolError, clamd_ping,
+                                  clamd_scan_bytes, clamd_version)
 from common.config import ConsumerConfig
 from common.job_index import ALLOWED_JOB_STATUSES
 from common.job_index import api_key_hash as hash_api_key
 from common.job_index import build_job_index_record as build_job_record
-from common.job_index import (
-    job_index_partition_key,
-    list_jobs_async,
-    upsert_job_index_record_async,
-)
+from common.job_index import (job_index_partition_key, list_jobs_async,
+                              upsert_job_index_record_async)
 from common.limits import get_api_limits, get_file_scan_limits
-from common.logging_config import (
-    clear_correlation_id,
-    get_logger,
-    log_with_context,
-    set_correlation_id,
-    setup_logging,
-)
+from common.logging_config import (clear_correlation_id, get_logger,
+                                   log_with_context, set_correlation_id,
+                                   setup_logging)
 from common.result_store import get_result_async, upsert_result_async
-from common.scan_messages import (
-    SCAN_SOURCE_MAX_LENGTH,
-    SCAN_URL_MAX_LENGTH,
-    ScanMessageValidationError,
-    validate_scan_task_v1,
-)
-from common.screenshot_store import (
-    get_screenshot_blob_async,
-    get_screenshot_redis_async,
-    redis_screenshot_key,
-)
-from common.url_dedupe import (
-    UrlDedupeConfig,
-    build_url_index_record,
-    get_url_index_entry_async,
-    make_url_index_key,
-    upsert_url_index_entry_async,
-    url_index_entry_is_fresh,
-)
-from common.url_validation import UrlValidationError, validate_public_https_url_async
-from fastapi import (
-    FastAPI,
-    File,
-    Form,
-    HTTPException,
-    Query,
-    Request,
-    Security,
-    UploadFile,
-)
+from common.scan_messages import (SCAN_SOURCE_MAX_LENGTH, SCAN_URL_MAX_LENGTH,
+                                  ScanMessageValidationError,
+                                  validate_scan_task_v1)
+from common.screenshot_store import (get_screenshot_blob_async,
+                                     get_screenshot_redis_async,
+                                     redis_screenshot_key)
+from common.url_dedupe import (UrlDedupeConfig, build_url_index_record,
+                               get_url_index_entry_async, make_url_index_key,
+                               upsert_url_index_entry_async,
+                               url_index_entry_is_fresh)
+from common.url_validation import (UrlValidationError,
+                                   validate_public_https_url_async)
+from fastapi import (FastAPI, File, Form, HTTPException, Query, Request,
+                     Security, UploadFile)
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.security.api_key import APIKeyHeader
@@ -626,7 +598,8 @@ async def lifespan(app: FastAPI):
 
         # Screenshots are stored in Blob Storage when using Table results.
         try:
-            from azure.storage.blob.aio import BlobServiceClient as AioBlobServiceClient
+            from azure.storage.blob.aio import \
+                BlobServiceClient as AioBlobServiceClient
 
             blob_service = AioBlobServiceClient.from_connection_string(
                 RESULT_STORE_CONN
