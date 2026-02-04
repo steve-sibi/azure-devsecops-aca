@@ -2339,6 +2339,9 @@
       const intentionalSocketCloses = new WeakSet();
       const terminalToastByJob = new Map(); // job_id -> terminal status
       const lastLiveStatusByRun = new Map(); // run_id -> status
+      const viewFetchInFlightJobs = new Set(); // job_id
+      const viewLastFetchAt = new Map(); // job_id -> epoch ms
+      const VIEW_FETCH_THROTTLE_MS = 1200;
 
       let lastSummary = null; // most recent response for summary view
       let lastFull = null; // most recent response for full view (raw JSON)
@@ -3718,11 +3721,22 @@
           viewBtn.disabled = !job;
           viewBtn.addEventListener('click', async () => {
             if (!job) return;
+            if (!canFetchJobFromView(job)) {
+              setStatus('info', 'Please wait a moment before viewing this job again.');
+              return;
+            }
+            viewFetchInFlightJobs.add(String(job));
+            viewBtn.disabled = true;
             currentJobId = job;
             currentRunId = String(item.run_id || '').trim() || null;
             setButtonsEnabled(true);
-            await refreshJob(job, true);
-            maybeStartPollingFallback(job);
+            try {
+              await refreshJob(job, true);
+              maybeStartPollingFallback(job);
+            } finally {
+              viewFetchInFlightJobs.delete(String(job));
+              if (viewBtn.isConnected) viewBtn.disabled = !job;
+            }
           });
 
           const useBtn = el('button', { type: 'button', text: 'Use URL' });
@@ -4015,6 +4029,17 @@
       function shouldReconnectLive(opts) {
         const forceReconnect = Boolean(opts && opts.forceReconnect);
         if (!forceReconnect && isLiveActive()) return false;
+        return true;
+      }
+
+      function canFetchJobFromView(jobId) {
+        const id = String(jobId || '').trim();
+        if (!id) return false;
+        if (viewFetchInFlightJobs.has(id)) return false;
+        const now = Date.now();
+        const last = Number(viewLastFetchAt.get(id) || 0);
+        if ((now - last) < VIEW_FETCH_THROTTLE_MS) return false;
+        viewLastFetchAt.set(id, now);
         return true;
       }
 
@@ -4335,7 +4360,16 @@
       }
 
       startEl.addEventListener('click', startScan);
-      checkCurrentEl.addEventListener('click', () => refreshJob(currentJobId, true));
+      checkCurrentEl.addEventListener('click', async () => {
+        const jobId = String(currentJobId || '').trim();
+        if (!jobId) return;
+        if (!canFetchJobFromView(jobId)) {
+          setStatus('info', 'Please wait a moment before checking this job again.');
+          return;
+        }
+        await refreshJob(jobId, true);
+        maybeStartPollingFallback(jobId);
+      });
       clearHistoryEl.addEventListener('click', () => {
         const ok = window.confirm('This will permanently clear your URL scan history for this API key. Continue?');
         if (!ok) return;
