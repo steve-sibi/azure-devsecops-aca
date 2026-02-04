@@ -523,7 +523,10 @@ terraform apply \
 ### Security defaults
 
 - **SSRF protection**: only `https://` targets on port **443**; blocks targets that resolve to non-public IP ranges.
-- **Rate limiting**: `60` requests/minute per API key (configure via Terraform var `api_rate_limit_rpm`).
+- **Rate limiting** (per API key, configurable):
+  - write endpoints (e.g. `POST /scan`): `RATE_LIMIT_WRITE_RPM` (defaults to `RATE_LIMIT_RPM`, `60`)
+  - read endpoints (e.g. `GET /scan/{job_id}`, `GET /jobs`, `POST /pubsub/negotiate-user`): `RATE_LIMIT_READ_RPM` (defaults to `5x` write limit)
+  - shared window: `RATE_LIMIT_WINDOW_SECONDS` (default `60`)
 - **Defense in depth**: the worker re-validates targets and validates every redirect hop.
 
 ### Live updates (Web PubSub, optional)
