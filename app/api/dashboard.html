@@ -4171,6 +4171,8 @@
           lastFull = null;
           lastFullJobId = null;
           showSummary(submit);
+          const submitStatus = String(submit && submit.status ? submit.status : '').toLowerCase();
+          const submitDeduped = Boolean(submit && submit.deduped);
 
           currentJobId = submit.job_id || null;
           currentRunId = submit.run_id || null;
@@ -4184,6 +4186,8 @@
               url: target,
               status: submit.status || 'queued',
               error: null,
+              deduped: submitDeduped,
+              visibility: submit.visibility || undefined,
               submitted_at: now,
               scanned_at: null,
               last_checked_at: null
@@ -4198,11 +4202,31 @@
             setStatus('bad', 'No job_id returned');
             return;
           }
+
+          if (isTerminalStatus(submitStatus)) {
+            await refreshJob(currentJobId, true);
+            if (submitDeduped && submitStatus === 'completed') {
+              setStatus('ok', 'Cache hit; showing existing scan result');
+              showToast('Cache hit: reused existing completed scan', 'info', 3000);
+            } else {
+              setStatus(statusKind(submitStatus), 'Job ' + currentJobId + ' is ' + submitStatus);
+            }
+            return;
+          }
+
           const live = await startLiveUpdates({ silent: true });
           if (live) {
-            setStatus('info', 'Job queued; listening for updates...');
+            if (submitDeduped) {
+              setStatus('info', 'Using existing run; listening for updates...');
+            } else {
+              setStatus('info', 'Job queued; listening for updates...');
+            }
           } else {
-            setStatus('info', 'Job queued; polling for results...');
+            if (submitDeduped) {
+              setStatus('info', 'Using existing run; polling for updates...');
+            } else {
+              setStatus('info', 'Job queued; polling for results...');
+            }
             maybeStartPollingFallback(currentJobId);
           }
         } catch (e) {
