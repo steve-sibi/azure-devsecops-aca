@@ -2335,6 +2335,10 @@
       let pubsubReconnectMs = 0;
       let pubsubDesired = false;
       let liveConnectTimer = null;
+      let liveFallbackPollTimer = null;
+      const intentionalSocketCloses = new WeakSet();
+      const terminalToastByJob = new Map(); // job_id -> terminal status
+      const lastLiveStatusByRun = new Map(); // run_id -> status
 
       let lastSummary = null; // most recent response for summary view
       let lastFull = null; // most recent response for full view (raw JSON)
@@ -3718,7 +3722,7 @@
             currentRunId = String(item.run_id || '').trim() || null;
             setButtonsEnabled(true);
             await refreshJob(job, true);
-            if (!isLiveConnected()) startPoll(job);
+            maybeStartPollingFallback(job);
           });
 
           const useBtn = el('button', { type: 'button', text: 'Use URL' });
@@ -3832,11 +3836,16 @@
           clearTimeout(liveConnectTimer);
           liveConnectTimer = null;
         }
+        if (liveFallbackPollTimer) {
+          clearTimeout(liveFallbackPollTimer);
+          liveFallbackPollTimer = null;
+        }
         if (pubsubReconnectTimer) {
           clearTimeout(pubsubReconnectTimer);
           pubsubReconnectTimer = null;
         }
         if (pubsubSocket) {
+          intentionalSocketCloses.add(pubsubSocket);
           try { pubsubSocket.close(); } catch (_) { }
         }
         pubsubSocket = null;
@@ -3848,15 +3857,9 @@
         return Boolean(pubsubSocket && pubsubSocket.readyState === WebSocket.OPEN);
       }
 
-      function findHistoryJobsByRunId(runId) {
-        const target = String(runId || '').trim();
-        if (!target) return [];
-        const out = [];
-        for (const item of (Array.isArray(history) ? history : [])) {
-          if (!item || !item.job_id) continue;
-          if (String(item.run_id || '').trim() === target) out.push(String(item.job_id));
-        }
-        return out;
+      function isLiveActive() {
+        if (!pubsubSocket) return false;
+        return pubsubSocket.readyState === WebSocket.OPEN || pubsubSocket.readyState === WebSocket.CONNECTING;
       }
 
       function patchHistoryByRunId(runId, patch) {
@@ -3877,6 +3880,9 @@
         const runId = String(data.run_id || '').trim();
         const status = data.status ? String(data.status) : '';
         if (!status || !runId) return;
+        const prevStatus = lastLiveStatusByRun.get(runId);
+        if (prevStatus === status && isTerminalStatus(status)) return;
+        lastLiveStatusByRun.set(runId, status);
 
         const patch = {
           run_id: runId,
@@ -3901,42 +3907,114 @@
       }
 
       function connectLiveUpdates(url) {
-        if (!url) return false;
+        if (!url) return Promise.resolve(false);
         if (pubsubSocket) {
+          intentionalSocketCloses.add(pubsubSocket);
           try { pubsubSocket.close(); } catch (_) { }
         }
-        try {
-          pubsubSocket = new WebSocket(url, WEBPUBSUB_SUBPROTOCOL);
-        } catch (e) {
-          scheduleLiveReconnect();
-          return false;
-        }
-        pubsubSocket.onopen = () => {
-          pubsubReconnectMs = 0;
-          cancelPolling();
-        };
-        pubsubSocket.onmessage = (evt) => {
-          let msg;
-          try { msg = JSON.parse(evt.data); } catch (_) { return; }
-          if (!msg || msg.type !== 'message') return;
-          if (msg.from && msg.from !== 'group') return;
-          let data = msg.data;
-          if (typeof data === 'string') {
-            try { data = JSON.parse(data); } catch (_) { }
+        return new Promise((resolve) => {
+          let ws = null;
+          let opened = false;
+          let settled = false;
+
+          function finish(ok) {
+            if (settled) return;
+            settled = true;
+            resolve(Boolean(ok));
           }
-          handleLiveMessage(data);
-        };
-        pubsubSocket.onerror = () => {
-          // Ignore; onclose will handle reconnection.
-        };
-        pubsubSocket.onclose = () => {
-          pubsubSocket = null;
-          if (pubsubDesired) {
-            if (currentJobId) startPoll(currentJobId);
-            scheduleHistoryRefresh(800);
+
+          try {
+            ws = new WebSocket(url, WEBPUBSUB_SUBPROTOCOL);
+          } catch (_) {
             scheduleLiveReconnect();
+            finish(false);
+            return;
           }
-        };
+
+          pubsubSocket = ws;
+          const openTimeout = setTimeout(() => {
+            if (opened) return;
+            try { ws.close(); } catch (_) { }
+            finish(false);
+          }, 4000);
+
+          ws.onopen = () => {
+            opened = true;
+            clearTimeout(openTimeout);
+            pubsubReconnectMs = 0;
+            if (liveFallbackPollTimer) {
+              clearTimeout(liveFallbackPollTimer);
+              liveFallbackPollTimer = null;
+            }
+            cancelPolling();
+            finish(true);
+          };
+          ws.onmessage = (evt) => {
+            let msg;
+            try { msg = JSON.parse(evt.data); } catch (_) { return; }
+            if (!msg || msg.type !== 'message') return;
+            if (msg.from && msg.from !== 'group') return;
+            let data = msg.data;
+            if (typeof data === 'string') {
+              try { data = JSON.parse(data); } catch (_) { }
+            }
+            handleLiveMessage(data);
+          };
+          ws.onerror = () => {
+            if (!opened) finish(false);
+          };
+          ws.onclose = () => {
+            clearTimeout(openTimeout);
+            const intentional = intentionalSocketCloses.has(ws);
+            if (intentional) intentionalSocketCloses.delete(ws);
+            if (pubsubSocket === ws) pubsubSocket = null;
+            if (!opened) {
+              finish(false);
+              return;
+            }
+            if (intentional) return;
+            if (pubsubDesired) {
+              if (liveFallbackPollTimer) clearTimeout(liveFallbackPollTimer);
+              liveFallbackPollTimer = setTimeout(() => {
+                liveFallbackPollTimer = null;
+                if (!isLiveConnected() && currentJobId) startPoll(currentJobId);
+              }, 4000);
+              scheduleHistoryRefresh(800);
+              scheduleLiveReconnect();
+            }
+          };
+        });
+      }
+
+      function maybeShowTerminalToast(jobId, status) {
+        const id = String(jobId || '').trim();
+        const s = String(status || '').toLowerCase();
+        if (!id || !isTerminalStatus(s)) return false;
+        if (terminalToastByJob.get(id) === s) return false;
+        terminalToastByJob.set(id, s);
+        return true;
+      }
+
+      function clearTerminalToast(jobId) {
+        const id = String(jobId || '').trim();
+        if (!id) return;
+        terminalToastByJob.delete(id);
+      }
+
+      function maybeStartPollingFallback(jobId) {
+        const id = String(jobId || '').trim();
+        if (!id) return;
+        if (!WEBPUBSUB_ENABLED) {
+          startPoll(id);
+          return;
+        }
+        if (isLiveActive()) return;
+        startPoll(id);
+      }
+
+      function shouldReconnectLive(opts) {
+        const forceReconnect = Boolean(opts && opts.forceReconnect);
+        if (!forceReconnect && isLiveActive()) return false;
         return true;
       }
 
@@ -3944,6 +4022,7 @@
         if (!WEBPUBSUB_ENABLED) return;
         if (!pubsubDesired) return;
         if (!apiKeyEl.value.trim()) return;
+        if (isLiveActive()) return;
         if (pubsubReconnectTimer) return;
         const baseInput = Number(ms || 0);
         const base = baseInput > 0
@@ -3953,7 +4032,7 @@
         pubsubReconnectTimer = setTimeout(() => {
           pubsubReconnectTimer = null;
           if (!pubsubDesired) return;
-          startLiveUpdates({ silent: true });
+          startLiveUpdates({ silent: true, forceReconnect: true });
         }, pubsubReconnectMs);
       }
 
@@ -3975,13 +4054,14 @@
         const key = apiKeyEl.value.trim();
         if (!key) return false;
         pubsubDesired = true;
+        if (!shouldReconnectLive(opts)) return true;
         stopLiveUpdates({ keepDesired: true });
         try {
           const res = await api('/pubsub/negotiate-user', 'POST', {});
           const url = res && res.url ? String(res.url) : '';
           if (!url) throw new Error('No Web PubSub URL');
           if (!silent) setStatus('info', 'Connecting live updates...');
-          const connected = connectLiveUpdates(url);
+          const connected = await connectLiveUpdates(url);
           if (!connected) throw new Error('Web PubSub socket unavailable');
           return true;
         } catch (_) {
@@ -4003,6 +4083,7 @@
         while (Date.now() < deadline) {
           if (token !== pollToken) return null;
           const s = await refreshJob(jobId, true);
+          if (token !== pollToken) return null;
           if (s && (s.status === 'completed' || s.status === 'error' || s.status === 'blocked')) {
             // Preload full payload for the Raw JSON tab once the job is terminal.
             if (!lastFull || lastFullJobId !== jobId) {
@@ -4020,15 +4101,19 @@
         const id = String(jobId || '').trim();
         if (!id || activePolls.has(id)) return;
         cancelPolling();
+        const runAtStart = String(currentRunId || '').trim();
         const token = pollToken;
         const pollPromise = (async () => {
           try {
             const result = await pollJob(id, token);
+            if (token !== pollToken) return;
             if (result && currentJobId === id) {
-              if (result.status === 'completed') {
+              const status = String(result.status || '').toLowerCase();
+              if (!maybeShowTerminalToast(id, status)) return;
+              if (status === 'completed') {
                 showToast('Scan completed successfully!', 'success');
                 setStatus('ok', 'Completed');
-              } else if (result.status === 'blocked') {
+              } else if (status === 'blocked') {
                 showToast('Scan blocked by upstream site', 'warn');
                 setStatus('warn', 'Blocked');
               } else {
@@ -4037,7 +4122,10 @@
               }
             }
           } catch (e) {
+            if (token !== pollToken) return;
             if (currentJobId === id) {
+              const runNow = String(currentRunId || '').trim();
+              if (runAtStart && runNow && runAtStart !== runNow) return;
               const info = formatApiError(e);
               showToast(info.message, 'error', 6000);
               setStatus('bad', info.message);
@@ -4100,6 +4188,7 @@
               scanned_at: null,
               last_checked_at: null
             });
+            clearTerminalToast(currentJobId);
             showToast('Scan submitted! Waiting for results...', 'info', 3000);
             urlEl.value = '';
           }
@@ -4114,7 +4203,7 @@
             setStatus('info', 'Job queued; listening for updates...');
           } else {
             setStatus('info', 'Job queued; polling for results...');
-            startPoll(currentJobId);
+            maybeStartPollingFallback(currentJobId);
           }
         } catch (e) {
           const info = formatApiError(e);
@@ -4216,7 +4305,7 @@
             }
           });
           startLiveUpdates({ silent: true }).then(live => {
-            if (!live) startPoll(currentJobId);
+            if (!live) maybeStartPollingFallback(currentJobId);
           });
         }
       }
