@@ -2019,6 +2019,37 @@
       gap: 0.5rem;
     }
 
+    .dns-family {
+      display: grid;
+      gap: 0.45rem;
+      margin-bottom: 0.8rem;
+    }
+
+    .dns-family:last-child {
+      margin-bottom: 0;
+    }
+
+    .dns-family-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
+    }
+
+    .dns-family-label {
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .dns-family-count {
+      font-size: 0.72rem;
+      font-weight: 700;
+      color: var(--text-dim);
+    }
+
     .dns-item {
       border: 1px solid rgba(148, 163, 184, 0.22);
       border-radius: 8px;
@@ -3270,6 +3301,26 @@
         const dns = Array.isArray(netInfo && netInfo.dns_addresses) ? netInfo.dns_addresses : [];
         const whois = (netInfo && typeof netInfo.whois === 'object' && netInfo.whois) ? netInfo.whois : null;
 
+        function isIPv4Address(raw) {
+          const ip = String(raw || '').trim();
+          if (!ip) return false;
+          const parts = ip.split('.');
+          if (parts.length !== 4) return false;
+          for (const p of parts) {
+            if (!/^\d{1,3}$/.test(p)) return false;
+            const n = Number(p);
+            if (!Number.isInteger(n) || n < 0 || n > 255) return false;
+          }
+          return true;
+        }
+
+        function isIPv6Address(raw) {
+          const ip = String(raw || '').trim();
+          if (!ip || !ip.includes(':')) return false;
+          // Accept compressed IPv6 and IPv4-mapped IPv6 forms.
+          return /^[0-9a-fA-F:.]+$/.test(ip);
+        }
+
         // Calculate domain age helper
         function calculateDomainAge(creationDateStr) {
           try {
@@ -3311,6 +3362,22 @@
 
           // DNS Card
           if (dns.length) {
+            const dnsV4 = [];
+            const dnsV6 = [];
+            const dnsOther = [];
+            for (const addr of dns) {
+              const value = String(addr || '').trim();
+              if (!value) continue;
+              if (isIPv4Address(value)) dnsV4.push(value);
+              else if (isIPv6Address(value)) dnsV6.push(value);
+              else dnsOther.push(value);
+            }
+
+            const dnsGroups = [];
+            if (dnsV4.length) dnsGroups.push({ label: 'IPv4', items: dnsV4 });
+            if (dnsV6.length) dnsGroups.push({ label: 'IPv6', items: dnsV6 });
+            if (dnsOther.length) dnsGroups.push({ label: 'Other', items: dnsOther });
+
             const dnsCard = el('div', { class: 'network-card' });
             dnsCard.appendChild(el('div', { class: 'network-card-header' },
               el('div', { class: 'network-card-title' },
@@ -3319,9 +3386,19 @@
               ),
               el('span', { class: 'network-card-badge', text: dns.length + ' IP' + (dns.length !== 1 ? 's' : '') })
             ));
-            dnsCard.appendChild(el('div', { class: 'dns-grid' },
-              ...dns.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) }))
-            ));
+            for (const group of dnsGroups) {
+              dnsCard.appendChild(
+                el('div', { class: 'dns-family' },
+                  el('div', { class: 'dns-family-header' },
+                    el('span', { class: 'dns-family-label', text: group.label }),
+                    el('span', { class: 'dns-family-count', text: group.items.length + ' address' + (group.items.length !== 1 ? 'es' : '') })
+                  ),
+                  el('div', { class: 'dns-grid' },
+                    ...group.items.slice(0, 12).map(ip => el('div', { class: 'dns-item', text: String(ip) }))
+                  )
+                )
+              );
+            }
             networkGrid.appendChild(dnsCard);
           }
 
