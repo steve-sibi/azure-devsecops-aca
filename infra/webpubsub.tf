@@ -6,4 +6,9 @@ resource "azurerm_web_pubsub" "wps" {
   sku                 = var.webpubsub_sku
   capacity            = var.webpubsub_capacity
   tags                = var.tags
+
+  # CKV_AZURE_176: enable a managed identity so Web PubSub can authenticate to other Azure resources without keys.
+  identity {
+    type = "SystemAssigned"
+  }
 }
