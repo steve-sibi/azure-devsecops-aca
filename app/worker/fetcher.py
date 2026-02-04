@@ -29,6 +29,7 @@ from common.config import (
 from common.errors import classify_exception
 from common.message_consumer import ShutdownFlag, install_signal_handlers, run_consumer
 from common.scan_messages import validate_scan_artifact_v1, validate_scan_task_v1
+from common.webpubsub import WebPubSubConfig, WebPubSubPublisher
 from web_fetch import download_url
 
 # ---- Config via env ----
@@ -232,6 +233,9 @@ def main() -> None:
             conn_str=RESULT_STORE_CONN, table_name=RESULT_TABLE
         )
 
+    pubsub_cfg = WebPubSubConfig.from_env()
+    publisher = WebPubSubPublisher(pubsub_cfg, logger_obj=logger) if pubsub_cfg else None
+
     result_persister = ResultPersister(
         backend=RESULT_BACKEND,
         partition_key=RESULT_PARTITION,
@@ -240,6 +244,7 @@ def main() -> None:
         redis_prefix=REDIS_RESULT_PREFIX,
         redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
         component="fetcher",
+        publisher=publisher,
     )
 
     logging.info(

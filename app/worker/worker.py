@@ -43,6 +43,7 @@ from common.screenshot_store import (
     store_screenshot_blob_sync,
     store_screenshot_redis_sync,
 )
+from common.webpubsub import WebPubSubConfig, WebPubSubPublisher
 from common.url_canonicalization import canonicalize_url
 from common.web_analysis import (
     analyze_html,
@@ -628,6 +629,9 @@ def main():
             conn_str=RESULT_STORE_CONN, table_name=RESULT_TABLE
         )
 
+    pubsub_cfg = WebPubSubConfig.from_env()
+    publisher = WebPubSubPublisher(pubsub_cfg, logger_obj=logger) if pubsub_cfg else None
+
     result_persister = ResultPersister(
         backend=str(RESULT_BACKEND),
         partition_key=RESULT_PARTITION,
@@ -636,6 +640,7 @@ def main():
         redis_prefix=REDIS_RESULT_PREFIX,
         redis_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
         component="worker",
+        publisher=publisher,
     )
 
     logging.info("[worker] Scan engines: %s", ["web"])

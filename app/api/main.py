@@ -62,6 +62,12 @@ from common.url_dedupe import (UrlDedupeConfig, build_url_index_record,
                                url_index_entry_is_fresh)
 from common.url_validation import (UrlValidationError,
                                    validate_public_https_url_async)
+from common.webpubsub import (
+    WebPubSubConfig,
+    create_service_client,
+    group_for_api_key_hash,
+    group_for_run,
+)
 from fastapi import (FastAPI, File, Form, HTTPException, Query, Request,
                      Security, UploadFile)
 from fastapi.exceptions import RequestValidationError
@@ -103,6 +109,10 @@ APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
 SCREENSHOT_REDIS_PREFIX = os.getenv("SCREENSHOT_REDIS_PREFIX", "screenshot:")
 SCREENSHOT_CONTAINER = os.getenv("SCREENSHOT_CONTAINER", "screenshots")
 SCREENSHOT_FORMAT = os.getenv("SCREENSHOT_FORMAT", "jpeg")
+
+# Web PubSub (optional)
+WEBPUBSUB_CFG = WebPubSubConfig.from_env()
+_webpubsub_client = None
 
 logger = get_logger(__name__)
 
@@ -153,6 +163,15 @@ blob_service = None
 
 api_key_scheme = APIKeyHeader(name=API_KEY_HEADER, auto_error=False)
 
+# Lazy Web PubSub client (used for negotiate)
+def _get_webpubsub_client():
+    global _webpubsub_client
+    if not WEBPUBSUB_CFG:
+        return None
+    if _webpubsub_client is None:
+        _webpubsub_client = create_service_client(WEBPUBSUB_CFG)
+    return _webpubsub_client
+
 # Simple in-memory rate limiter (per API key hash); good enough for demos.
 _rate_lock = asyncio.Lock()
 _rate_buckets: dict[str, deque[float]] = {}
@@ -176,6 +195,10 @@ class ScanRequest(BaseModel):
         max_length=16,
         pattern="^(shared|private)$",
     )
+
+
+class PubSubNegotiateRequest(BaseModel):
+    job_id: str = Field(..., description="Scan job id to subscribe to")
 
 
 async def _read_upload_bytes_limited(
@@ -928,9 +951,11 @@ async def dashboard():
     template = DASHBOARD_TEMPLATE
     api_key_header_html = html.escape(API_KEY_HEADER or "")
     api_key_header_json = json.dumps(API_KEY_HEADER or "X-API-Key")
+    webpubsub_enabled = "true" if WEBPUBSUB_CFG else "false"
     return (
         template.replace("__API_KEY_HEADER__", api_key_header_html)
         .replace("__API_KEY_HEADER_JSON__", api_key_header_json)
+        .replace("__WEBPUBSUB_ENABLED__", webpubsub_enabled)
         .replace(
             "__MAX_DASHBOARD_POLL_SECONDS__", str(int(MAX_DASHBOARD_POLL_SECONDS or 0))
         )
@@ -947,6 +972,65 @@ async def file_scanner():
         .replace("__API_KEY_HEADER_JSON__", api_key_header_json)
         .replace("__FILE_SCAN_MAX_BYTES__", str(int(FILE_SCAN_MAX_BYTES or 0)))
     )
+
+
+@app.post("/pubsub/negotiate", tags=["Realtime"], summary="Negotiate Web PubSub access")
+async def pubsub_negotiate(
+    req: PubSubNegotiateRequest,
+    api_key_hash: Optional[str] = Security(require_api_key),
+):
+    if not WEBPUBSUB_CFG:
+        raise HTTPException(status_code=501, detail="Web PubSub not configured")
+
+    job_id = str(req.job_id or "").strip()
+    if not job_id:
+        raise HTTPException(status_code=400, detail="job_id is required")
+
+    entity = await _get_result_entity(job_id)
+    if not entity:
+        raise HTTPException(status_code=404, detail="Scan result not found")
+
+    owner_hash = str(entity.get("api_key_hash") or "").strip()
+    if owner_hash and api_key_hash and not secrets.compare_digest(owner_hash, api_key_hash):
+        raise HTTPException(status_code=404, detail="Scan result not found")
+
+    run_id = str(entity.get("run_id") or "").strip() or job_id
+    group = group_for_run(WEBPUBSUB_CFG, run_id)
+    client = _get_webpubsub_client()
+    if not client:
+        raise HTTPException(status_code=501, detail="Web PubSub not configured")
+
+    token = client.get_client_access_token(
+        groups=[group],
+        user_id=api_key_hash or None,
+        minutes_to_expire=WEBPUBSUB_CFG.token_ttl_minutes,
+    )
+    return {"url": token.get("url"), "run_id": run_id, "group": group}
+
+
+@app.post(
+    "/pubsub/negotiate-user",
+    tags=["Realtime"],
+    summary="Negotiate user-scoped Web PubSub access",
+)
+async def pubsub_negotiate_user(
+    api_key_hash: Optional[str] = Security(require_api_key),
+):
+    if not WEBPUBSUB_CFG:
+        raise HTTPException(status_code=501, detail="Web PubSub not configured")
+    if not api_key_hash:
+        raise HTTPException(status_code=401, detail="Missing API key")
+    client = _get_webpubsub_client()
+    if not client:
+        raise HTTPException(status_code=501, detail="Web PubSub not configured")
+
+    group = group_for_api_key_hash(WEBPUBSUB_CFG, api_key_hash)
+    token = client.get_client_access_token(
+        groups=[group],
+        user_id=api_key_hash,
+        minutes_to_expire=WEBPUBSUB_CFG.token_ttl_minutes,
+    )
+    return {"url": token.get("url"), "group": group}
 
 
 @app.post("/file/scan", tags=["File Scanning"], summary="Scan a file for malware")
@@ -1301,6 +1385,7 @@ async def enqueue_scan(
                     )
                     return {
                         "job_id": request_id,
+                        "run_id": existing_run_id,
                         "status": run_status,
                         "deduped": True,
                     }
@@ -1405,7 +1490,12 @@ async def enqueue_scan(
                 redis_client=redis_client,
                 result_ttl_seconds=REDIS_RESULT_TTL_SECONDS,
             )
-        return {"job_id": request_id, "status": "queued", "deduped": False}
+        return {
+            "job_id": request_id,
+            "run_id": run_id,
+            "status": "queued",
+            "deduped": False,
+        }
     except HTTPException:
         raise
     except ServiceBusError as e:
@@ -1541,6 +1631,7 @@ async def list_jobs(
         out.append(
             {
                 "job_id": job_id,
+                "run_id": run_id or None,
                 "type": item_type,
                 "status": status_out,
                 "submitted_at": item.get("submitted_at") or None,
@@ -1766,6 +1857,7 @@ async def get_scan_status(
         if not run_entity:
             return {
                 "job_id": job_id,
+                "run_id": run_id,
                 "status": "pending",
                 "summary": (
                     {"url": entity.get("url") or None} if entity.get("url") else None
@@ -1802,6 +1894,7 @@ async def get_scan_status(
         dashboard_path = "/file" if scan_type_out == "file" else "/"
         response = {
             "job_id": job_id,
+            "run_id": run_id,
             "status": run_entity.get("status", "unknown"),
             "type": scan_type_out,
             "verdict": run_entity.get("verdict") or None,
@@ -1855,6 +1948,7 @@ async def get_scan_status(
     dashboard_path = "/file" if scan_type_out == "file" else "/"
     response = {
         "job_id": job_id,
+        "run_id": job_id,
         "status": entity.get("status", "unknown"),
         "type": scan_type_out,
         "verdict": entity.get("verdict") or None,

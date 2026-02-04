@@ -137,6 +137,7 @@ class ResultPersister:
         redis_prefix: str = "scan:",
         redis_ttl_seconds: int = 0,
         component: str = "worker",
+        publisher=None,
     ) -> None:
         self._backend = backend
         self._partition_key = partition_key
@@ -145,6 +146,7 @@ class ResultPersister:
         self._redis_prefix = redis_prefix
         self._redis_ttl_seconds = int(redis_ttl_seconds or 0)
         self._component = component
+        self._publisher = publisher
 
     def save_result(
         self,
@@ -254,6 +256,29 @@ class ResultPersister:
                     except Exception:
                         # Never fail the scan pipeline on best-effort cache maintenance.
                         pass
+            if self._publisher:
+                try:
+                    stage = None
+                    if isinstance(details_out, dict):
+                        stage_val = details_out.get("stage")
+                        if isinstance(stage_val, str) and stage_val.strip():
+                            stage = stage_val.strip()
+                    self._publisher.publish_job_update(
+                        run_id=job_id,
+                        api_key_hash=api_key_hash,
+                        payload={
+                            "status": status,
+                            "error": error or None,
+                            "submitted_at": submitted_at or None,
+                            "scanned_at": scanned_at,
+                            "duration_ms": duration_ms or 0,
+                            "size_bytes": size_bytes or 0,
+                            "stage": stage,
+                        },
+                    )
+                except Exception:
+                    # Never fail result persistence on live-update publishing.
+                    pass
             return True
         except Exception:
             logging.exception(
