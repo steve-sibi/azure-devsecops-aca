@@ -2816,6 +2816,27 @@
           return 'page.url:"' + escaped + '"';
         }
 
+        function externalScanActions(targetUrl) {
+          const url = String(targetUrl || '').trim();
+          if (!url) return null;
+
+          const urlscanQ = urlscanQuery(url);
+          const urlscanDomain = registrableDomain(hostnameFromUrl(url));
+          const urlscanHref = urlscanDomain
+            ? ('https://urlscan.io/domain/' + encodeURIComponent(urlscanDomain))
+            : (urlscanQ ? ('https://urlscan.io/search/#' + encodeURIComponent(urlscanQ)) : 'https://urlscan.io/');
+          const vtId = vtUrlId(url);
+          const vtHost = hostnameFromUrl(url);
+          const vtHref = vtId
+            ? ('https://www.virustotal.com/gui/url/' + vtId)
+            : (vtHost ? ('https://www.virustotal.com/gui/domain/' + encodeURIComponent(vtHost)) : 'https://www.virustotal.com/');
+
+          return el('div', { class: 'analysis-actions' },
+            el('a', { class: 'btn primary', href: urlscanHref, target: '_blank', rel: 'noreferrer', text: 'Check on URLScan.io' }),
+            el('a', { class: 'btn success', href: vtHref, target: '_blank', rel: 'noreferrer', text: 'Check on VirusTotal' }),
+          );
+        }
+
         const status = String(data.status || 'unknown');
         const isTerminal = status === 'completed' || status === 'error' || status === 'blocked';
         const dl = (pick(s, 'download') && typeof pick(s, 'download') === 'object') ? pick(s, 'download') : {};
@@ -2847,6 +2868,14 @@
           ['Content type', (dl && dl.content_type) ? codeValue(String(dl.content_type)) : ''],
           ['Redirects', (dl && dl.redirect_count != null) ? codeValue(String(dl.redirect_count)) : ''],
         ].filter(Boolean), { tone: 'info' });
+
+        // --- External Scanners (for blocked results) ---
+        if (status === 'blocked') {
+          const actions = externalScanActions(finalUrl);
+          if (actions) {
+            section('External Scanners', actions);
+          }
+        }
 
         // --- Security Analysis (cards) ---
         if (isTerminal && sec && Object.keys(sec).length) {
@@ -3065,21 +3094,7 @@
           // Generate summary bar after cards are built
           const summaryBar = securitySummaryBar(cards);
 
-          const urlscanQ = urlscanQuery(finalUrl);
-          const urlscanDomain = registrableDomain(hostnameFromUrl(finalUrl));
-          const urlscanHref = urlscanDomain
-            ? ('https://urlscan.io/domain/' + encodeURIComponent(urlscanDomain))
-            : (urlscanQ ? ('https://urlscan.io/search/#' + encodeURIComponent(urlscanQ)) : 'https://urlscan.io/');
-          const vtId = vtUrlId(finalUrl);
-          const vtHost = hostnameFromUrl(finalUrl);
-          const vtHref = vtId
-            ? ('https://www.virustotal.com/gui/url/' + vtId)
-            : (vtHost ? ('https://www.virustotal.com/gui/domain/' + encodeURIComponent(vtHost)) : 'https://www.virustotal.com/');
-          const actions = el('div', { class: 'analysis-actions' },
-            el('a', { class: 'btn primary', href: urlscanHref, target: '_blank', rel: 'noreferrer', text: 'Check on URLScan.io' }),
-            el('a', { class: 'btn success', href: vtHref, target: '_blank', rel: 'noreferrer', text: 'Check on VirusTotal' }),
-          );
-
+          const actions = externalScanActions(finalUrl);
           section('Security Analysis', el('div', null, summaryBar, cards, actions));
         }
 
