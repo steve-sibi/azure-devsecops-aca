@@ -215,6 +215,8 @@ class TestApiLimits:
         with mock.patch.dict(os.environ, {}, clear=True):
             limits = ApiLimits.from_env()
             assert limits.rate_limit_rpm == 60
+            assert limits.rate_limit_write_rpm == 60
+            assert limits.rate_limit_read_rpm == 300
             assert limits.rate_limit_window_seconds == 60
             assert limits.max_dashboard_poll_seconds == 180
 

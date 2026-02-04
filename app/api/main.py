@@ -123,6 +123,8 @@ API_KEY_HEADER = os.getenv("API_KEY_HEADER", "X-API-Key")
 REQUIRE_API_KEY = os.getenv("REQUIRE_API_KEY", "true").lower() in ("1", "true", "yes")
 _API_LIMITS = get_api_limits()
 RATE_LIMIT_RPM = _API_LIMITS.rate_limit_rpm
+RATE_LIMIT_WRITE_RPM = _API_LIMITS.rate_limit_write_rpm
+RATE_LIMIT_READ_RPM = _API_LIMITS.rate_limit_read_rpm
 RATE_LIMIT_WINDOW_SECONDS = _API_LIMITS.rate_limit_window_seconds
 BLOCK_PRIVATE_NETWORKS = os.getenv("BLOCK_PRIVATE_NETWORKS", "true").lower() in (
     "1",
@@ -291,21 +293,35 @@ async def _validate_scan_url(url: str):
         _bad_url(str(e))
 
 
-async def _enforce_rate_limit(api_key: str):
-    if RATE_LIMIT_RPM <= 0:
+def _rate_limit_scope_for_request(request: Request) -> tuple[str, int]:
+    method = str(getattr(request, "method", "") or "").upper()
+    path = str(getattr(getattr(request, "url", None), "path", "") or "")
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return ("read", RATE_LIMIT_READ_RPM)
+    if method == "POST" and path.startswith("/pubsub/"):
+        return ("read", RATE_LIMIT_READ_RPM)
+    return ("write", RATE_LIMIT_WRITE_RPM)
+
+
+async def _enforce_rate_limit(api_key: str, *, scope: str, limit_rpm: int):
+    if limit_rpm <= 0:
         return
     window = max(1, RATE_LIMIT_WINDOW_SECONDS)
     now = time.monotonic()
-    bucket = hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+    bucket = (
+        hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+        + ":"
+        + str(scope or "default")
+    )
     async with _rate_lock:
         q = _rate_buckets.setdefault(bucket, deque())
         cutoff = now - window
         while q and q[0] < cutoff:
             q.popleft()
-        if len(q) >= RATE_LIMIT_RPM:
+        if len(q) >= limit_rpm:
             raise HTTPException(
                 status_code=429,
-                detail=f"Rate limit exceeded ({RATE_LIMIT_RPM}/{window}s)",
+                detail=f"Rate limit exceeded ({limit_rpm}/{window}s)",
             )
         q.append(now)
 
@@ -326,7 +342,8 @@ async def require_api_key(
         raise HTTPException(status_code=401, detail="Missing API key")
     if not any(secrets.compare_digest(api_key, k) for k in configured):
         raise HTTPException(status_code=403, detail="Invalid API key")
-    await _enforce_rate_limit(api_key)
+    scope, limit_rpm = _rate_limit_scope_for_request(request)
+    await _enforce_rate_limit(api_key, scope=scope, limit_rpm=limit_rpm)
     return hash_api_key(api_key)
 
 

@@ -139,13 +139,21 @@ class ScreenshotLimits:
 @dataclass(frozen=True)
 class ApiLimits:
     rate_limit_rpm: int
+    rate_limit_write_rpm: int
+    rate_limit_read_rpm: int
     rate_limit_window_seconds: int
     max_dashboard_poll_seconds: int
 
     @staticmethod
     def from_env() -> ApiLimits:
+        base_rpm = _env_int("RATE_LIMIT_RPM", 60)
         limits = ApiLimits(
-            rate_limit_rpm=_env_int("RATE_LIMIT_RPM", 60),
+            rate_limit_rpm=base_rpm,
+            rate_limit_write_rpm=_env_int("RATE_LIMIT_WRITE_RPM", base_rpm),
+            rate_limit_read_rpm=_env_int(
+                "RATE_LIMIT_READ_RPM",
+                max(base_rpm, base_rpm * 5),
+            ),
             rate_limit_window_seconds=_env_int("RATE_LIMIT_WINDOW_SECONDS", 60),
             max_dashboard_poll_seconds=_env_int("MAX_DASHBOARD_POLL_SECONDS", 180),
         )
@@ -154,6 +162,10 @@ class ApiLimits:
 
     def validate(self) -> None:
         _require_range("RATE_LIMIT_RPM", float(self.rate_limit_rpm), min_value=0)
+        _require_range(
+            "RATE_LIMIT_WRITE_RPM", float(self.rate_limit_write_rpm), min_value=0
+        )
+        _require_range("RATE_LIMIT_READ_RPM", float(self.rate_limit_read_rpm), min_value=0)
         _require_range(
             "RATE_LIMIT_WINDOW_SECONDS", float(self.rate_limit_window_seconds), min_value=0
         )
