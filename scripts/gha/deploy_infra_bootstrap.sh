@@ -81,10 +81,21 @@ az acr show -g "${RG}" -n "${ACR}" >/dev/null 2>&1 || \
 az monitor log-analytics workspace show -g "${RG}" -n "${LA}" >/dev/null 2>&1 || \
   retry az monitor log-analytics workspace create -g "${RG}" -n "${LA}" -l "${REGION}" >/dev/null
 
-echo "[deploy] Ensuring Azure provider namespace registrations..."
-# Web PubSub uses Microsoft.SignalRService. Provider registration is account/subscription scoped.
-retry az provider register --namespace Microsoft.SignalRService >/dev/null
-retry az provider register --namespace Microsoft.App >/dev/null
+echo "[deploy] Verifying required Azure provider namespace registrations..."
+# Provider registration is subscription-scoped and should be handled manually by subscription admins.
+check_provider_registered() {
+  local ns="$1"
+  local state
+  state="$(az provider show --namespace "${ns}" --query registrationState -o tsv 2>/dev/null || echo "")"
+  if [[ "${state}" != "Registered" ]]; then
+    echo "[deploy] Provider namespace '${ns}' is not registered (state='${state:-unknown}')." >&2
+    echo "[deploy] Register it manually, then rerun:" >&2
+    echo "  az provider register --namespace ${ns} --wait" >&2
+    exit 1
+  fi
+}
+check_provider_registered "Microsoft.SignalRService"
+check_provider_registered "Microsoft.App"
 
 echo "[deploy] Ensuring Terraform state storage exists..."
 
