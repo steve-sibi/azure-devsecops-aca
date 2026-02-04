@@ -81,6 +81,11 @@ az acr show -g "${RG}" -n "${ACR}" >/dev/null 2>&1 || \
 az monitor log-analytics workspace show -g "${RG}" -n "${LA}" >/dev/null 2>&1 || \
   retry az monitor log-analytics workspace create -g "${RG}" -n "${LA}" -l "${REGION}" >/dev/null
 
+echo "[deploy] Ensuring Azure provider namespace registrations..."
+# Web PubSub uses Microsoft.SignalRService. Provider registration is account/subscription scoped.
+retry az provider register --namespace Microsoft.SignalRService >/dev/null
+retry az provider register --namespace Microsoft.App >/dev/null
+
 echo "[deploy] Ensuring Terraform state storage exists..."
 
 if az storage account show -g "${RG}" -n "${TFSTATE_SA}" >/dev/null 2>&1; then
@@ -197,10 +202,23 @@ fi
 
 echo "[deploy] Terraform apply (infra only, no apps)..."
 
+TF_CREATE_APPS="${CREATE_APPS:-auto}"
+if [[ "${TF_CREATE_APPS}" == "auto" ]]; then
+  if az containerapp show -g "${RG}" -n "${PREFIX}-api" >/dev/null 2>&1 \
+    && az containerapp show -g "${RG}" -n "${PREFIX}-fetcher" >/dev/null 2>&1 \
+    && az containerapp show -g "${RG}" -n "${PREFIX}-worker" >/dev/null 2>&1; then
+    TF_CREATE_APPS="true"
+    echo "[deploy] Existing Container Apps detected; preserving apps during infra apply."
+  else
+    TF_CREATE_APPS="false"
+    echo "[deploy] Container Apps not fully present; infra apply will skip app resources."
+  fi
+fi
+
 terraform -chdir="${INFRA_DIR}" apply -auto-approve -input=false -no-color -lock-timeout=2m \
   -var="prefix=${PREFIX}" \
   -var="resource_group_name=${RG}" \
   -var="queue_name=${QUEUE_NAME}" \
-  -var="create_apps=false"
+  -var="create_apps=${TF_CREATE_APPS}"
 
 echo "[deploy] Infra bootstrap complete."
