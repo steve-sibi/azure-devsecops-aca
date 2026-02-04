@@ -2120,7 +2120,7 @@
       <div class="actions">
         <a class="tab" aria-current="page" href="/">URL scanner</a>
         <a class="tab" href="/file">File scanner</a>
-        <button id="clearHistory" type="button">Refresh history</button>
+        <button id="clearHistory" type="button">Clear history</button>
       </div>
     </header>
 
@@ -2433,6 +2433,29 @@
         } finally {
           historyLoading = false;
           renderHistory();
+        }
+      }
+
+      async function clearHistoryServer() {
+        const key = apiKeyEl.value.trim();
+        if (!key) {
+          history = [];
+          historyLastLoadedAt = null;
+          renderHistory();
+          return;
+        }
+        try {
+          await api('/jobs?type=url', 'DELETE');
+          setStatus('ok', 'History cleared');
+          showToast('History cleared', 'success', 2500);
+        } catch (e) {
+          const info = formatApiError(e);
+          const msg = info.message || 'Failed to clear history';
+          setStatus('warn', msg);
+          showToast(msg, 'error', 6000);
+        } finally {
+          resetHistoryPaging();
+          await refreshHistoryFromServer({ silent: true });
         }
       }
 
@@ -3996,8 +4019,10 @@
       startEl.addEventListener('click', startScan);
       checkCurrentEl.addEventListener('click', () => refreshJob(currentJobId, true));
       clearHistoryEl.addEventListener('click', () => {
+        const ok = window.confirm('This will permanently clear your URL scan history for this API key. Continue?');
+        if (!ok) return;
         clearScreenshotCache();
-        refreshHistoryFromServer({ silent: false });
+        clearHistoryServer();
       });
       historyFilterEl.addEventListener('input', () => {
         resetHistoryPaging();

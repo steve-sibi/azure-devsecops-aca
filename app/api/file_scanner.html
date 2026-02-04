@@ -1965,7 +1965,11 @@
         tabRawEl.addEventListener('click', () => setActiveTab('raw'));
 
         startEl.addEventListener('click', startScan);
-        clearHistoryEl.addEventListener('click', clearHistoryServer);
+        clearHistoryEl.addEventListener('click', () => {
+          const ok = window.confirm('This will permanently clear your file scan history for this API key. Continue?');
+          if (!ok) return;
+          clearHistoryServer();
+        });
         historyFilterEl.addEventListener('input', () => {
           historyPage = 1;
           renderHistory();
