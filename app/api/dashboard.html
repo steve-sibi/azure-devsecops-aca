@@ -2222,6 +2222,8 @@
     (function () {
       const API_KEY_HEADER = __API_KEY_HEADER_JSON__;
       const MAX_POLL_SECONDS = __MAX_DASHBOARD_POLL_SECONDS__;
+      const WEBPUBSUB_ENABLED = __WEBPUBSUB_ENABLED__;
+      const WEBPUBSUB_SUBPROTOCOL = 'json.webpubsub.azure.v1';
 
       const LS = {
         apiKey: 'acaScanner.apiKey',
@@ -2323,9 +2325,16 @@
 
       let history = [];
       let currentJobId = null;
+      let currentRunId = null;
       let isSubmitting = false;
       const activePolls = new Map(); // job_id -> Promise
       let activeTab = 'summary'; // 'summary' | 'raw'
+      let pollToken = 0;
+      let pubsubSocket = null;
+      let pubsubReconnectTimer = null;
+      let pubsubReconnectMs = 0;
+      let pubsubDesired = false;
+      let liveConnectTimer = null;
 
       let lastSummary = null; // most recent response for summary view
       let lastFull = null; // most recent response for full view (raw JSON)
@@ -3571,6 +3580,10 @@
         return 'info';
       }
 
+      function isTerminalStatus(status) {
+        return status === 'completed' || status === 'error' || status === 'blocked';
+      }
+
       function historyStatus(status) {
         const s = String(status || '').toLowerCase();
         if (s === 'completed') return { label: 'completed', kind: 'ok', title: 'completed' };
@@ -3699,11 +3712,13 @@
 
           const viewBtn = el('button', { type: 'button', text: 'View' });
           viewBtn.disabled = !job;
-          viewBtn.addEventListener('click', () => {
+          viewBtn.addEventListener('click', async () => {
             if (!job) return;
             currentJobId = job;
+            currentRunId = String(item.run_id || '').trim() || null;
             setButtonsEnabled(true);
-            refreshJob(job, true);
+            await refreshJob(job, true);
+            if (!isLiveConnected()) startPoll(job);
           });
 
           const useBtn = el('button', { type: 'button', text: 'Use URL' });
@@ -3763,6 +3778,7 @@
           // Use upsertHistory so it creates the entry if it doesn't exist (e.g., from deep-link)
           upsertHistory({
             job_id: jobId,
+            run_id: s.run_id || undefined,
             url: s.summary?.url || s.summary?.download?.requested_url || undefined,
             status: s.status,
             error: s.error || null,
@@ -3773,6 +3789,7 @@
             last_checked_at: now
           });
           if (isCurrent) {
+            currentRunId = s.run_id || currentRunId;
             if (showOutput) {
               if (view === 'full') showFull(s);
               else showSummary(s);
@@ -3809,11 +3826,182 @@
         }
       }
 
+      function stopLiveUpdates(opts) {
+        const keepDesired = Boolean(opts && opts.keepDesired);
+        if (liveConnectTimer) {
+          clearTimeout(liveConnectTimer);
+          liveConnectTimer = null;
+        }
+        if (pubsubReconnectTimer) {
+          clearTimeout(pubsubReconnectTimer);
+          pubsubReconnectTimer = null;
+        }
+        if (pubsubSocket) {
+          try { pubsubSocket.close(); } catch (_) { }
+        }
+        pubsubSocket = null;
+        pubsubReconnectMs = 0;
+        if (!keepDesired) pubsubDesired = false;
+      }
+
+      function isLiveConnected() {
+        return Boolean(pubsubSocket && pubsubSocket.readyState === WebSocket.OPEN);
+      }
+
+      function findHistoryJobsByRunId(runId) {
+        const target = String(runId || '').trim();
+        if (!target) return [];
+        const out = [];
+        for (const item of (Array.isArray(history) ? history : [])) {
+          if (!item || !item.job_id) continue;
+          if (String(item.run_id || '').trim() === target) out.push(String(item.job_id));
+        }
+        return out;
+      }
+
+      function patchHistoryByRunId(runId, patch) {
+        const target = String(runId || '').trim();
+        if (!target) return [];
+        const updated = [];
+        for (const item of (Array.isArray(history) ? history : [])) {
+          if (!item || !item.job_id) continue;
+          if (String(item.run_id || '').trim() !== target) continue;
+          patchHistory(String(item.job_id), patch);
+          updated.push(String(item.job_id));
+        }
+        return updated;
+      }
+
+      function handleLiveMessage(data) {
+        if (!data || typeof data !== 'object') return;
+        const runId = String(data.run_id || '').trim();
+        const status = data.status ? String(data.status) : '';
+        if (!status || !runId) return;
+
+        const patch = {
+          run_id: runId,
+          status: status,
+          error: data.error || null,
+          scanned_at: data.scanned_at || null,
+          last_checked_at: new Date().toISOString()
+        };
+
+        let affectedJobs = patchHistoryByRunId(runId, patch);
+        if ((!affectedJobs || !affectedJobs.length) && currentJobId && currentRunId && String(currentRunId) === runId) {
+          upsertHistory(Object.assign({ job_id: currentJobId }, patch));
+          affectedJobs = [currentJobId];
+        }
+
+        if (currentJobId && affectedJobs.includes(String(currentJobId))) {
+          setStatus(statusKind(status), 'Job ' + currentJobId + ' is ' + status);
+          if (isTerminalStatus(status)) {
+            refreshJob(currentJobId, true);
+          }
+        }
+      }
+
+      function connectLiveUpdates(url) {
+        if (!url) return false;
+        if (pubsubSocket) {
+          try { pubsubSocket.close(); } catch (_) { }
+        }
+        try {
+          pubsubSocket = new WebSocket(url, WEBPUBSUB_SUBPROTOCOL);
+        } catch (e) {
+          scheduleLiveReconnect();
+          return false;
+        }
+        pubsubSocket.onopen = () => {
+          pubsubReconnectMs = 0;
+          cancelPolling();
+        };
+        pubsubSocket.onmessage = (evt) => {
+          let msg;
+          try { msg = JSON.parse(evt.data); } catch (_) { return; }
+          if (!msg || msg.type !== 'message') return;
+          if (msg.from && msg.from !== 'group') return;
+          let data = msg.data;
+          if (typeof data === 'string') {
+            try { data = JSON.parse(data); } catch (_) { }
+          }
+          handleLiveMessage(data);
+        };
+        pubsubSocket.onerror = () => {
+          // Ignore; onclose will handle reconnection.
+        };
+        pubsubSocket.onclose = () => {
+          pubsubSocket = null;
+          if (pubsubDesired) {
+            if (currentJobId) startPoll(currentJobId);
+            scheduleHistoryRefresh(800);
+            scheduleLiveReconnect();
+          }
+        };
+        return true;
+      }
+
+      function scheduleLiveReconnect(ms) {
+        if (!WEBPUBSUB_ENABLED) return;
+        if (!pubsubDesired) return;
+        if (!apiKeyEl.value.trim()) return;
+        if (pubsubReconnectTimer) return;
+        const baseInput = Number(ms || 0);
+        const base = baseInput > 0
+          ? baseInput
+          : (pubsubReconnectMs ? Math.min(pubsubReconnectMs * 2, 15000) : 1500);
+        pubsubReconnectMs = base;
+        pubsubReconnectTimer = setTimeout(() => {
+          pubsubReconnectTimer = null;
+          if (!pubsubDesired) return;
+          startLiveUpdates({ silent: true });
+        }, pubsubReconnectMs);
+      }
+
+      function scheduleLiveConnect(ms) {
+        if (liveConnectTimer) clearTimeout(liveConnectTimer);
+        liveConnectTimer = setTimeout(() => {
+          liveConnectTimer = null;
+          if (!apiKeyEl.value.trim()) {
+            stopLiveUpdates();
+            return;
+          }
+          startLiveUpdates({ silent: true });
+        }, Math.max(0, Number(ms || 0)) || 300);
+      }
+
+      async function startLiveUpdates(opts) {
+        if (!WEBPUBSUB_ENABLED) return false;
+        const silent = opts && opts.silent;
+        const key = apiKeyEl.value.trim();
+        if (!key) return false;
+        pubsubDesired = true;
+        stopLiveUpdates({ keepDesired: true });
+        try {
+          const res = await api('/pubsub/negotiate-user', 'POST', {});
+          const url = res && res.url ? String(res.url) : '';
+          if (!url) throw new Error('No Web PubSub URL');
+          if (!silent) setStatus('info', 'Connecting live updates...');
+          const connected = connectLiveUpdates(url);
+          if (!connected) throw new Error('Web PubSub socket unavailable');
+          return true;
+        } catch (_) {
+          stopLiveUpdates({ keepDesired: true });
+          scheduleLiveReconnect();
+          return false;
+        }
+      }
+
+      function cancelPolling() {
+        pollToken += 1;
+        activePolls.clear();
+      }
+
       function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-      async function pollJob(jobId) {
+      async function pollJob(jobId, token) {
         const deadline = Date.now() + (MAX_POLL_SECONDS * 1000);
         while (Date.now() < deadline) {
+          if (token !== pollToken) return null;
           const s = await refreshJob(jobId, true);
           if (s && (s.status === 'completed' || s.status === 'error' || s.status === 'blocked')) {
             // Preload full payload for the Raw JSON tab once the job is terminal.
@@ -3822,6 +4010,7 @@
             }
             return s;
           }
+          if (token !== pollToken) return null;
           await sleep(4000);
         }
         throw new Error('Timed out waiting for result');
@@ -3830,9 +4019,11 @@
       function startPoll(jobId) {
         const id = String(jobId || '').trim();
         if (!id || activePolls.has(id)) return;
+        cancelPolling();
+        const token = pollToken;
         const pollPromise = (async () => {
           try {
-            const result = await pollJob(id);
+            const result = await pollJob(id, token);
             if (result && currentJobId === id) {
               if (result.status === 'completed') {
                 showToast('Scan completed successfully!', 'success');
@@ -3894,12 +4085,14 @@
           showSummary(submit);
 
           currentJobId = submit.job_id || null;
+          currentRunId = submit.run_id || null;
           setButtonsEnabled(true);
 
           if (currentJobId) {
             const now = new Date().toISOString();
             upsertHistory({
               job_id: currentJobId,
+              run_id: submit.run_id || undefined,
               url: target,
               status: submit.status || 'queued',
               error: null,
@@ -3916,8 +4109,13 @@
             setStatus('bad', 'No job_id returned');
             return;
           }
-          setStatus('info', 'Job queued; polling for results...');
-          startPoll(currentJobId);
+          const live = await startLiveUpdates({ silent: true });
+          if (live) {
+            setStatus('info', 'Job queued; listening for updates...');
+          } else {
+            setStatus('info', 'Job queued; polling for results...');
+            startPoll(currentJobId);
+          }
         } catch (e) {
           const info = formatApiError(e);
           showToast(info.message, 'error', 6000);
@@ -3952,7 +4150,10 @@
         apiKeyEl.addEventListener('input', () => {
           localStorage.setItem(LS.apiKey, apiKeyEl.value);
           apiKeySavedEl.style.display = apiKeyEl.value.trim() ? 'inline-flex' : 'none';
+          stopLiveUpdates();
+          cancelPolling();
           scheduleHistoryRefresh(450);
+          if (apiKeyEl.value.trim()) scheduleLiveConnect(500);
         });
         const stripSchemeIfPresent = () => {
           const next = normalizeUrlInput(urlEl.value);
@@ -3985,6 +4186,7 @@
         renderHistory();
         if (apiKeyEl.value.trim()) {
           refreshHistoryFromServer({ silent: true });
+          startLiveUpdates({ silent: true });
         }
         lastSummary = {};
         lastFull = null;
@@ -4012,6 +4214,9 @@
                 loadFull(currentJobId);
               }
             }
+          });
+          startLiveUpdates({ silent: true }).then(live => {
+            if (!live) startPoll(currentJobId);
           });
         }
       }
