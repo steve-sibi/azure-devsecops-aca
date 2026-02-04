@@ -5,7 +5,7 @@ This module stores scan job state for `GET /scan/{job_id}` and enforces two key
 invariants:
 
 - Status updates are monotonic: later stages must not be overwritten by earlier ones.
-- Terminal states (`completed`/`error`) must not be replaced by a different terminal state.
+- Terminal states (`completed`/`error`/`blocked`) must not be replaced by a different terminal state.
 
 When using Table Storage, large `details` payloads are compacted/truncated to stay
 within per-property limits; a `_truncated` marker is added to the stored `details`.
@@ -19,28 +19,16 @@ from typing import Any, Optional
 from azure.core.exceptions import ResourceNotFoundError
 
 from common.limits import get_result_store_limits
+from common.statuses import STATUS_RANKS, TERMINAL_STATUSES
 
 
 def _redis_key(prefix: str, job_id: str) -> str:
     return f"{prefix}{job_id}"
 
 
-_STATUS_RANKS: dict[str, int] = {
-    "queued": 10,
-    "fetching": 20,
-    "queued_scan": 30,
-    "retrying": 40,
-    # terminal
-    "completed": 100,
-    "error": 100,
-}
-
-_TERMINAL_STATUSES = {"completed", "error"}
-
-
 def _status_rank(status: Optional[str]) -> int:
     key = (status or "").strip().lower()
-    return _STATUS_RANKS.get(key, 0)
+    return STATUS_RANKS.get(key, 0)
 
 
 def _coerce_int(value: Any, *, default: int = 0) -> int:
@@ -60,7 +48,7 @@ def _should_skip_regression(
     existing_rank = _coerce_int(existing.get("status_rank"), default=_status_rank(existing_status))
 
     # Never regress status, and never overwrite a terminal status with a different terminal status.
-    if existing_status in _TERMINAL_STATUSES and new_status != existing_status:
+    if existing_status in TERMINAL_STATUSES and new_status != existing_status:
         return True
     return new_rank < existing_rank
 

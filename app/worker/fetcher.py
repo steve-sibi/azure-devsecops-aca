@@ -260,8 +260,20 @@ def main() -> None:
         api_key_hash = task.get("api_key_hash") if isinstance(task, dict) else None
         submitted_at = task.get("submitted_at") if isinstance(task, dict) else None
 
+        def _is_http_4xx(code: str) -> bool:
+            if not isinstance(code, str):
+                return False
+            if not code.startswith("http_"):
+                return False
+            try:
+                status = int(code.split("_", 1)[1])
+            except Exception:
+                return False
+            return 400 <= status < 500
+
         retrying = info.retryable and delivery_count < MAX_RETRIES
-        status = "retrying" if retrying else "error"
+        blocked = _is_http_4xx(info.code) and not info.retryable
+        status = "blocked" if blocked else ("retrying" if retrying else "error")
 
         if not result_persister:
             return

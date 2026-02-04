@@ -2817,7 +2817,7 @@
         }
 
         const status = String(data.status || 'unknown');
-        const isTerminal = status === 'completed' || status === 'error';
+        const isTerminal = status === 'completed' || status === 'error' || status === 'blocked';
         const dl = (pick(s, 'download') && typeof pick(s, 'download') === 'object') ? pick(s, 'download') : {};
         const web = (pick(s, 'web') && typeof pick(s, 'web') === 'object') ? pick(s, 'web') : {};
         const sec = (web && typeof web.security_analysis === 'object') ? web.security_analysis : {};
@@ -3529,7 +3529,7 @@
 
       function statusKind(status) {
         if (status === 'completed') return 'ok';
-        if (status === 'error') return 'warn';
+        if (status === 'error' || status === 'blocked') return 'warn';
         return 'info';
       }
 
@@ -3537,6 +3537,7 @@
         const s = String(status || '').toLowerCase();
         if (s === 'completed') return { label: 'completed', kind: 'ok', title: 'completed' };
         if (s === 'error') return { label: 'error', kind: 'warn', title: 'error' };
+        if (s === 'blocked') return { label: 'blocked', kind: 'warn', title: 'blocked' };
         const title = s ? s : 'pending';
         return { label: 'pending', kind: 'info', title };
       }
@@ -3776,7 +3777,7 @@
         const deadline = Date.now() + (MAX_POLL_SECONDS * 1000);
         while (Date.now() < deadline) {
           const s = await refreshJob(jobId, true);
-          if (s && (s.status === 'completed' || s.status === 'error')) {
+          if (s && (s.status === 'completed' || s.status === 'error' || s.status === 'blocked')) {
             // Preload full payload for the Raw JSON tab once the job is terminal.
             if (!lastFull || lastFullJobId !== jobId) {
               await loadFull(jobId);
@@ -3798,6 +3799,9 @@
               if (result.status === 'completed') {
                 showToast('Scan completed successfully!', 'success');
                 setStatus('ok', 'Completed');
+              } else if (result.status === 'blocked') {
+                showToast('Scan blocked by upstream site', 'warn');
+                setStatus('warn', 'Blocked');
               } else {
                 showToast('Scan finished with errors', 'error');
                 setStatus('bad', 'Error');
@@ -3966,7 +3970,7 @@
           refreshJob(currentJobId, true).then(result => {
             if (result) {
               setButtonsEnabled(true);
-              if (result.status === 'completed' || result.status === 'error') {
+              if (result.status === 'completed' || result.status === 'error' || result.status === 'blocked') {
                 loadFull(currentJobId);
               }
             }

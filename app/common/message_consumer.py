@@ -38,8 +38,10 @@ def _is_http_4xx(code: str) -> bool:
 
 
 def _should_soft_complete(info) -> bool:
-    # Treat upstream 4xx as terminal-but-expected (avoid DLQ noise).
-    return _is_http_4xx(getattr(info, "code", ""))
+    # Treat non-retryable upstream 4xx as terminal-but-expected (avoid DLQ noise).
+    return _is_http_4xx(getattr(info, "code", "")) and not bool(
+        getattr(info, "retryable", False)
+    )
 
 
 @dataclass

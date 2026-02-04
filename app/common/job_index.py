@@ -6,18 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-_STATUS_RANKS: dict[str, int] = {
-    "queued": 10,
-    "fetching": 20,
-    "queued_scan": 30,
-    "retrying": 40,
-    # terminal
-    "completed": 100,
-    "error": 100,
-}
-
-_TERMINAL_STATUSES = {"completed", "error"}
-ALLOWED_JOB_STATUSES = set(_STATUS_RANKS.keys())
+from common.statuses import ALLOWED_JOB_STATUSES, STATUS_RANKS, TERMINAL_STATUSES
 
 
 def api_key_hash(api_key: str) -> str:
@@ -94,7 +83,7 @@ def job_index_row_key(*, submitted_at: str, job_id: str) -> str:
 
 def _status_rank(status: Optional[str]) -> int:
     key = (status or "").strip().lower()
-    return _STATUS_RANKS.get(key, 0)
+    return STATUS_RANKS.get(key, 0)
 
 
 def _coerce_int(value: Any, *, default: int = 0) -> int:
@@ -115,7 +104,7 @@ def _should_skip_regression(
     )
 
     # Never regress status, and never overwrite a terminal status with a different terminal status.
-    if existing_status in _TERMINAL_STATUSES and new_status != existing_status:
+    if existing_status in TERMINAL_STATUSES and new_status != existing_status:
         return True
     return new_rank < existing_rank
 
