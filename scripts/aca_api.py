@@ -665,6 +665,46 @@ def cmd_scan_payload(config: Config, args):
     emit_json(resp_body, config)
 
 
+def cmd_admin_list_api_keys(config: Config, args):
+    """Handler for 'admin-list-keys' command."""
+    config.require_api_key()
+    params = [f"limit={args.limit}"]
+    if args.include_inactive:
+        params.append("include_inactive=true")
+    path = f"/admin/api-keys?{'&'.join(params)}"
+    status, _, body = make_request(config, "GET", path)
+    emit_json(body, config)
+
+
+def cmd_admin_mint_api_key(config: Config, args):
+    """Handler for 'admin-mint-key' command."""
+    config.require_api_key()
+    payload: dict[str, Any] = {}
+    if args.label:
+        payload["label"] = args.label
+    if args.read_rpm is not None:
+        payload["read_rpm"] = args.read_rpm
+    if args.write_rpm is not None:
+        payload["write_rpm"] = args.write_rpm
+    if args.ttl_days is not None:
+        payload["ttl_days"] = args.ttl_days
+    if args.is_admin:
+        payload["is_admin"] = True
+    status, _, body = make_request(config, "POST", "/admin/api-keys", data=payload)
+    emit_json(body, config)
+
+
+def cmd_admin_revoke_api_key(config: Config, args):
+    """Handler for 'admin-revoke-key' command."""
+    config.require_api_key()
+    key_hash = str(args.key_hash or "").strip().lower()
+    if len(key_hash) != 64 or any(c not in "0123456789abcdef" for c in key_hash):
+        die("key_hash must be a 64-character sha256 hex digest")
+    path = f"/admin/api-keys/{key_hash}/revoke"
+    status, _, body = make_request(config, "POST", path)
+    emit_json(body, config)
+
+
 # --- Main ---
 
 
@@ -677,6 +717,9 @@ Examples:
   ./scripts/aca_api.py scan-file ./readme.md
   ./scripts/aca_api.py scan-payload "hello world"
   ./scripts/aca_api.py screenshot <job_id>
+  ./scripts/aca_api.py admin-mint-key --label analyst-a --read-rpm 600 --write-rpm 120
+  ./scripts/aca_api.py admin-list-keys --include-inactive
+  ./scripts/aca_api.py admin-revoke-key <key_hash>
   ./scripts/aca_api.py help
 
 Azure:
@@ -876,6 +919,50 @@ Scan status lifecycle:
         help="Indicate payload is base64 encoded (sets payload_base64=true)",
     )
 
+    # Admin: list keys
+    p_admin_list = subparsers.add_parser(
+        "admin-list-keys", help="Admin: list stored API keys"
+    )
+    cmd_parsers["admin-list-keys"] = p_admin_list
+    p_admin_list.add_argument(
+        "--limit", type=int, default=100, help="Max keys to return (default: 100)"
+    )
+    p_admin_list.add_argument(
+        "--include-inactive",
+        action="store_true",
+        help="Include revoked or expired keys",
+    )
+
+    # Admin: mint key
+    p_admin_mint = subparsers.add_parser(
+        "admin-mint-key", help="Admin: mint a new API key"
+    )
+    cmd_parsers["admin-mint-key"] = p_admin_mint
+    p_admin_mint.add_argument("--label", help="Optional label for the key")
+    p_admin_mint.add_argument(
+        "--read-rpm", type=int, help="Optional per-key read RPM limit"
+    )
+    p_admin_mint.add_argument(
+        "--write-rpm", type=int, help="Optional per-key write RPM limit"
+    )
+    p_admin_mint.add_argument(
+        "--ttl-days", type=int, help="Optional expiration (days)"
+    )
+    p_admin_mint.add_argument(
+        "--is-admin",
+        action="store_true",
+        help="Mint an admin key (can call /admin/api-keys*)",
+    )
+
+    # Admin: revoke key
+    p_admin_revoke = subparsers.add_parser(
+        "admin-revoke-key", help="Admin: revoke an API key"
+    )
+    cmd_parsers["admin-revoke-key"] = p_admin_revoke
+    p_admin_revoke.add_argument(
+        "key_hash", help="SHA256 hash of the key to revoke"
+    )
+
     # Help
     p_help = subparsers.add_parser(
         "help", help="Show detailed help for all commands or one command"
@@ -921,6 +1008,9 @@ Scan status lifecycle:
         "screenshot": cmd_screenshot,
         "scan-file": cmd_scan_file,
         "scan-payload": cmd_scan_payload,
+        "admin-list-keys": cmd_admin_list_api_keys,
+        "admin-mint-key": cmd_admin_mint_api_key,
+        "admin-revoke-key": cmd_admin_revoke_api_key,
     }
 
     handler = cmd_map.get(args.command)

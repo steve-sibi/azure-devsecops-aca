@@ -26,7 +26,7 @@ import secrets
 import time
 from collections import deque
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -36,6 +36,11 @@ from azure.data.tables.aio import TableClient, TableServiceClient
 from azure.servicebus import ServiceBusMessage
 from azure.servicebus.aio import ServiceBusClient, ServiceBusSender
 from azure.servicebus.exceptions import ServiceBusError
+from common.api_keys import (ApiKeyStoreConfig, api_key_is_active,
+                             build_api_key_record, get_api_key_record_async,
+                             list_api_key_records_async, revoke_api_key_async,
+                             touch_api_key_last_used_async,
+                             upsert_api_key_record_async)
 from common.clamav_client import (ClamAVConnectionError, ClamAVError,
                                   ClamAVProtocolError, clamd_ping,
                                   clamd_scan_bytes, clamd_version)
@@ -119,8 +124,16 @@ logger = get_logger(__name__)
 # API hardening
 API_KEY = os.getenv("API_KEY")
 API_KEYS = os.getenv("ACA_API_KEYS") or os.getenv("API_KEYS") or ""
+API_ADMIN_KEY = os.getenv("API_ADMIN_KEY")
+API_ADMIN_KEYS = os.getenv("API_ADMIN_KEYS") or ""
 API_KEY_HEADER = os.getenv("API_KEY_HEADER", "X-API-Key")
 REQUIRE_API_KEY = os.getenv("REQUIRE_API_KEY", "true").lower() in ("1", "true", "yes")
+API_KEY_STORE_ENABLED = os.getenv("API_KEY_STORE_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_API_KEY_STORE_CFG = ApiKeyStoreConfig.from_env()
 _API_LIMITS = get_api_limits()
 RATE_LIMIT_RPM = _API_LIMITS.rate_limit_rpm
 RATE_LIMIT_WRITE_RPM = _API_LIMITS.rate_limit_write_rpm
@@ -154,6 +167,12 @@ DASHBOARD_TEMPLATE = (
 FILE_SCANNER_TEMPLATE = (
     Path(__file__).with_name("file_scanner.html").read_text(encoding="utf-8")
 )
+
+_API_KEY_MINT_PREFIX = (os.getenv("API_KEY_MINT_PREFIX", "aca") or "aca").strip() or "aca"
+try:
+    _API_KEY_MINT_BYTES = max(16, int(os.getenv("API_KEY_MINT_BYTES", "32")))
+except Exception:
+    _API_KEY_MINT_BYTES = 32
 
 # Globals set during app startup
 sb_client: Optional[ServiceBusClient] = None
@@ -201,6 +220,36 @@ class ScanRequest(BaseModel):
 
 class PubSubNegotiateRequest(BaseModel):
     job_id: str = Field(..., description="Scan job id to subscribe to")
+
+
+class ApiKeyMintRequest(BaseModel):
+    label: Optional[str] = Field(
+        None,
+        description="Optional human-readable label",
+        max_length=80,
+    )
+    read_rpm: Optional[int] = Field(
+        None,
+        ge=1,
+        le=100000,
+        description="Optional read limit override for this key",
+    )
+    write_rpm: Optional[int] = Field(
+        None,
+        ge=1,
+        le=100000,
+        description="Optional write limit override for this key",
+    )
+    ttl_days: Optional[int] = Field(
+        None,
+        ge=1,
+        le=3650,
+        description="Optional expiration in days",
+    )
+    is_admin: bool = Field(
+        False,
+        description="Allow this key to call admin API-key endpoints",
+    )
 
 
 async def _read_upload_bytes_limited(
@@ -326,25 +375,158 @@ async def _enforce_rate_limit(api_key: str, *, scope: str, limit_rpm: int):
         q.append(now)
 
 
+def _configured_keys(primary: Optional[str], csv_value: str) -> list[str]:
+    out: list[str] = []
+    if isinstance(primary, str) and primary.strip():
+        out.append(primary.strip())
+    if isinstance(csv_value, str) and csv_value.strip():
+        out.extend([p.strip() for p in csv_value.split(",") if p.strip()])
+    return out
+
+
+def _default_admin_keys() -> list[str]:
+    admin_keys = _configured_keys(API_ADMIN_KEY, API_ADMIN_KEYS)
+    if admin_keys:
+        return admin_keys
+    if isinstance(API_KEY, str) and API_KEY.strip():
+        return [API_KEY.strip()]
+    return []
+
+
+def _coerce_positive_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        value = int(value)
+    try:
+        out = int(value)
+    except Exception:
+        try:
+            out = int(str(value).strip())
+        except Exception:
+            return None
+    return out if out > 0 else None
+
+
+def _api_key_store_ready() -> bool:
+    if not API_KEY_STORE_ENABLED:
+        return False
+    if RESULT_BACKEND == "table":
+        return bool(table_client)
+    if RESULT_BACKEND == "redis":
+        return bool(redis_client)
+    return False
+
+
+def _require_api_key_store_ready() -> None:
+    if not API_KEY_STORE_ENABLED:
+        raise HTTPException(status_code=501, detail="API key store is disabled")
+    if RESULT_BACKEND == "table" and not table_client:
+        raise HTTPException(status_code=503, detail="API key store not initialized")
+    if RESULT_BACKEND == "redis" and not redis_client:
+        raise HTTPException(status_code=503, detail="API key store not initialized")
+
+
+async def _lookup_api_key_record(api_key_hash_value: str) -> Optional[dict]:
+    if not _api_key_store_ready():
+        return None
+    try:
+        return await get_api_key_record_async(
+            backend=RESULT_BACKEND,
+            cfg=_API_KEY_STORE_CFG,
+            key_hash=api_key_hash_value,
+            table_client=table_client,
+            redis_client=redis_client,
+        )
+    except Exception as e:
+        logger.warning("API key lookup failed: %s", e)
+        return None
+
+
+def _is_match(key: str, configured: list[str]) -> bool:
+    return any(secrets.compare_digest(key, k) for k in configured)
+
+
+def _limit_for_scope(
+    *,
+    scope: str,
+    default_limit: int,
+    key_record: Optional[dict],
+) -> int:
+    if not isinstance(key_record, dict):
+        return default_limit
+    field = "read_rpm" if scope == "read" else "write_rpm"
+    override = _coerce_positive_int(key_record.get(field))
+    if override is None:
+        return default_limit
+    return override
+
+
+async def _authenticate_api_key(
+    request: Request,
+    api_key: Optional[str],
+    *,
+    require_admin: bool = False,
+) -> Optional[str]:
+    if not REQUIRE_API_KEY:
+        return None
+
+    configured_keys = _configured_keys(API_KEY, API_KEYS)
+    store_ready = _api_key_store_ready()
+    if not configured_keys and not store_ready:
+        raise HTTPException(status_code=500, detail="No API keys are configured")
+
+    if not api_key:
+        raise HTTPException(status_code=401, detail="Missing API key")
+
+    api_key_hash_value = hash_api_key(api_key)
+    key_record = await _lookup_api_key_record(api_key_hash_value)
+    store_active = api_key_is_active(key_record)
+    static_allowed = _is_match(api_key, configured_keys)
+
+    if not static_allowed and not store_active:
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    if require_admin:
+        is_admin = _is_match(api_key, _default_admin_keys())
+        if not is_admin and store_active and isinstance(key_record, dict):
+            is_admin = bool(key_record.get("is_admin"))
+        if not is_admin:
+            raise HTTPException(status_code=403, detail="Admin API key required")
+
+    scope, default_limit = _rate_limit_scope_for_request(request)
+    limit_rpm = _limit_for_scope(
+        scope=scope,
+        default_limit=default_limit,
+        key_record=key_record if store_active else None,
+    )
+    await _enforce_rate_limit(api_key, scope=scope, limit_rpm=limit_rpm)
+
+    if store_active:
+        try:
+            await touch_api_key_last_used_async(
+                backend=RESULT_BACKEND,
+                cfg=_API_KEY_STORE_CFG,
+                key_hash=api_key_hash_value,
+                table_client=table_client,
+                redis_client=redis_client,
+            )
+        except Exception:
+            pass
+
+    return api_key_hash_value
+
+
 async def require_api_key(
     request: Request, api_key: Optional[str] = Security(api_key_scheme)
 ):
-    if not REQUIRE_API_KEY:
-        return None
-    configured: list[str] = []
-    if isinstance(API_KEY, str) and API_KEY.strip():
-        configured.append(API_KEY.strip())
-    if isinstance(API_KEYS, str) and API_KEYS.strip():
-        configured.extend([p.strip() for p in API_KEYS.split(",") if p.strip()])
-    if not configured:
-        raise HTTPException(status_code=500, detail="No API keys are configured")
-    if not api_key:
-        raise HTTPException(status_code=401, detail="Missing API key")
-    if not any(secrets.compare_digest(api_key, k) for k in configured):
-        raise HTTPException(status_code=403, detail="Invalid API key")
-    scope, limit_rpm = _rate_limit_scope_for_request(request)
-    await _enforce_rate_limit(api_key, scope=scope, limit_rpm=limit_rpm)
-    return hash_api_key(api_key)
+    return await _authenticate_api_key(request, api_key, require_admin=False)
+
+
+async def require_admin_api_key(
+    request: Request, api_key: Optional[str] = Security(api_key_scheme)
+):
+    return await _authenticate_api_key(request, api_key, require_admin=True)
 
 
 async def _upsert_result(
@@ -484,6 +666,29 @@ def _normalize_visibility(value: Optional[str]) -> str:
     if v in ("shared", "private"):
         return v
     return _DEFAULT_URL_VISIBILITY
+
+
+def _mint_api_key_plaintext() -> str:
+    token = secrets.token_urlsafe(_API_KEY_MINT_BYTES)
+    prefix = (_API_KEY_MINT_PREFIX or "").strip().strip("_-")
+    if not prefix:
+        return token
+    return f"{prefix}_{token}"
+
+
+def _expires_at_from_ttl_days(ttl_days: Optional[int]) -> str:
+    days = _coerce_positive_int(ttl_days)
+    if days is None:
+        return ""
+    expiry = datetime.now(timezone.utc) + timedelta(days=days)
+    return expiry.isoformat()
+
+
+def _is_sha256_hex(value: str) -> bool:
+    raw = str(value or "").strip().lower()
+    if len(raw) != 64:
+        return False
+    return all(c in "0123456789abcdef" for c in raw)
 
 
 def _parse_details(raw) -> Optional[dict]:
@@ -702,6 +907,10 @@ API_TAGS_METADATA = [
     {
         "name": "Health",
         "description": "API health check and status monitoring.",
+    },
+    {
+        "name": "Admin",
+        "description": "Admin endpoints for API key lifecycle management.",
     },
 ]
 
@@ -989,6 +1198,167 @@ async def file_scanner():
         .replace("__API_KEY_HEADER_JSON__", api_key_header_json)
         .replace("__FILE_SCAN_MAX_BYTES__", str(int(FILE_SCAN_MAX_BYTES or 0)))
     )
+
+
+@app.get("/admin/api-keys", tags=["Admin"], summary="List API keys")
+async def admin_list_api_keys(
+    limit: int = Query(100, ge=1, le=1000),
+    include_inactive: bool = Query(
+        False, description="Include revoked or expired keys"
+    ),
+    _: Optional[str] = Security(require_admin_api_key),
+):
+    _require_api_key_store_ready()
+    prefetch_limit = min(2000, max(int(limit or 0), int(limit or 0) * 3))
+    records = await list_api_key_records_async(
+        backend=RESULT_BACKEND,
+        cfg=_API_KEY_STORE_CFG,
+        limit=prefetch_limit,
+        table_client=table_client,
+        redis_client=redis_client,
+    )
+    keys: list[dict] = []
+    for rec in records:
+        active = api_key_is_active(rec)
+        if not include_inactive and not active:
+            continue
+        keys.append(
+            {
+                "key_hash": rec.get("key_hash"),
+                "key_id": rec.get("key_id"),
+                "label": rec.get("label") or None,
+                "created_at": rec.get("created_at"),
+                "created_by_hash": rec.get("created_by_hash") or None,
+                "last_used_at": rec.get("last_used_at") or None,
+                "expires_at": rec.get("expires_at") or None,
+                "read_rpm": rec.get("read_rpm"),
+                "write_rpm": rec.get("write_rpm"),
+                "is_admin": bool(rec.get("is_admin")),
+                "revoked": bool(rec.get("revoked")),
+                "revoked_at": rec.get("revoked_at") or None,
+                "active": active,
+            }
+        )
+        if len(keys) >= int(limit or 0):
+            break
+    return {
+        "keys": keys,
+        "count": len(keys),
+        "include_inactive": bool(include_inactive),
+    }
+
+
+@app.post("/admin/api-keys", tags=["Admin"], summary="Mint an API key")
+async def admin_mint_api_key(
+    req: ApiKeyMintRequest,
+    admin_api_key_hash: Optional[str] = Security(require_admin_api_key),
+):
+    _require_api_key_store_ready()
+
+    plaintext_key = ""
+    key_hash = ""
+    for _ in range(10):
+        candidate = _mint_api_key_plaintext()
+        candidate_hash = hash_api_key(candidate)
+        existing = await get_api_key_record_async(
+            backend=RESULT_BACKEND,
+            cfg=_API_KEY_STORE_CFG,
+            key_hash=candidate_hash,
+            table_client=table_client,
+            redis_client=redis_client,
+        )
+        if not existing:
+            plaintext_key = candidate
+            key_hash = candidate_hash
+            break
+    if not plaintext_key or not key_hash:
+        raise HTTPException(status_code=500, detail="Unable to mint a unique API key")
+
+    now = datetime.now(timezone.utc).isoformat()
+    record = build_api_key_record(
+        cfg=_API_KEY_STORE_CFG,
+        key_hash=key_hash,
+        label=(req.label or "").strip(),
+        created_at=now,
+        created_by_hash=admin_api_key_hash or "",
+        read_rpm=req.read_rpm,
+        write_rpm=req.write_rpm,
+        expires_at=_expires_at_from_ttl_days(req.ttl_days),
+        is_admin=bool(req.is_admin),
+    )
+    ok = await upsert_api_key_record_async(
+        backend=RESULT_BACKEND,
+        cfg=_API_KEY_STORE_CFG,
+        record=record,
+        table_client=table_client,
+        redis_client=redis_client,
+    )
+    if not ok:
+        raise HTTPException(status_code=503, detail="Failed to persist API key")
+
+    return {
+        "api_key": plaintext_key,
+        "key_hash": key_hash,
+        "key_id": record.get("key_id"),
+        "label": record.get("label") or None,
+        "created_at": record.get("created_at"),
+        "expires_at": record.get("expires_at") or None,
+        "read_rpm": _coerce_positive_int(record.get("read_rpm")),
+        "write_rpm": _coerce_positive_int(record.get("write_rpm")),
+        "is_admin": bool(record.get("is_admin")),
+    }
+
+
+@app.post(
+    "/admin/api-keys/{key_hash}/revoke",
+    tags=["Admin"],
+    summary="Revoke an API key",
+)
+async def admin_revoke_api_key(
+    key_hash: str,
+    _: Optional[str] = Security(require_admin_api_key),
+):
+    _require_api_key_store_ready()
+    key_hash_norm = str(key_hash or "").strip().lower()
+    if not _is_sha256_hex(key_hash_norm):
+        raise HTTPException(
+            status_code=400, detail="key_hash must be a 64-character sha256 hex digest"
+        )
+
+    existing = await get_api_key_record_async(
+        backend=RESULT_BACKEND,
+        cfg=_API_KEY_STORE_CFG,
+        key_hash=key_hash_norm,
+        table_client=table_client,
+        redis_client=redis_client,
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="API key not found")
+
+    if bool(existing.get("revoked")):
+        return {
+            "key_hash": key_hash_norm,
+            "revoked": True,
+            "revoked_at": existing.get("revoked_at") or None,
+            "active": False,
+        }
+
+    ok = await revoke_api_key_async(
+        backend=RESULT_BACKEND,
+        cfg=_API_KEY_STORE_CFG,
+        key_hash=key_hash_norm,
+        table_client=table_client,
+        redis_client=redis_client,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to revoke API key")
+
+    return {
+        "key_hash": key_hash_norm,
+        "revoked": True,
+        "revoked_at": datetime.now(timezone.utc).isoformat(),
+        "active": False,
+    }
 
 
 @app.post("/pubsub/negotiate", tags=["Realtime"], summary="Negotiate Web PubSub access")
