@@ -475,10 +475,10 @@ bash scripts/keda_scale_test.sh --resource-group <rg> --prefix <prefix>
 
 ### API key (required)
 
-The **Deploy** workflow generates a (shared) API key and stores it in **Key Vault** as the secret `ApiKey`.
+The **Deploy** workflow generates a bootstrap API key and stores it in **Key Vault** as the secret `ApiKey`.
 
-- The deploy workflow uses the key for its smoke/e2e tests, but **does not print it** to GitHub Actions logs.
-- If you’re consuming someone else’s deployment, you’ll need the owner to share an API key (there is no self-service signup yet).
+- The deploy workflow uses this key for smoke/e2e tests, but **does not print it** to GitHub Actions logs.
+- By default, this bootstrap key is also an admin key for API key management endpoints.
 
 Retrieve it with Azure CLI (example):
 
@@ -507,6 +507,29 @@ Then wait ~30–60 seconds for RBAC propagation and retry.
 Use it on requests:
 
 `-H "X-API-Key: $API_KEY"`
+
+#### Mint/revoke per-user API keys (admin)
+
+The API supports persisted key management in the configured result backend (Table or Redis):
+
+- `POST /admin/api-keys` mints a new API key (returned once in plaintext), with optional per-key `read_rpm`/`write_rpm` and TTL.
+- `GET /admin/api-keys` lists stored keys and status.
+- `POST /admin/api-keys/{key_hash}/revoke` revokes a key.
+
+Admin auth:
+
+- `API_ADMIN_KEY` / `API_ADMIN_KEYS` can define explicit admin keys.
+- If unset, `API_KEY` is treated as admin by default.
+- Stored keys can also be admin keys when minted with `"is_admin": true`.
+
+Example (mint a key):
+
+```bash
+curl -sS -X POST "${API_URL}/admin/api-keys" \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: ${API_KEY}" \
+  -d '{"label":"analyst-a","read_rpm":600,"write_rpm":120}'
+```
 
 #### Rotate the API key (optional)
 
@@ -574,8 +597,9 @@ The API stores a lightweight job index keyed by a **hash of the caller’s API k
 
 - `GET /jobs` lists only jobs created with *your* API key.
 - `GET /scan/{job_id}` and `GET /scan/{job_id}/screenshot` are owner-protected (a different API key won’t be able to fetch another user’s request IDs).
+- Per-key rate limits can be attached when minting keys via `POST /admin/api-keys`.
 
-To enable multiple API keys (simple multi-user), set `ACA_API_KEYS` (comma-separated) in addition to `ACA_API_KEY`.
+You can still use static env keys (`ACA_API_KEY`, `ACA_API_KEYS`) as bootstrap/fallback keys.
 
 ## 7) Running it
 
@@ -664,6 +688,9 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `POST /pubsub/negotiate-user` (requires API key; dashboard live updates)
 - `POST /pubsub/negotiate` (requires API key; run-scoped negotiation; mostly for direct/testing use)
 - `POST /file/scan` (requires API key; ClamAV scan)
+- `GET /admin/api-keys` (admin API key; list stored keys)
+- `POST /admin/api-keys` (admin API key; mint key + optional quotas/TTL)
+- `POST /admin/api-keys/{key_hash}/revoke` (admin API key; revoke key)
 
 ### Scan status lifecycle
 
@@ -687,6 +714,9 @@ The included helper script (`scripts/aca_api.py`) wraps API calls and handles JS
 ./scripts/aca_api.py jobs --limit 50
 ./scripts/aca_api.py scan-file ./readme.md
 ./scripts/aca_api.py screenshot <job_id> --out-dir ./screenshots/
+./scripts/aca_api.py admin-mint-key --label analyst-a --read-rpm 600 --write-rpm 120
+./scripts/aca_api.py admin-list-keys --include-inactive
+./scripts/aca_api.py admin-revoke-key <key_hash>
 ./scripts/aca_api.py help               # show all commands + options
 ./scripts/aca_api.py help screenshot    # show options for one command
 
@@ -949,6 +979,8 @@ To restart later, just re-run the **Deploy** workflow.
 - `POST /pubsub/negotiate-user` -> creates a user-scoped Web PubSub client token for the dashboard (`apikey:<api_key_hash>` group).
 
 - `POST /file/scan` -> requires `X-API-Key`, scans an uploaded file or pasted payload with ClamAV, and returns an immediate verdict (UI at `/file`).
+
+- `GET/POST /admin/api-keys*` -> admin-only API key lifecycle management (mint/list/revoke) with persisted key hashes and optional per-key quotas.
     
 - `GET /healthz` -> basic health.
     
@@ -966,7 +998,7 @@ To restart later, just re-run the **Deploy** workflow.
 
 ## 14) Extending this project (future work)
 
-- **Per-user API keys**: store *hashed* keys in Table Storage, add admin endpoints to mint/revoke keys, and attach per-key quotas.
+- **Key governance hardening**: signed key-issuance events, approval workflows, and periodic key-usage anomaly detection.
 - **Deepen scanning**: add more external reputation sources (Safe Browsing/VirusTotal), enrich redirect analysis, and add more HTML/JS heuristics.
 - **Async file scanning pipeline**: move `/file/scan` into a queued workflow for larger inputs (store payloads in Blob/Azure Files) and run ClamAV/YARA in a dedicated worker.
 - **Front the API**: add API Management / Front Door + WAF, request validation, and centralized auth.
@@ -983,7 +1015,7 @@ To restart later, just re-run the **Deploy** workflow.
 Open the Deploy workflow logs → “End-to-end scan test” prints `job_id=...`. Query it with `GET /scan/{job_id}` (or use the web UI at `/`).
 
 **How do I get an API key?**  
-If you deployed your own instance, read Key Vault secret `ApiKey`. Otherwise, the deployment owner must share a key (no public signup yet).
+If you deployed your own instance, read Key Vault secret `ApiKey` (bootstrap admin key), then mint user keys with `POST /admin/api-keys`. Otherwise, ask the deployment owner for a key.
 
 **How do I tail logs?**  
 `az containerapp logs show -g <rg> -n <app> --type console --follow`
