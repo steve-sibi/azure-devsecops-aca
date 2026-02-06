@@ -324,8 +324,7 @@ azure-devsecops-aca/
 ├─ .github/
 │  ├─ workflows/
 │  │  ├─ ci.yml              # lint/test + security scans
-│  │  ├─ deploy.yml          # infra bootstrap + build/push + deploy
-│  │  ├─ infra-only.yml      # infra bootstrap + terraform apply (no image rollout)
+│  │  ├─ deploy.yml          # infra bootstrap + build/push + deploy (infra-only mode supported)
 │  │  ├─ app-deploy.yml      # fast container rollout to existing ACA apps
 │  │  ├─ destroy.yml         # terraform destroy (+ RG delete)
 │  │  └─ keda-scale-test.yml # validate KEDA scale-out
@@ -414,10 +413,11 @@ azure-devsecops-aca/
 
 > Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI; Deploy is manual (`workflow_dispatch`).
 
-### Infra Only (`.github/workflows/infra-only.yml`)
+### Infra Only (Deploy `mode=infra-only`)
 
 Manual workflow for infrastructure updates without rolling new app images:
 
+- Use `.github/workflows/deploy.yml` with `mode=infra-only`.
 - Bootstraps foundation resources (RG/KV/ACR/LA/TF state).
 - Runs Terraform apply for infra changes.
 - Preserves existing apps when present (`create_apps` auto-detection in bootstrap script).
@@ -444,6 +444,7 @@ Configuration (recommended):
 - Set GitHub Actions **Variables**:
   - `ACA_PREFIX` (e.g. `devsecopsaca`)
   - `ACA_RESOURCE_GROUP` (e.g. `rg-devsecops-aca`)
+  - `ACA_DEPLOY_ENABLED` (`true` to allow CI to build/push + deploy; CI skips deploy when false)
   - `RUN_PR_SECURITY_SCANS` (optional, `true` to enable Checkov/Trivy on PRs)
 - Secrets remain the same as Deploy: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
 

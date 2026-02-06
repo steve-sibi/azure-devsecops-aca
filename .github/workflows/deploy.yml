@@ -2,6 +2,10 @@ name: Deploy
 on:
   workflow_dispatch:
     inputs:
+      mode:
+        description: Deployment mode (full or infra-only)
+        required: true
+        default: full
       region:
         description: Azure region (e.g. eastus)
         required: true
@@ -37,8 +41,10 @@ concurrency:
   # If an App Deploy (CD) run is already in progress for this environment, cancel it so infra deploy can proceed.
   cancel-in-progress: true
 
-# NOTE: Keep inputs in sync with destroy.yml to avoid configuration drift
+# NOTE: Keep shared inputs in sync with destroy.yml to avoid configuration drift.
+# (mode is deploy-only)
 env:
+  MODE: ${{ inputs.mode }}
   REGION: ${{ inputs.region }}
   PREFIX: ${{ inputs.prefix }}
   RG: ${{ inputs.resource_group }}
@@ -90,6 +96,7 @@ jobs:
 
   build-and-push:
     needs: [infra-bootstrap]
+    if: ${{ env.MODE != 'infra-only' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: { id-token: write, contents: read }
@@ -165,6 +172,7 @@ jobs:
 
   create-apps:
     needs: [build-and-push]
+    if: ${{ env.MODE != 'infra-only' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: { id-token: write, contents: read }
