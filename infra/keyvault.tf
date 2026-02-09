@@ -159,3 +159,15 @@ resource "azurerm_role_assignment" "kv_secrets_uami" {
     command = "sleep 30"
   }
 }
+
+# RBAC: grant additional human/automation principals read access to KV secrets.
+resource "azurerm_role_assignment" "kv_secrets_readers" {
+  for_each             = var.kv_secret_reader_object_ids
+  scope                = data.azurerm_key_vault.kv.id
+  role_definition_name = "Key Vault Secrets User"
+  principal_id         = each.value
+
+  provisioner "local-exec" {
+    command = "sleep 30"
+  }
+}
