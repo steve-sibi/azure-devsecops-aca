@@ -411,6 +411,8 @@ azure-devsecops-aca/
     - `GET /healthz`
     - end-to-end scan: `POST /scan` then poll `GET /scan/{job_id}` until `completed`
 
+- Optional workflow input: `kv_secret_reader_object_ids_json` (JSON array). If set, it overrides repo-level `ACA_KV_SECRET_READER_OBJECT_IDS_JSON` for that run.
+
 > Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI; Deploy is manual (`workflow_dispatch`).
 
 ### Infra Only (Deploy `mode=infra-only`)
@@ -422,6 +424,7 @@ Manual workflow for infrastructure updates without rolling new app images:
 - Runs Terraform apply for infra changes.
 - Preserves existing apps when present (`create_apps` auto-detection in bootstrap script).
 - Useful for changes like networking, queues, storage, Key Vault wiring, or Web PubSub resources/secrets.
+- Optional: configure `ACA_KV_SECRET_READER_OBJECT_IDS_JSON` (repo variable or secret) as a JSON array (example: `["<entra-object-id>"]`) so deploy-time Terraform applies keep Key Vault reader assignments consistent.
 
 ### App Deploy (CD) (`.github/workflows/app-deploy.yml`)
 
@@ -445,6 +448,7 @@ Configuration (recommended):
   - `ACA_PREFIX` (e.g. `devsecopsaca`)
   - `ACA_RESOURCE_GROUP` (e.g. `rg-devsecops-aca`)
   - `ACA_DEPLOY_ENABLED` (`true` to allow CI to build/push + deploy; CI skips deploy when false)
+  - `ACA_KV_SECRET_READER_OBJECT_IDS_JSON` (optional; JSON array of Entra object IDs for Key Vault secret readers used by the Deploy workflow)
   - `RUN_PR_SECURITY_SCANS` (optional, `true` to enable Checkov/Trivy on PRs)
 - Secrets remain the same as Deploy: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
 
@@ -488,7 +492,9 @@ KV_NAME="<prefix>-kv"
 API_KEY="$(az keyvault secret show --vault-name "$KV_NAME" --name ApiKey --query value -o tsv)"
 ```
 
-If you get `ForbiddenByRbac`, your identity doesn’t have Key Vault RBAC to read secrets. Grant yourself the **Key Vault Secrets User** role on the vault (example):
+If you get `ForbiddenByRbac`, your identity doesn’t have Key Vault RBAC to read secrets.  
+For a persistent fix, manage this in Terraform with `kv_secret_reader_object_ids` via the Deploy workflow variable `ACA_KV_SECRET_READER_OBJECT_IDS_JSON`.  
+For a one-off fix, grant yourself the **Key Vault Secrets User** role on the vault (example):
 
 ```bash
 RG="<resource-group>"
@@ -924,6 +930,12 @@ terraform plan \
   -var="queue_name=tasks" \
   -var="create_apps=true" \
   -var="image_tag=<some-tag>"
+```
+
+To persist Key Vault read access for specific identities in CI/CD, set GitHub Actions variable `ACA_KV_SECRET_READER_OBJECT_IDS_JSON` to a JSON array, for example:
+
+```json
+["your-object-id-guid"]
 ```
 
 > If you see a state **lease** error, break the stale lease:
