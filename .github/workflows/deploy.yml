@@ -52,7 +52,7 @@ env:
   TFSTATE_CONTAINER: ${{ inputs.tfstate_container }}
   TFSTATE_KEY: ${{ inputs.tfstate_key }}
   QUEUE_NAME: ${{ inputs.queue_name }}
-  KV_SECRET_READER_OBJECT_IDS_JSON: ${{ vars.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || secrets.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || '' }}
+  KV_SECRET_READER_OBJECT_IDS_JSON: ${{ vars.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || '' }}
 
 jobs:
   infra-bootstrap:
