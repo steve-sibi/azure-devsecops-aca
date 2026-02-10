@@ -40,3 +40,5 @@ skip-check:
   - CKV2_AZURE_41
   # BUG? Table logging is configured via azurerm_monitor_diagnostic_setting. See infra/core.tf.
   - CKV2_AZURE_20
+  # Requires Upgrading PubSub tier. Avoiding for now since this is not a prod project.
+  - CKV_AZURE_175
