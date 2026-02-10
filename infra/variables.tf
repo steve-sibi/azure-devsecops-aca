@@ -24,8 +24,8 @@ variable "terraform_principal_object_id" {
 
 variable "kv_secret_reader_object_ids" {
   type        = set(string)
-  default     = ["f42162d9-476e-45ee-bb9d-7fbec2e0d9c4"]
-  description = "Additional Entra object IDs (users/service principals/managed identities) that should be granted Key Vault Secrets User on the vault."
+  default     = []
+  description = "Additional Entra object IDs (users/service principals/managed identities) that should be granted Key Vault Secrets User on the vault. Keep empty by default and set via Deploy workflow variables/inputs."
 }
 
 variable "create_apps" {
