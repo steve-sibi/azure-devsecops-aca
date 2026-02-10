@@ -75,6 +75,12 @@ if [[ -n "${AZURE_CLIENT_ID:-}" ]]; then
   export TF_VAR_terraform_principal_object_id="${SP_OBJ_ID}"
 fi
 
+KV_SECRET_READERS_JSON="${KV_SECRET_READER_OBJECT_IDS_JSON:-${ACA_KV_SECRET_READER_OBJECT_IDS_JSON:-}}"
+if [[ -n "${KV_SECRET_READERS_JSON}" ]]; then
+  export TF_VAR_kv_secret_reader_object_ids="${KV_SECRET_READERS_JSON}"
+  echo "[deploy] Using kv_secret_reader_object_ids from workflow configuration."
+fi
+
 terraform -chdir="${INFRA_DIR}" init \
   -backend-config="resource_group_name=${RG}" \
   -backend-config="storage_account_name=${TFSTATE_SA}" \

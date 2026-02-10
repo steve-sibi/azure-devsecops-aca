@@ -125,6 +125,12 @@ export ARM_SUBSCRIPTION_ID="${SUB_ID}"
 export TF_VAR_subscription_id="${SUB_ID}"
 export TF_VAR_terraform_principal_object_id="${SP_OBJ_ID}"
 
+KV_SECRET_READERS_JSON="${KV_SECRET_READER_OBJECT_IDS_JSON:-${ACA_KV_SECRET_READER_OBJECT_IDS_JSON:-}}"
+if [[ -n "${KV_SECRET_READERS_JSON}" ]]; then
+  export TF_VAR_kv_secret_reader_object_ids="${KV_SECRET_READERS_JSON}"
+  echo "[deploy] Using kv_secret_reader_object_ids from workflow configuration."
+fi
+
 az role assignment list --assignee-object-id "${SP_OBJ_ID}" --scope "${SCOPE}" \
   --role "Storage Blob Data Contributor" --query "[0].id" -o tsv | grep . >/dev/null || \
   az role assignment create \
