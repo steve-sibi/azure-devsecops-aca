@@ -34,10 +34,6 @@ on:
         description: Service Bus queue name
         required: true
         default: tasks
-      kv_secret_reader_object_ids_json:
-        description: Optional JSON array of Entra object IDs to grant Key Vault Secrets User (e.g. ["<oid1>","<oid2>"]).
-        required: false
-        default: ""
 
 concurrency:
   # Prevent deploy/destroy/keda runs from overlapping for the same environment
@@ -56,7 +52,7 @@ env:
   TFSTATE_CONTAINER: ${{ inputs.tfstate_container }}
   TFSTATE_KEY: ${{ inputs.tfstate_key }}
   QUEUE_NAME: ${{ inputs.queue_name }}
-  KV_SECRET_READER_OBJECT_IDS_JSON: ${{ inputs.kv_secret_reader_object_ids_json || vars.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || secrets.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || '' }}
+  KV_SECRET_READER_OBJECT_IDS_JSON: ${{ vars.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || secrets.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || '' }}
 
 jobs:
   infra-bootstrap:

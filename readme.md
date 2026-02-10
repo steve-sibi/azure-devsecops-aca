@@ -411,8 +411,6 @@ azure-devsecops-aca/
     - `GET /healthz`
     - end-to-end scan: `POST /scan` then poll `GET /scan/{job_id}` until `completed`
 
-- Optional workflow input: `kv_secret_reader_object_ids_json` (JSON array). If set, it overrides repo-level `ACA_KV_SECRET_READER_OBJECT_IDS_JSON` for that run.
-
 > Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI; Deploy is manual (`workflow_dispatch`).
 
 ### Infra Only (Deploy `mode=infra-only`)
