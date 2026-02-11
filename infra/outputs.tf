@@ -22,3 +22,13 @@ output "sb_scan_queue_id" {
   value       = azurerm_servicebus_queue.q_scan.id
   description = "Service Bus scan queue resource ID"
 }
+
+output "monitor_action_group_id" {
+  value       = try(azurerm_monitor_action_group.observability[0].id, null)
+  description = "Observability Action Group resource ID (if alerts enabled)."
+}
+
+output "monitor_workbook_id" {
+  value       = try(azurerm_application_insights_workbook.observability[0].id, null)
+  description = "Observability workbook resource ID (if enabled)."
+}

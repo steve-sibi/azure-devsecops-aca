@@ -5,6 +5,9 @@ locals {
     { name = "MAX_DOWNLOAD_BYTES", value = tostring(1024 * 1024) }, # 1MB
     { name = "MAX_REDIRECTS", value = "5" },
     { name = "REQUEST_TIMEOUT", value = "10" },
+    { name = "OTEL_ENABLED", value = tostring(var.otel_enabled) },
+    { name = "OTEL_TRACES_SAMPLER_RATIO", value = tostring(var.otel_traces_sampler_ratio) },
+    { name = "OTEL_SERVICE_NAMESPACE", value = var.otel_service_namespace },
     { name = "WEB_MAX_HEADERS", value = "40" },
     { name = "WEB_MAX_HEADER_VALUE_LEN", value = "600" },
     { name = "URL_DEDUPE_TTL_SECONDS", value = tostring(var.url_dedupe_ttl_seconds) },
