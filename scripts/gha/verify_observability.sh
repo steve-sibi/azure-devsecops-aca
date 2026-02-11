@@ -68,16 +68,19 @@ log_count=0
 trace_count=0
 
 for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
-  row="$(az monitor log-analytics query \
+  log_count="$(az monitor log-analytics query \
     --workspace "${workspace_id}" \
     --analytics-query "${query_counts}" \
-    --query "tables[0].rows[0]" \
-    -o tsv)"
+    --query "tables[0].rows[0][0]" \
+    -o tsv 2>/dev/null || echo "0")"
+  trace_count="$(az monitor log-analytics query \
+    --workspace "${workspace_id}" \
+    --analytics-query "${query_counts}" \
+    --query "tables[0].rows[0][1]" \
+    -o tsv 2>/dev/null || echo "0")"
 
-  log_count="$(awk '{print $1}' <<<"${row:-0}")"
-  trace_count="$(awk '{print $2}' <<<"${row:-0 0}")"
-  [[ -z "${log_count}" ]] && log_count=0
-  [[ -z "${trace_count}" ]] && trace_count=0
+  [[ "${log_count}" =~ ^[0-9]+$ ]] || log_count=0
+  [[ "${trace_count}" =~ ^[0-9]+$ ]] || trace_count=0
 
   echo "[observability] attempt=${attempt}/${MAX_ATTEMPTS} job_id=${JOB_ID} run_id=${RUN_ID} log_count=${log_count} trace_count=${trace_count}"
 

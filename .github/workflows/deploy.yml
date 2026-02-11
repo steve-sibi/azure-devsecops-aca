@@ -212,8 +212,11 @@ jobs:
           # Run deploy script and capture outputs for summary
           bash scripts/gha/deploy_create_apps_and_test.sh | tee deploy_output.log
           
-          # Extract key values from Terraform and Azure CLI for summary
-          API_URL="$(terraform -chdir=infra output -raw fastapi_url 2>/dev/null || echo "")"
+          # Extract key values from Terraform outputs for summary.
+          # Use JSON output to handle null values safely (without -raw failures).
+          TF_OUTPUT_JSON="$(terraform -chdir=infra output -json 2>/dev/null || true)"
+
+          API_URL="$(python3 -c 'import json,sys; raw=sys.stdin.read().strip(); data=json.loads(raw) if raw else {}; entry=(data.get("fastapi_url") or {}) if isinstance(data,dict) else {}; value=entry.get("value") if isinstance(entry,dict) else ""; print(value if isinstance(value,str) else "")' <<<"${TF_OUTPUT_JSON}" 2>/dev/null || true)"
           echo "API_URL=${API_URL}" >> "$GITHUB_ENV"
           
           # Get replica counts
@@ -236,10 +239,8 @@ jobs:
           echo "SCAN_QUEUE_DEAD=${SCAN_QUEUE_DEAD}" >> "$GITHUB_ENV"
 
           # Monitoring resource outputs (if configured)
-          MONITOR_ACTION_GROUP_ID="$(terraform -chdir=infra output -raw monitor_action_group_id 2>/dev/null || echo "")"
-          MONITOR_WORKBOOK_ID="$(terraform -chdir=infra output -raw monitor_workbook_id 2>/dev/null || echo "")"
-          [ "${MONITOR_ACTION_GROUP_ID}" = "null" ] && MONITOR_ACTION_GROUP_ID=""
-          [ "${MONITOR_WORKBOOK_ID}" = "null" ] && MONITOR_WORKBOOK_ID=""
+          MONITOR_ACTION_GROUP_ID="$(python3 -c 'import json,sys; raw=sys.stdin.read().strip(); data=json.loads(raw) if raw else {}; entry=(data.get("monitor_action_group_id") or {}) if isinstance(data,dict) else {}; value=entry.get("value") if isinstance(entry,dict) else ""; print(value if isinstance(value,str) else "")' <<<"${TF_OUTPUT_JSON}" 2>/dev/null || true)"
+          MONITOR_WORKBOOK_ID="$(python3 -c 'import json,sys; raw=sys.stdin.read().strip(); data=json.loads(raw) if raw else {}; entry=(data.get("monitor_workbook_id") or {}) if isinstance(data,dict) else {}; value=entry.get("value") if isinstance(entry,dict) else ""; print(value if isinstance(value,str) else "")' <<<"${TF_OUTPUT_JSON}" 2>/dev/null || true)"
           echo "MONITOR_ACTION_GROUP_ID=${MONITOR_ACTION_GROUP_ID}" >> "$GITHUB_ENV"
           echo "MONITOR_WORKBOOK_ID=${MONITOR_WORKBOOK_ID}" >> "$GITHUB_ENV"
 

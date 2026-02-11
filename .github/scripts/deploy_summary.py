@@ -95,6 +95,21 @@ def get_env(name: str, default: str = "") -> str:
     return os.environ.get(name, default)
 
 
+def sanitize_monitor_id(value: str) -> str:
+    """Normalize monitor resource ID env values for summary rendering."""
+    text = (value or "").strip()
+    if not text:
+        return ""
+    lower = text.lower()
+    if text.startswith("::error::"):
+        return ""
+    if "terraform exited with code" in lower:
+        return ""
+    if lower in {"null", "none"}:
+        return ""
+    return text
+
+
 def get_env_json(name: str) -> Any:
     """Parse environment variable as JSON."""
     raw = get_env(name, "{}")
@@ -249,8 +264,10 @@ def generate_create_apps_summary() -> str:
     e2e_job_id = get_env("E2E_JOB_ID", "")
     e2e_duration = get_env("E2E_DURATION_SECONDS", "")
     observability_status = get_env("OBSERVABILITY_STATUS", "unknown")
-    monitor_action_group_id = get_env("MONITOR_ACTION_GROUP_ID", "")
-    monitor_workbook_id = get_env("MONITOR_WORKBOOK_ID", "")
+    monitor_action_group_id = sanitize_monitor_id(
+        get_env("MONITOR_ACTION_GROUP_ID", "")
+    )
+    monitor_workbook_id = sanitize_monitor_id(get_env("MONITOR_WORKBOOK_ID", ""))
 
     # Queue depths (set by deploy script)
     tasks_queue_active = get_env("TASKS_QUEUE_ACTIVE", "--")
