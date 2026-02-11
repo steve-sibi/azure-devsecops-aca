@@ -46,13 +46,22 @@ if [[ -z "${workspace_id}" ]]; then
   exit 1
 fi
 
-query_counts="ContainerAppConsoleLogs_CL
+query_logs="ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
 | extend logData = parse_json(Log_s)
 | where tostring(logData.job_id) in~ ('${JOB_ID}', '${RUN_ID}')
    or tostring(logData.request_id) in~ ('${JOB_ID}', '${RUN_ID}')
    or tostring(logData.run_id) in~ ('${JOB_ID}', '${RUN_ID}')
-| summarize log_count=count(), trace_count=countif(isnotempty(tostring(logData.trace_id)))"
+| summarize count()"
+
+query_trace="ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
+| extend logData = parse_json(Log_s)
+| where tostring(logData.job_id) in~ ('${JOB_ID}', '${RUN_ID}')
+   or tostring(logData.request_id) in~ ('${JOB_ID}', '${RUN_ID}')
+   or tostring(logData.run_id) in~ ('${JOB_ID}', '${RUN_ID}')
+| where isnotempty(tostring(logData.trace_id))
+| summarize count()"
 
 query_sample="ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
@@ -67,20 +76,34 @@ query_sample="ContainerAppConsoleLogs_CL
 log_count=0
 trace_count=0
 
-for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
-  log_count="$(az monitor log-analytics query \
+run_count_query() {
+  local query="$1"
+  local out
+  local err_file
+  err_file="$(mktemp)"
+  if ! out="$(az monitor log-analytics query \
     --workspace "${workspace_id}" \
-    --analytics-query "${query_counts}" \
+    --analytics-query "${query}" \
     --query "tables[0].rows[0][0]" \
-    -o tsv 2>/dev/null || echo "0")"
-  trace_count="$(az monitor log-analytics query \
-    --workspace "${workspace_id}" \
-    --analytics-query "${query_counts}" \
-    --query "tables[0].rows[0][1]" \
-    -o tsv 2>/dev/null || echo "0")"
+    -o tsv 2>"${err_file}")"; then
+    local err_text
+    err_text="$(cat "${err_file}" 2>/dev/null || true)"
+    rm -f "${err_file}"
+    echo "[observability] Query execution failed: ${err_text}" >&2
+    echo "0"
+    return 1
+  fi
+  rm -f "${err_file}"
+  if [[ ! "${out}" =~ ^[0-9]+$ ]]; then
+    echo "0"
+  else
+    echo "${out}"
+  fi
+}
 
-  [[ "${log_count}" =~ ^[0-9]+$ ]] || log_count=0
-  [[ "${trace_count}" =~ ^[0-9]+$ ]] || trace_count=0
+for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
+  log_count="$(run_count_query "${query_logs}" || true)"
+  trace_count="$(run_count_query "${query_trace}" || true)"
 
   echo "[observability] attempt=${attempt}/${MAX_ATTEMPTS} job_id=${JOB_ID} run_id=${RUN_ID} log_count=${log_count} trace_count=${trace_count}"
 
@@ -92,6 +115,13 @@ for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
     sleep "${SLEEP_SECONDS}"
   fi
 done
+
+# One final immediate check to reduce race conditions around ingestion timing.
+if [[ "${log_count}" -eq 0 ]]; then
+  log_count="$(run_count_query "${query_logs}" || true)"
+  trace_count="$(run_count_query "${query_trace}" || true)"
+  echo "[observability] final-check job_id=${JOB_ID} run_id=${RUN_ID} log_count=${log_count} trace_count=${trace_count}"
+fi
 
 if [[ "${log_count}" -eq 0 ]]; then
   echo "[observability] No matching Log Analytics entries found for E2E IDs (job_id=${JOB_ID}, run_id=${RUN_ID})." >&2
