@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -27,8 +28,21 @@ from common.config import (
     init_table_client,
 )
 from common.errors import classify_exception
+from common.logging_config import (
+    clear_correlation_id,
+    get_logger,
+    log_with_context,
+    set_correlation_id,
+    setup_logging,
+)
 from common.message_consumer import ShutdownFlag, install_signal_handlers, run_consumer
 from common.scan_messages import validate_scan_artifact_v1, validate_scan_task_v1
+from common.telemetry import (
+    extract_trace_context,
+    get_tracer,
+    inject_trace_context,
+    setup_telemetry,
+)
 from common.webpubsub import WebPubSubConfig, WebPubSubPublisher
 from web_fetch import download_url
 
@@ -61,8 +75,8 @@ SERVICEBUS_SCAN_CONN = os.getenv("SERVICEBUS_SCAN_CONN")  # send to SCAN_QUEUE_N
 SCAN_QUEUE_NAME = os.getenv("SCAN_QUEUE_NAME", f"{QUEUE_NAME}-scan")
 REDIS_SCAN_QUEUE_KEY = os.getenv("REDIS_SCAN_QUEUE_KEY", f"queue:{SCAN_QUEUE_NAME}")
 
-from common.logging_config import get_logger
-
+# ---- Logging ----
+setup_logging(service_name="fetcher", level=logging.INFO)
 logger = get_logger(__name__)
 
 shutdown_flag = ShutdownFlag()
@@ -90,6 +104,12 @@ def _enqueue_scan(payload: dict, *, message_id: str):
     correlation_id = payload.get("correlation_id")
     if correlation_id is not None:
         app_props["correlation_id"] = str(correlation_id)
+    traceparent = payload.get("traceparent")
+    if traceparent is not None:
+        app_props["traceparent"] = str(traceparent)
+    tracestate = payload.get("tracestate")
+    if tracestate is not None:
+        app_props["tracestate"] = str(tracestate)
 
     if QUEUE_BACKEND == "redis":
         if not redis_client:
@@ -131,91 +151,139 @@ def process(task: dict):
     api_key_hash = task.get("api_key_hash")
     visibility = task.get("visibility")
     submitted_at = task.get("submitted_at")
+    traceparent = task.get("traceparent")
+    tracestate = task.get("tracestate")
 
     if not url or not job_id:
         raise ValueError("missing url/job_id in task")
 
-    engines = ["web"]
-    start = time.time()
-    if not result_persister or not result_persister.save_result(
-        job_id=job_id,
-        status="fetching",
-        details={"url": url, "stage": "fetching", "engines": engines},
-        correlation_id=correlation_id,
-        api_key_hash=api_key_hash,
-        visibility=visibility,
-        submitted_at=submitted_at,
-        url=url,
-        index_job=False,
-    ):
-        raise RuntimeError("failed to persist fetcher status")
+    if correlation_id:
+        set_correlation_id(str(correlation_id))
 
-    content, size_bytes, download = download_url(url)
-
-    artifact_dir = _ensure_artifact_dir()
-    artifact_name = f"{job_id}.bin"
-    artifact_path = artifact_dir / artifact_name
-    _atomic_write(artifact_path, content)
-
-    sha256 = hashlib.sha256(content).hexdigest()
-    duration_ms = int((time.time() - start) * 1000)
-
-    forward_payload = {
-        "job_id": job_id,
-        "correlation_id": correlation_id,
-        "api_key_hash": api_key_hash,
-        "url": url,
-        "type": task.get("type"),
-        "source": task.get("source"),
-        "visibility": task.get("visibility"),
-        "metadata": (
-            task.get("metadata") if isinstance(task.get("metadata"), dict) else {}
-        ),
-        "submitted_at": submitted_at,
-        "artifact_path": artifact_name,
-        "artifact_sha256": sha256,
-        "artifact_size_bytes": size_bytes,
-        "download": download,
-    }
-    forward_payload = validate_scan_artifact_v1(forward_payload)
-
-    if not result_persister or not result_persister.save_result(
-        job_id=job_id,
-        status="queued_scan",
-        details={
-            "url": url,
-            "stage": "queued_scan",
-            "artifact_path": artifact_name,
-            "artifact_sha256": sha256,
-            "artifact_size_bytes": size_bytes,
-            "download": download,
-        },
-        size_bytes=size_bytes,
-        correlation_id=correlation_id,
-        api_key_hash=api_key_hash,
-        visibility=visibility,
-        duration_ms=duration_ms,
-        submitted_at=submitted_at,
-        error=None,
-        url=url,
-        index_job=False,
-    ):
-        raise RuntimeError("failed to persist queued_scan status")
-
-    _enqueue_scan(forward_payload, message_id=str(job_id))
-
-    logging.info(
-        "[fetcher] job_id=%s queued scan size=%sB duration_ms=%s",
-        job_id,
-        size_bytes,
-        duration_ms,
+    parent_ctx = extract_trace_context(
+        traceparent=str(traceparent) if isinstance(traceparent, str) else None,
+        tracestate=str(tracestate) if isinstance(tracestate, str) else None,
     )
+
+    tracer = get_tracer("aca-fetcher")
+    span_cm = (
+        tracer.start_as_current_span("fetcher.process", context=parent_ctx)
+        if tracer
+        else nullcontext()
+    )
+
+    try:
+        with span_cm as span:
+            if span:
+                span.set_attribute("app.component", "fetcher")
+                span.set_attribute("app.job_id", str(job_id))
+                span.set_attribute("app.queue_name", str(QUEUE_NAME))
+                span.set_attribute("app.scan_queue_name", str(SCAN_QUEUE_NAME))
+                span.set_attribute("url.full", str(url))
+
+            engines = ["web"]
+            start = time.time()
+            log_with_context(
+                logger,
+                logging.INFO,
+                "Fetcher processing scan task",
+                job_id=job_id,
+                url=url,
+            )
+            if not result_persister or not result_persister.save_result(
+                job_id=job_id,
+                status="fetching",
+                details={"url": url, "stage": "fetching", "engines": engines},
+                correlation_id=correlation_id,
+                api_key_hash=api_key_hash,
+                visibility=visibility,
+                submitted_at=submitted_at,
+                url=url,
+                index_job=False,
+            ):
+                raise RuntimeError("failed to persist fetcher status")
+
+            content, size_bytes, download = download_url(url)
+
+            artifact_dir = _ensure_artifact_dir()
+            artifact_name = f"{job_id}.bin"
+            artifact_path = artifact_dir / artifact_name
+            _atomic_write(artifact_path, content)
+
+            sha256 = hashlib.sha256(content).hexdigest()
+            duration_ms = int((time.time() - start) * 1000)
+
+            forward_payload = {
+                "job_id": job_id,
+                "correlation_id": correlation_id,
+                "api_key_hash": api_key_hash,
+                "url": url,
+                "type": task.get("type"),
+                "source": task.get("source"),
+                "visibility": task.get("visibility"),
+                "metadata": (
+                    task.get("metadata")
+                    if isinstance(task.get("metadata"), dict)
+                    else {}
+                ),
+                "submitted_at": submitted_at,
+                "traceparent": task.get("traceparent"),
+                "tracestate": task.get("tracestate"),
+                "artifact_path": artifact_name,
+                "artifact_sha256": sha256,
+                "artifact_size_bytes": size_bytes,
+                "download": download,
+            }
+            trace_carrier: dict[str, str] = {}
+            inject_trace_context(trace_carrier)
+            if trace_carrier.get("traceparent"):
+                forward_payload["traceparent"] = trace_carrier["traceparent"]
+            if trace_carrier.get("tracestate"):
+                forward_payload["tracestate"] = trace_carrier["tracestate"]
+
+            forward_payload = validate_scan_artifact_v1(forward_payload)
+
+            if not result_persister or not result_persister.save_result(
+                job_id=job_id,
+                status="queued_scan",
+                details={
+                    "url": url,
+                    "stage": "queued_scan",
+                    "artifact_path": artifact_name,
+                    "artifact_sha256": sha256,
+                    "artifact_size_bytes": size_bytes,
+                    "download": download,
+                },
+                size_bytes=size_bytes,
+                correlation_id=correlation_id,
+                api_key_hash=api_key_hash,
+                visibility=visibility,
+                duration_ms=duration_ms,
+                submitted_at=submitted_at,
+                error=None,
+                url=url,
+                index_job=False,
+            ):
+                raise RuntimeError("failed to persist queued_scan status")
+
+            _enqueue_scan(forward_payload, message_id=str(job_id))
+            log_with_context(
+                logger,
+                logging.INFO,
+                "Fetcher queued scan artifact",
+                job_id=job_id,
+                size_bytes=size_bytes,
+                duration_ms=duration_ms,
+            )
+    finally:
+        clear_correlation_id()
 
 
 def main() -> None:
     _CFG.validate()
 
     global table_client, redis_client, result_persister
+    setup_telemetry(service_name="fetcher", logger_obj=logger)
 
     if QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis":
         if not REDIS_URL:
@@ -247,11 +315,13 @@ def main() -> None:
         publisher=publisher,
     )
 
-    logging.info(
-        "[fetcher] started; queue=%s scan_queue=%s backend=%s",
-        QUEUE_NAME,
-        SCAN_QUEUE_NAME,
-        QUEUE_BACKEND,
+    log_with_context(
+        logger,
+        logging.INFO,
+        "Fetcher started; waiting for messages",
+        queue_name=QUEUE_NAME,
+        scan_queue_name=SCAN_QUEUE_NAME,
+        queue_backend=QUEUE_BACKEND,
     )
 
     def _on_exception(
@@ -304,7 +374,13 @@ def main() -> None:
         )
 
     if QUEUE_BACKEND == "redis":
-        logging.info("[fetcher] redis queue=%s dlq=%s", REDIS_QUEUE_KEY, REDIS_DLQ_KEY)
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Fetcher redis queues configured",
+            queue_name=REDIS_QUEUE_KEY,
+            dlq_name=REDIS_DLQ_KEY,
+        )
 
     run_consumer(
         component="fetcher",
@@ -323,7 +399,7 @@ def main() -> None:
         on_exception=_on_exception,
     )
 
-    logging.info("[fetcher] shutdown complete.")
+    log_with_context(logger, logging.INFO, "Fetcher shutdown complete")
 
 
 if __name__ == "__main__":

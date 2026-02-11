@@ -248,6 +248,9 @@ def generate_create_apps_summary() -> str:
     e2e_status = get_env("E2E_STATUS", "unknown")
     e2e_job_id = get_env("E2E_JOB_ID", "")
     e2e_duration = get_env("E2E_DURATION_SECONDS", "")
+    observability_status = get_env("OBSERVABILITY_STATUS", "unknown")
+    monitor_action_group_id = get_env("MONITOR_ACTION_GROUP_ID", "")
+    monitor_workbook_id = get_env("MONITOR_WORKBOOK_ID", "")
 
     # Queue depths (set by deploy script)
     tasks_queue_active = get_env("TASKS_QUEUE_ACTIVE", "--")
@@ -328,6 +331,26 @@ def generate_create_apps_summary() -> str:
     if e2e_duration:
         test_rows.append(["Duration", f"{e2e_duration}s"])
     lines.append(md_table(["Check", "Status"], test_rows))
+
+    # Observability verification and deployed monitor artifacts
+    lines.append("")
+    lines.append("### Observability")
+    lines.append("")
+    obs_rows = [
+        [
+            f"{status_icon(observability_status)} Log/Trace Verification",
+            observability_status.replace("_", " ").title(),
+        ],
+        [
+            "Action Group",
+            f"`{monitor_action_group_id}`" if monitor_action_group_id else "Not configured",
+        ],
+        [
+            "Workbook",
+            f"`{monitor_workbook_id}`" if monitor_workbook_id else "Not configured",
+        ],
+    ]
+    lines.append(md_table(["Item", "Status"], obs_rows))
 
     # Container Apps Status
     lines.append("")

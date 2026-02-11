@@ -20,8 +20,13 @@ SCAN_METADATA_STRING_VALUE_MAX_LENGTH = int(
 
 ARTIFACT_PATH_MAX_LENGTH = int(os.getenv("SCAN_ARTIFACT_PATH_MAX_LENGTH", "256"))
 SCAN_API_KEY_HASH_MAX_LENGTH = int(os.getenv("SCAN_API_KEY_HASH_MAX_LENGTH", "128"))
+SCAN_TRACEPARENT_MAX_LENGTH = int(os.getenv("SCAN_TRACEPARENT_MAX_LENGTH", "128"))
+SCAN_TRACESTATE_MAX_LENGTH = int(os.getenv("SCAN_TRACESTATE_MAX_LENGTH", "512"))
 
 _API_KEY_HASH_RE = re.compile(r"^[0-9a-f]{64}$")
+_TRACEPARENT_RE = re.compile(
+    r"^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+)
 
 
 @dataclass
@@ -176,6 +181,25 @@ def validate_scan_task_v1(payload: Any) -> dict[str, Any]:
         max_length=64,
         required=False,
     )
+    traceparent = _normalize_str(
+        payload.get("traceparent"),
+        field="traceparent",
+        max_length=SCAN_TRACEPARENT_MAX_LENGTH,
+        required=False,
+    )
+    tracestate = _normalize_str(
+        payload.get("tracestate"),
+        field="tracestate",
+        max_length=SCAN_TRACESTATE_MAX_LENGTH,
+        required=False,
+    )
+    if traceparent:
+        traceparent = traceparent.strip().lower()
+        if not _TRACEPARENT_RE.match(traceparent):
+            raise ScanMessageValidationError(
+                field="traceparent",
+                message="must be a valid W3C traceparent value",
+            )
 
     visibility = _normalize_str(
         payload.get("visibility"),
@@ -205,6 +229,10 @@ def validate_scan_task_v1(payload: Any) -> dict[str, Any]:
         out["source"] = source
     if submitted_at:
         out["submitted_at"] = submitted_at
+    if traceparent:
+        out["traceparent"] = traceparent
+    if tracestate:
+        out["tracestate"] = tracestate
     if visibility_l:
         out["visibility"] = visibility_l
     return out

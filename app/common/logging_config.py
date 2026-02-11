@@ -12,6 +12,8 @@ from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from common.telemetry import get_current_trace_fields
+
 # Context variable for correlation ID (request tracing)
 correlation_id_var: ContextVar[Optional[str]] = ContextVar(
     "correlation_id", default=None
@@ -46,6 +48,11 @@ class JSONFormatter(logging.Formatter):
         correlation_id = correlation_id_var.get()
         if correlation_id:
             log_data["correlation_id"] = correlation_id
+
+        # Add active trace/span IDs when OpenTelemetry context is available.
+        trace_fields = get_current_trace_fields()
+        if trace_fields:
+            log_data.update(trace_fields)
 
         # Add exception info if present
         if record.exc_info:
@@ -114,6 +121,10 @@ class PrettyFormatter(logging.Formatter):
         if correlation_id:
             short_id = correlation_id[:8]
             context_parts.append(f"id={short_id}")
+
+        trace_fields = get_current_trace_fields()
+        if trace_fields.get("trace_id"):
+            context_parts.append(f"trace={trace_fields['trace_id'][:8]}")
 
         # Add extra fields
         extra_fields = getattr(record, "extra_fields", None)

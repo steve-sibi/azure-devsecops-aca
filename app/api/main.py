@@ -73,6 +73,10 @@ from common.webpubsub import (
     group_for_api_key_hash,
     group_for_run,
 )
+from common.telemetry import (
+    inject_trace_context,
+    setup_telemetry,
+)
 from fastapi import (FastAPI, File, Form, HTTPException, Query, Request,
                      Security, UploadFile)
 from fastapi.exceptions import RequestValidationError
@@ -105,11 +109,6 @@ REDIS_JOB_INDEX_HASH_PREFIX = (
     os.getenv("REDIS_JOB_INDEX_HASH_PREFIX", "jobs:") or "jobs:"
 ).strip()
 
-# API-specific settings
-APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
-    "APPLICATIONINSIGHTS_CONNECTION_STRING"
-)  # optional
-
 # Screenshots (optional)
 SCREENSHOT_REDIS_PREFIX = os.getenv("SCREENSHOT_REDIS_PREFIX", "screenshot:")
 SCREENSHOT_CONTAINER = os.getenv("SCREENSHOT_CONTAINER", "screenshots")
@@ -120,6 +119,7 @@ WEBPUBSUB_CFG = WebPubSubConfig.from_env()
 _webpubsub_client = None
 
 logger = get_logger(__name__)
+TELEMETRY_ACTIVE = False
 
 # API hardening
 API_KEY = os.getenv("API_KEY")
@@ -805,10 +805,11 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global sb_client, sb_sender, table_service, table_client, redis_client, blob_service
+    global sb_client, sb_sender, table_service, table_client, redis_client, blob_service, TELEMETRY_ACTIVE
 
     # Validate shared configuration
     _CONSUMER_CFG.validate()
+    TELEMETRY_ACTIVE = setup_telemetry(service_name="api", logger_obj=logger)
 
     if QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis":
         try:
@@ -853,17 +854,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             blob_service = None
             logger.warning("Blob client not initialized (screenshots disabled): %s", e)
-
-    # --- Optional App Insights logging (only if packages + conn are present) ---
-    if APPINSIGHTS_CONN:
-        try:
-            from opencensus.ext.azure.log_exporter import AzureLogHandler
-
-            if not any(isinstance(h, AzureLogHandler) for h in logger.handlers):
-                logger.addHandler(AzureLogHandler(connection_string=APPINSIGHTS_CONN))
-                logger.info("App Insights logging enabled.")
-        except Exception as e:
-            logger.warning(f"App Insights logging not enabled: {e}")
 
     yield  # ---- App runs ----
 
@@ -954,8 +944,22 @@ async def correlation_id_middleware(request: Request, call_next):
     set_correlation_id(correlation_id)
     request.state.request_id = correlation_id
 
+    started = time.perf_counter()
     try:
         response = await call_next(request)
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", None) or request.url.path
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        log_with_context(
+            logger,
+            logging.INFO,
+            "HTTP request completed",
+            http_method=request.method,
+            http_route=route_path,
+            http_status_code=response.status_code,
+            duration_ms=duration_ms,
+            correlation_id=correlation_id,
+        )
         response.headers["X-Correlation-ID"] = correlation_id
         response.headers["X-Request-ID"] = correlation_id
         return response
@@ -1081,7 +1085,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.middleware("http")
 async def otel_request_spans(request: Request, call_next):
-    if not APPINSIGHTS_CONN or request.url.path == "/healthz":
+    if not TELEMETRY_ACTIVE or request.url.path == "/healthz":
         return await call_next(request)
 
     from opentelemetry import trace
@@ -1620,7 +1624,9 @@ async def scan_file(
 
 @app.post("/scan", tags=["URL Scanning"], summary="Submit a URL for security analysis")
 async def enqueue_scan(
-    req: ScanRequest, api_key_hash: Optional[str] = Security(require_api_key)
+    request: Request,
+    req: ScanRequest,
+    api_key_hash: Optional[str] = Security(require_api_key),
 ):
     log_with_context(
         logger,
@@ -1638,7 +1644,9 @@ async def enqueue_scan(
 
     request_id = str(uuid4())
     run_id = str(uuid4())
-    correlation_id = str(uuid4())
+    correlation_id = getattr(getattr(request, "state", None), "request_id", None)
+    if not isinstance(correlation_id, str) or not correlation_id.strip():
+        correlation_id = str(uuid4())
     submitted_at = datetime.now(timezone.utc).isoformat()
     visibility = _normalize_visibility(getattr(req, "visibility", None))
     if str(getattr(req, "type", "url") or "url").strip().lower() != "url":
@@ -1656,6 +1664,12 @@ async def enqueue_scan(
         "api_key_hash": api_key_hash or "",
         "visibility": visibility,
     }
+    trace_ctx: dict[str, str] = {}
+    inject_trace_context(trace_ctx)
+    if isinstance(trace_ctx.get("traceparent"), str) and trace_ctx["traceparent"].strip():
+        run_payload["traceparent"] = trace_ctx["traceparent"].strip()
+    if isinstance(trace_ctx.get("tracestate"), str) and trace_ctx["tracestate"].strip():
+        run_payload["tracestate"] = trace_ctx["tracestate"].strip()
     try:
         run_payload = validate_scan_task_v1(run_payload)
     except ScanMessageValidationError as e:
@@ -1777,11 +1791,16 @@ async def enqueue_scan(
                         "deduped": True,
                     }
     try:
+        application_properties: dict[str, str] = {"correlation_id": correlation_id}
+        if isinstance(run_payload.get("traceparent"), str):
+            application_properties["traceparent"] = str(run_payload["traceparent"])
+        if isinstance(run_payload.get("tracestate"), str):
+            application_properties["tracestate"] = str(run_payload["tracestate"])
         await _enqueue_json(
             run_payload,
             schema="scan-v1",
             message_id=run_id,
-            application_properties={"correlation_id": correlation_id},
+            application_properties=application_properties,
         )
         await _upsert_result(
             run_id,

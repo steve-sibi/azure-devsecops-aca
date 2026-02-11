@@ -13,6 +13,7 @@ import logging
 import os
 import secrets
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
@@ -31,6 +32,7 @@ from common.limits import (
     get_web_fetch_limits,
 )
 from common.logging_config import (
+    clear_correlation_id,
     get_logger,
     log_with_context,
     set_correlation_id,
@@ -43,6 +45,7 @@ from common.screenshot_store import (
     store_screenshot_blob_sync,
     store_screenshot_redis_sync,
 )
+from common.telemetry import extract_trace_context, get_tracer, setup_telemetry
 from common.webpubsub import WebPubSubConfig, WebPubSubPublisher
 from common.url_canonicalization import canonicalize_url
 from common.web_analysis import (
@@ -65,9 +68,6 @@ BATCH_SIZE = _CFG.batch_size
 MAX_WAIT = _CFG.max_wait  # seconds
 PREFETCH = _CFG.prefetch
 MAX_RETRIES = _CFG.max_retries  # move to DLQ after this many deliveries
-APPINSIGHTS_CONN = os.getenv("APPINSIGHTS_CONN") or os.getenv(
-    "APPLICATIONINSIGHTS_CONNECTION_STRING"
-)  # optional (opencensus)
 RESULT_BACKEND = _CFG.result_backend
 RESULT_STORE_CONN = _CFG.result_store_conn
 RESULT_TABLE = _CFG.result_table
@@ -131,101 +131,145 @@ def process(task: dict):
     correlation_id = task.get("correlation_id")
     api_key_hash = task.get("api_key_hash")
     visibility = task.get("visibility")
+    traceparent = task.get("traceparent")
+    tracestate = task.get("tracestate")
 
-    # Set correlation ID in context for all logs in this request
     if correlation_id:
-        set_correlation_id(correlation_id)
-
-    log_with_context(
-        logger, logging.INFO, "Processing scan task", job_id=job_id, url=url
+        set_correlation_id(str(correlation_id))
+    parent_ctx = extract_trace_context(
+        traceparent=str(traceparent) if isinstance(traceparent, str) else None,
+        tracestate=str(tracestate) if isinstance(tracestate, str) else None,
     )
 
-    if not url or not job_id:
-        raise ValueError("missing url/job_id in task")
+    tracer = get_tracer("aca-worker")
+    span_cm = (
+        tracer.start_as_current_span("worker.process", context=parent_ctx)
+        if tracer
+        else nullcontext()
+    )
+    try:
+        with span_cm as span:
+            if span:
+                span.set_attribute("app.component", "worker")
+                span.set_attribute("app.job_id", str(job_id))
+                span.set_attribute("app.queue_name", str(QUEUE_NAME))
+                if isinstance(url, str):
+                    span.set_attribute("url.full", url)
 
-    start = time.time()
+            log_with_context(
+                logger, logging.INFO, "Processing scan task", job_id=job_id, url=url
+            )
 
-    artifact_path = task.get("artifact_path")
-    if isinstance(artifact_path, str) and artifact_path.strip():
-        artifact_name = Path(artifact_path).name
-        full_path = Path(ARTIFACT_DIR) / artifact_name
-        content = full_path.read_bytes()
-        size_bytes = len(content)
+            if not url or not job_id:
+                raise ValueError("missing url/job_id in task")
 
-        expected_size = task.get("artifact_size_bytes")
-        if expected_size is not None:
-            try:
-                if int(expected_size) != size_bytes:
-                    raise ValueError(
-                        f"artifact size mismatch (expected={expected_size} actual={size_bytes})"
+            start = time.time()
+
+            read_span_cm = (
+                tracer.start_as_current_span("worker.read_artifact")
+                if tracer
+                else nullcontext()
+            )
+            with read_span_cm:
+                artifact_path = task.get("artifact_path")
+                if isinstance(artifact_path, str) and artifact_path.strip():
+                    artifact_name = Path(artifact_path).name
+                    full_path = Path(ARTIFACT_DIR) / artifact_name
+                    content = full_path.read_bytes()
+                    size_bytes = len(content)
+
+                    expected_size = task.get("artifact_size_bytes")
+                    if expected_size is not None:
+                        try:
+                            if int(expected_size) != size_bytes:
+                                raise ValueError(
+                                    f"artifact size mismatch (expected={expected_size} actual={size_bytes})"
+                                )
+                        except Exception:
+                            pass
+
+                    expected_sha = task.get("artifact_sha256")
+                    if isinstance(expected_sha, str) and expected_sha:
+                        actual_sha = hashlib.sha256(content).hexdigest()
+                        if not secrets.compare_digest(actual_sha, expected_sha.lower()):
+                            raise ValueError("artifact sha256 mismatch")
+
+                    download = (
+                        task.get("download")
+                        if isinstance(task.get("download"), dict)
+                        else {}
                     )
-            except Exception:
-                pass
+                else:
+                    content, size_bytes, download = download_url(url)
 
-        expected_sha = task.get("artifact_sha256")
-        if isinstance(expected_sha, str) and expected_sha:
-            actual_sha = hashlib.sha256(content).hexdigest()
-            if not secrets.compare_digest(actual_sha, expected_sha.lower()):
-                raise ValueError("artifact sha256 mismatch")
+            analyze_span_cm = (
+                tracer.start_as_current_span("worker.analyze_content")
+                if tracer
+                else nullcontext()
+            )
+            with analyze_span_cm:
+                details = _scan_bytes(content, url, download=download)
 
-        download = (
-            task.get("download") if isinstance(task.get("download"), dict) else {}
-        )
-    else:
-        content, size_bytes, download = download_url(url)
+            screenshot = _maybe_capture_and_store_screenshot(
+                job_id=job_id, url=url, download=download
+            )
+            page_info = None
+            results = details.get("results")
+            if isinstance(results, dict):
+                web = results.get("web")
+                if isinstance(web, dict):
+                    page_info = web.get("page_information")
+            if isinstance(page_info, dict) and isinstance(screenshot, dict) and screenshot:
+                url_val = screenshot.get("url")
+                if isinstance(url_val, str) and url_val.strip():
+                    page_info["screenshot_url"] = url_val.strip()
+                page_info["screenshot"] = {
+                    k: v for k, v in screenshot.items() if k != "url" and v is not None
+                }
 
-    details = _scan_bytes(content, url, download=download)
-
-    screenshot = _maybe_capture_and_store_screenshot(
-        job_id=job_id, url=url, download=download
-    )
-    page_info = None
-    results = details.get("results")
-    if isinstance(results, dict):
-        web = results.get("web")
-        if isinstance(web, dict):
-            page_info = web.get("page_information")
-    if isinstance(page_info, dict) and isinstance(screenshot, dict) and screenshot:
-        url_val = screenshot.get("url")
-        if isinstance(url_val, str) and url_val.strip():
-            page_info["screenshot_url"] = url_val.strip()
-        page_info["screenshot"] = {
-            k: v for k, v in screenshot.items() if k != "url" and v is not None
-        }
-
-    duration_ms = int((time.time() - start) * 1000)
-    if not result_persister or not result_persister.save_result(
-        job_id=job_id,
-        status="completed",
-        details=details,
-        size_bytes=size_bytes,
-        correlation_id=correlation_id,
-        api_key_hash=api_key_hash,
-        visibility=visibility,
-        duration_ms=duration_ms,
-        submitted_at=task.get("submitted_at"),
-        error=None,
-        url=url,
-        index_job=False,
-    ):
-        raise RuntimeError("failed to persist scan result")
-    if ARTIFACT_DELETE_ON_SUCCESS:
-        artifact_path = task.get("artifact_path")
-        if isinstance(artifact_path, str) and artifact_path.strip():
-            try:
-                (Path(ARTIFACT_DIR) / Path(artifact_path).name).unlink(missing_ok=True)
-            except Exception:
-                pass
-    log_with_context(
-        logger,
-        logging.INFO,
-        "Scan completed successfully",
-        job_id=job_id,
-        size_bytes=size_bytes,
-        duration_ms=duration_ms,
-        url=url,
-    )
-    return details
+            duration_ms = int((time.time() - start) * 1000)
+            persist_span_cm = (
+                tracer.start_as_current_span("worker.persist_result")
+                if tracer
+                else nullcontext()
+            )
+            with persist_span_cm:
+                if not result_persister or not result_persister.save_result(
+                    job_id=job_id,
+                    status="completed",
+                    details=details,
+                    size_bytes=size_bytes,
+                    correlation_id=correlation_id,
+                    api_key_hash=api_key_hash,
+                    visibility=visibility,
+                    duration_ms=duration_ms,
+                    submitted_at=task.get("submitted_at"),
+                    error=None,
+                    url=url,
+                    index_job=False,
+                ):
+                    raise RuntimeError("failed to persist scan result")
+            if ARTIFACT_DELETE_ON_SUCCESS:
+                artifact_path = task.get("artifact_path")
+                if isinstance(artifact_path, str) and artifact_path.strip():
+                    try:
+                        (Path(ARTIFACT_DIR) / Path(artifact_path).name).unlink(
+                            missing_ok=True
+                        )
+                    except Exception:
+                        pass
+            log_with_context(
+                logger,
+                logging.INFO,
+                "Scan completed successfully",
+                job_id=job_id,
+                size_bytes=size_bytes,
+                duration_ms=duration_ms,
+                url=url,
+            )
+            return details
+    finally:
+        clear_correlation_id()
 
 
 def _screenshot_blob_name(job_id: str) -> str:
@@ -298,7 +342,12 @@ def _maybe_capture_and_store_screenshot(
                 "metrics": capture.metrics,
             }
     except Exception:
-        logging.info("[worker] screenshot store failed (job_id=%s)", job_id)
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Screenshot store failed",
+            job_id=job_id,
+        )
         return {"status": "store_failed"}
 
     return {"status": "skipped"}
@@ -612,6 +661,7 @@ def main():
     _CFG.validate()
 
     global table_client, redis_client, result_persister
+    setup_telemetry(service_name="worker", logger_obj=logger)
 
     if QUEUE_BACKEND == "redis" or RESULT_BACKEND == "redis":
         if not REDIS_URL:
@@ -643,8 +693,8 @@ def main():
         publisher=publisher,
     )
 
-    logging.info("[worker] Scan engines: %s", ["web"])
-    logging.info("[worker] started; waiting for messages...")
+    log_with_context(logger, logging.INFO, "Worker scan engines configured", engines=["web"])
+    log_with_context(logger, logging.INFO, "Worker started; waiting for messages")
 
     def _on_exception(
         task: Optional[dict], exc: Exception, delivery_count: int, duration_ms: int
@@ -695,7 +745,13 @@ def main():
         )
 
     if QUEUE_BACKEND == "redis":
-        logging.info("[worker] redis queue=%s dlq=%s", REDIS_QUEUE_KEY, REDIS_DLQ_KEY)
+        log_with_context(
+            logger,
+            logging.INFO,
+            "Worker redis queues configured",
+            queue_name=REDIS_QUEUE_KEY,
+            dlq_name=REDIS_DLQ_KEY,
+        )
 
     run_consumer(
         component="worker",
@@ -714,7 +770,7 @@ def main():
         on_exception=_on_exception,
     )
 
-    logging.info("[worker] shutdown complete.")
+    log_with_context(logger, logging.INFO, "Worker shutdown complete")
 
 
 if __name__ == "__main__":

@@ -7,8 +7,10 @@ azure-servicebus>=7.14
 # Azure Web PubSub (server-side publish)
 azure-messaging-webpubsubservice>=1.3.0
 
-# App Insights logs (simple AzureLogHandler)
-opencensus-ext-azure>=1.1
+# OpenTelemetry + Azure Monitor exporter
+opentelemetry-api>=1.35
+opentelemetry-sdk>=1.35
+azure-monitor-opentelemetry-exporter>=1.0.0b45
 
 # Table storage for scan results
 azure-data-tables>=12.7
