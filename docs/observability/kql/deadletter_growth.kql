@@ -1,0 +1,6 @@
+AzureMetrics
+| where TimeGenerated > ago(24h)
+| where ResourceProvider == "MICROSOFT.SERVICEBUS"
+| where MetricName in ("DeadletteredMessages", "Deadlettered Messages")
+| summarize max_deadletter = max(Total), avg_deadletter = avg(Total) by ResourceId, bin(TimeGenerated, 15m)
+| order by TimeGenerated desc

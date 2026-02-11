@@ -1,0 +1,19 @@
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(24h)
+| extend logData = parse_json(Log_s)
+| where isnotempty(logData.correlation_id) or isnotempty(logData.job_id)
+// Add one of the filters below:
+// | where tostring(logData.correlation_id) == "<correlation-id>"
+// | where tostring(logData.job_id) == "<job-id>"
+| project
+    TimeGenerated,
+    service = tostring(logData.service),
+    level = tostring(logData.level),
+    message = tostring(logData.message),
+    job_id = tostring(logData.job_id),
+    correlation_id = tostring(logData.correlation_id),
+    trace_id = tostring(logData.trace_id),
+    span_id = tostring(logData.span_id),
+    duration_ms = toint(logData.duration_ms),
+    url = tostring(logData.url)
+| order by TimeGenerated asc

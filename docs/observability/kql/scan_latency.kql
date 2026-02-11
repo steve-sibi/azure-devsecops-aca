@@ -1,0 +1,11 @@
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(24h)
+| extend logData = parse_json(Log_s)
+| where tostring(logData.message) == "Scan completed successfully"
+| summarize
+    p50_ms = percentile(toint(logData.duration_ms), 50),
+    p95_ms = percentile(toint(logData.duration_ms), 95),
+    p99_ms = percentile(toint(logData.duration_ms), 99),
+    completed = count()
+    by service=tostring(logData.service), bin(TimeGenerated, 15m)
+| order by TimeGenerated desc

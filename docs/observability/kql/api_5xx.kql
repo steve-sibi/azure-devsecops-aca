@@ -1,0 +1,16 @@
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(1h)
+| extend logData = parse_json(Log_s)
+| where tostring(logData.service) == "api"
+| where toint(logData.http_status_code) >= 500
+| project
+    TimeGenerated,
+    service = tostring(logData.service),
+    route = tostring(logData.http_route),
+    method = tostring(logData.http_method),
+    status = toint(logData.http_status_code),
+    duration_ms = toint(logData.duration_ms),
+    correlation_id = tostring(logData.correlation_id),
+    trace_id = tostring(logData.trace_id),
+    message = tostring(logData.message)
+| order by TimeGenerated desc

@@ -1,0 +1,16 @@
+let queue_active = toscalar(
+    AzureMetrics
+    | where TimeGenerated > ago(15m)
+    | where ResourceProvider == "MICROSOFT.SERVICEBUS"
+    | where MetricName in ("ActiveMessages", "Active Messages")
+    | summarize max(Total)
+);
+let completed_scans = toscalar(
+    ContainerAppConsoleLogs_CL
+    | where TimeGenerated > ago(15m)
+    | extend logData = parse_json(Log_s)
+    | where tostring(logData.message) == "Scan completed successfully"
+    | summarize count()
+);
+print queue_active=queue_active, completed_scans=completed_scans
+| where queue_active > 0 and completed_scans == 0

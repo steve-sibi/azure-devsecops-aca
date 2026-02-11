@@ -1,0 +1,17 @@
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(1h)
+| extend logData = parse_json(Log_s)
+| where tostring(logData.service) in ("fetcher", "worker")
+| where tostring(logData.level) in ("ERROR", "CRITICAL", "WARNING")
+| where tostring(logData.message) has_any ("error", "failed", "DLQ", "blocked", "retry")
+| project
+    TimeGenerated,
+    service = tostring(logData.service),
+    level = tostring(logData.level),
+    message = tostring(logData.message),
+    job_id = tostring(logData.job_id),
+    correlation_id = tostring(logData.correlation_id),
+    trace_id = tostring(logData.trace_id),
+    error = tostring(logData.error),
+    error_type = tostring(logData.error_type)
+| order by TimeGenerated desc
