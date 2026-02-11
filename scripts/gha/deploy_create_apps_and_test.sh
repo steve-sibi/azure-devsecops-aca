@@ -229,6 +229,7 @@ submit="$(curl -sS -X POST "${API_URL}/scan" \
   -d '{"url":"https://example.com","type":"url"}')"
 
 job_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("job_id") or "")' <<<"${submit}" || true)"
+run_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("run_id") or "")' <<<"${submit}" || true)"
 if [[ -z "${job_id}" ]]; then
   echo "[deploy] Failed to get job_id from /scan response:"
   echo "${submit}"
@@ -237,6 +238,9 @@ if [[ -z "${job_id}" ]]; then
 fi
 
 echo "job_id=${job_id}"
+if [[ -n "${run_id}" ]]; then
+  echo "run_id=${run_id}"
+fi
 for i in {1..40}; do
   resp="$(curl -sS "${API_URL}/scan/${job_id}" -H "X-API-Key: ${API_KEY}" || true)"
   status="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("status") or "")' <<<"${resp}" 2>/dev/null || true)"
