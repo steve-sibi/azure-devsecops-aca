@@ -81,6 +81,17 @@ if [[ -n "${KV_SECRET_READERS_JSON}" ]]; then
   echo "[deploy] Using kv_secret_reader_object_ids from workflow configuration."
 fi
 
+if [[ -n "${MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON:-}" ]]; then
+  export TF_VAR_monitor_action_group_email_receivers="${MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON}"
+  echo "[deploy] Using monitor_action_group_email_receivers from workflow configuration."
+fi
+if [[ -n "${MONITOR_ALERTS_ENABLED:-}" ]]; then
+  export TF_VAR_monitor_alerts_enabled="${MONITOR_ALERTS_ENABLED}"
+fi
+if [[ -n "${MONITOR_WORKBOOK_ENABLED:-}" ]]; then
+  export TF_VAR_monitor_workbook_enabled="${MONITOR_WORKBOOK_ENABLED}"
+fi
+
 terraform -chdir="${INFRA_DIR}" init \
   -backend-config="resource_group_name=${RG}" \
   -backend-config="storage_account_name=${TFSTATE_SA}" \

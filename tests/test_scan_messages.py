@@ -89,6 +89,8 @@ class TestValidateScanTaskV1:
             "url": "https://example.com",
             "type": "url",
             "correlation_id": "corr-456",
+            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "tracestate": "congo=t61rcWkgMzE",
             "source": "api",
             "submitted_at": "2025-01-21T12:00:00Z",
             "visibility": "shared",
@@ -97,9 +99,34 @@ class TestValidateScanTaskV1:
         result = validate_scan_task_v1(payload)
         assert result["job_id"] == "abc123"
         assert result["correlation_id"] == "corr-456"
+        assert result["traceparent"] == payload["traceparent"]
+        assert result["tracestate"] == payload["tracestate"]
         assert result["source"] == "api"
         assert result["metadata"] == {"client": "test"}
         assert result["visibility"] == "shared"
+
+    def test_traceparent_is_normalized_to_lowercase(self):
+        payload = {
+            "job_id": "abc123",
+            "url": "https://example.com",
+            "traceparent": "00-4BF92F3577B34DA6A3CE929D0E0E4736-00F067AA0BA902B7-01",
+        }
+        result = validate_scan_task_v1(payload)
+        assert (
+            result["traceparent"]
+            == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        )
+
+    def test_rejects_invalid_traceparent(self):
+        payload = {
+            "job_id": "abc123",
+            "url": "https://example.com",
+            "traceparent": "not-a-traceparent",
+        }
+        with pytest.raises(ScanMessageValidationError) as exc:
+            validate_scan_task_v1(payload)
+        assert "traceparent" in str(exc.value)
+        assert "W3C traceparent" in str(exc.value)
 
     def test_type_file_is_valid(self):
         payload = {
@@ -250,3 +277,16 @@ class TestValidateScanArtifactV1:
         with pytest.raises(ScanMessageValidationError) as exc:
             validate_scan_artifact_v1(payload)
         assert "artifact_size_bytes" in str(exc.value)
+
+    def test_trace_fields_are_preserved_in_artifact_payload(self):
+        payload = {
+            "job_id": "abc123",
+            "url": "https://example.com",
+            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "tracestate": "congo=t61rcWkgMzE",
+            "artifact_path": "abc123.bin",
+            "artifact_size_bytes": 12,
+        }
+        result = validate_scan_artifact_v1(payload)
+        assert result["traceparent"] == payload["traceparent"]
+        assert result["tracestate"] == payload["tracestate"]
