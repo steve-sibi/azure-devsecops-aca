@@ -33,6 +33,9 @@ services:
       - "8000:8000"
     environment:
       LOG_FORMAT: ${LOG_FORMAT:-pretty}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_TRACES_SAMPLER_RATIO: ${OTEL_TRACES_SAMPLER_RATIO:-0.10}
+      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-aca-urlscanner}
       PORT: "8000"
       QUEUE_NAME: ${QUEUE_NAME:-tasks}
       QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}
@@ -98,6 +101,9 @@ services:
       dockerfile: worker/Dockerfile.sidecar
     environment:
       LOG_FORMAT: ${LOG_FORMAT:-pretty}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_TRACES_SAMPLER_RATIO: ${OTEL_TRACES_SAMPLER_RATIO:-0.10}
+      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-aca-urlscanner}
       WORKER_MODE: fetcher
       QUEUE_NAME: ${QUEUE_NAME:-tasks}
       SCAN_QUEUE_NAME: ${SCAN_QUEUE_NAME:-tasks-scan}
@@ -137,6 +143,9 @@ services:
       dockerfile: worker/Dockerfile.sidecar
     environment:
       LOG_FORMAT: ${LOG_FORMAT:-pretty}
+      OTEL_ENABLED: ${OTEL_ENABLED:-false}
+      OTEL_TRACES_SAMPLER_RATIO: ${OTEL_TRACES_SAMPLER_RATIO:-0.10}
+      OTEL_SERVICE_NAMESPACE: ${OTEL_SERVICE_NAMESPACE:-aca-urlscanner}
       WORKER_MODE: analyzer
       QUEUE_NAME: ${SCAN_QUEUE_NAME:-tasks-scan}
       QUEUE_BACKEND: ${QUEUE_BACKEND:-redis}

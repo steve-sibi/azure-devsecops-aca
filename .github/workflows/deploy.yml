@@ -53,6 +53,9 @@ env:
   TFSTATE_KEY: ${{ inputs.tfstate_key }}
   QUEUE_NAME: ${{ inputs.queue_name }}
   KV_SECRET_READER_OBJECT_IDS_JSON: ${{ vars.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || '' }}
+  MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON: ${{ vars.ACA_MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON || '' }}
+  MONITOR_ALERTS_ENABLED: ${{ vars.ACA_MONITOR_ALERTS_ENABLED || '' }}
+  MONITOR_WORKBOOK_ENABLED: ${{ vars.ACA_MONITOR_WORKBOOK_ENABLED || '' }}
 
 jobs:
   infra-bootstrap:
@@ -232,6 +235,14 @@ jobs:
           echo "SCAN_QUEUE_ACTIVE=${SCAN_QUEUE_ACTIVE}" >> "$GITHUB_ENV"
           echo "SCAN_QUEUE_DEAD=${SCAN_QUEUE_DEAD}" >> "$GITHUB_ENV"
 
+          # Monitoring resource outputs (if configured)
+          MONITOR_ACTION_GROUP_ID="$(terraform -chdir=infra output -raw monitor_action_group_id 2>/dev/null || echo "")"
+          MONITOR_WORKBOOK_ID="$(terraform -chdir=infra output -raw monitor_workbook_id 2>/dev/null || echo "")"
+          [ "${MONITOR_ACTION_GROUP_ID}" = "null" ] && MONITOR_ACTION_GROUP_ID=""
+          [ "${MONITOR_WORKBOOK_ID}" = "null" ] && MONITOR_WORKBOOK_ID=""
+          echo "MONITOR_ACTION_GROUP_ID=${MONITOR_ACTION_GROUP_ID}" >> "$GITHUB_ENV"
+          echo "MONITOR_WORKBOOK_ID=${MONITOR_WORKBOOK_ID}" >> "$GITHUB_ENV"
+
       - name: Determine test status
         id: test_status
         if: always()
@@ -264,6 +275,21 @@ jobs:
           echo "HEALTH_STATUS=${HEALTH_STATUS}" >> "$GITHUB_ENV"
           echo "E2E_STATUS=${E2E_STATUS}" >> "$GITHUB_ENV"
           echo "E2E_JOB_ID=${E2E_JOB_ID}" >> "$GITHUB_ENV"
+
+      - name: Verify observability ingestion (warn-only)
+        id: verify_observability
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          chmod +x scripts/gha/verify_observability.sh
+          bash scripts/gha/verify_observability.sh
+
+      - name: Capture observability check status
+        if: always()
+        shell: bash
+        run: |
+          echo "OBSERVABILITY_STATUS=${{ steps.verify_observability.outcome }}" >> "$GITHUB_ENV"
 
       - name: Write workflow summary
         if: always()
