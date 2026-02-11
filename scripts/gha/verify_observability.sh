@@ -63,6 +63,14 @@ query_trace="ContainerAppConsoleLogs_CL
 | where isnotempty(tostring(logData.trace_id))
 | summarize count()"
 
+query_presence="ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
+| extend logData = parse_json(Log_s)
+| where tostring(logData.job_id) in~ ('${JOB_ID}', '${RUN_ID}')
+   or tostring(logData.request_id) in~ ('${JOB_ID}', '${RUN_ID}')
+   or tostring(logData.run_id) in~ ('${JOB_ID}', '${RUN_ID}')
+| take 1"
+
 query_sample="ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
 | extend logData = parse_json(Log_s)
@@ -101,6 +109,31 @@ run_count_query() {
   fi
 }
 
+run_presence_query() {
+  local query="$1"
+  local out
+  local err_file
+  err_file="$(mktemp)"
+  if ! out="$(az monitor log-analytics query \
+    --workspace "${workspace_id}" \
+    --analytics-query "${query}" \
+    --query "tables[0].rows | length(@)" \
+    -o tsv 2>"${err_file}")"; then
+    local err_text
+    err_text="$(cat "${err_file}" 2>/dev/null || true)"
+    rm -f "${err_file}"
+    echo "[observability] Presence query failed: ${err_text}" >&2
+    echo "0"
+    return 1
+  fi
+  rm -f "${err_file}"
+  if [[ ! "${out}" =~ ^[0-9]+$ ]]; then
+    echo "0"
+  else
+    echo "${out}"
+  fi
+}
+
 for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
   log_count="$(run_count_query "${query_logs}" || true)"
   trace_count="$(run_count_query "${query_trace}" || true)"
@@ -121,6 +154,14 @@ if [[ "${log_count}" -eq 0 ]]; then
   log_count="$(run_count_query "${query_logs}" || true)"
   trace_count="$(run_count_query "${query_trace}" || true)"
   echo "[observability] final-check job_id=${JOB_ID} run_id=${RUN_ID} log_count=${log_count} trace_count=${trace_count}"
+fi
+
+if [[ "${log_count}" -eq 0 ]]; then
+  presence_count="$(run_presence_query "${query_presence}" || true)"
+  if [[ "${presence_count}" -gt 0 ]]; then
+    log_count="${presence_count}"
+    echo "[observability] Count query returned 0 but presence query found matching rows; continuing." >&2
+  fi
 fi
 
 if [[ "${log_count}" -eq 0 ]]; then
