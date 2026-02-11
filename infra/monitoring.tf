@@ -241,7 +241,7 @@ resource "azurerm_application_insights_workbook" "observability" {
   resource_group_name = data.azurerm_resource_group.rg.name
   location            = data.azurerm_resource_group.rg.location
   display_name        = "${var.prefix} Observability"
-  source_id           = azurerm_application_insights.appi.id
+  source_id           = lower(azurerm_application_insights.appi.id)
   data_json = jsonencode(
     {
       version = "Notebook/1.0"
