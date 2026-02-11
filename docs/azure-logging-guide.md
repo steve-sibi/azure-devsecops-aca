@@ -1,320 +1,142 @@
-# Azure Structured Logging Guide
+# Azure Structured Logging and Tracing Guide
 
 ## Overview
 
-This application uses structured JSON logging that is optimized for Azure Container Apps, Azure Monitor, and Application Insights. All logs include correlation IDs for distributed tracing across services.
+This project emits structured JSON logs for all services (`api`, `fetcher`, `worker`) and exports OpenTelemetry traces to workspace-based Application Insights.
+
+- Logs: stdout/stderr -> Azure Container Apps -> Log Analytics
+- Traces: OpenTelemetry -> Azure Monitor exporter -> Application Insights
+- Correlation: `correlation_id` (app-level) + `trace_id`/`span_id` (trace-level)
 
 ## Log Format
 
-All logs are output as JSON with the following structure:
+Example event:
 
 ```json
 {
-  "timestamp": "2026-01-21T22:41:41.862665+00:00",
+  "timestamp": "2026-02-11T20:41:41.862665+00:00",
   "level": "INFO",
-  "service": "api",
-  "logger": "main",
-  "message": "Scan request received",
-  "correlation_id": "test-scan-001",
-  "url": "https://example.com",
-  "scan_type": "url",
-  "source": "test"
+  "service": "fetcher",
+  "logger": "worker.fetcher",
+  "message": "Fetcher queued scan artifact",
+  "correlation_id": "req-123",
+  "trace_id": "4bf92f3577b34da6a3ce929d0e0e4736",
+  "span_id": "00f067aa0ba902b7",
+  "job_id": "job-001",
+  "duration_ms": 1432,
+  "size_bytes": 2048
 }
 ```
 
 ### Standard Fields
 
-- **timestamp**: ISO 8601 formatted timestamp with timezone
-- **level**: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-- **service**: Service name (api, worker, fetcher)
-- **logger**: Python logger name (typically module name)
-- **message**: Human-readable log message
-- **correlation_id**: Request correlation ID for distributed tracing (when available)
+- `timestamp`: ISO 8601 UTC timestamp.
+- `level`: log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`).
+- `service`: service identifier (`api`, `fetcher`, `worker`).
+- `logger`: Python logger name.
+- `message`: human-readable event text.
+- `correlation_id`: request/job correlation identifier.
+- `trace_id`: OpenTelemetry trace ID when a span is active.
+- `span_id`: OpenTelemetry span ID when a span is active.
 
-### Custom Context Fields
+### Context Fields
 
-Additional fields vary by operation:
+Depending on operation, events can include:
 
-- **job_id**: Unique scan job identifier
-- **url**: Target URL being scanned
-- **scan_type**: Type of scan (url, file)
-- **source**: Source of the scan request
-- **verdict**: Scan verdict (benign, malicious, suspicious)
-- **status**: Job status (queued, processing, completed, failed)
-- **duration_ms**: Operation duration in milliseconds
-- **size_bytes**: File/content size in bytes
-- **backend**: Storage backend being used (redis, blob, table)
-- **error**: Error message (when applicable)
-- **error_type**: Exception class name (when applicable)
+- `job_id`, `run_id`, `url`, `scan_type`, `status`
+- `duration_ms`, `size_bytes`
+- `error`, `error_type`
+- `http_method`, `http_route`, `http_status_code`
 
-## Correlation IDs
+## Correlation and Trace Propagation
 
-### How They Work
+### Correlation ID
 
-1. **API Requests**: Correlation IDs are captured from incoming requests via headers:
-   - `X-Correlation-ID` (preferred)
-   - `X-Request-ID` (fallback)
-   - Auto-generated UUID if not provided
+- API middleware captures `X-Correlation-ID` / `X-Request-ID` (or creates UUID).
+- ID is injected into logs via `contextvars`.
+- Fetcher/worker read `correlation_id` from queue payload and set per-message context.
 
-2. **Service Bus Messages**: Correlation IDs are propagated through message metadata
+### Trace Context
 
-3. **Context Propagation**: Using Python's `contextvars`, correlation IDs are automatically included in all log statements within the same request/task context
+- API injects W3C trace context into scan messages (`traceparent`, `tracestate`).
+- Fetcher extracts incoming trace context and forwards refreshed context to scan queue.
+- Worker extracts trace context and creates child spans for read/analyze/persist work.
 
-### Example Flow
+## OpenTelemetry Configuration
 
-```
-Client Request → API (correlation_id: abc-123)
-                  ↓
-              Service Bus (metadata: correlation_id=abc-123)
-                  ↓
-              Worker (correlation_id: abc-123)
-```
+Implemented in `app/common/telemetry.py`.
 
-All logs throughout this flow will include `"correlation_id": "abc-123"`.
+Runtime environment variables:
+
+- `OTEL_ENABLED`:
+  - unset: auto-enable when App Insights connection string exists
+  - `true`/`false`: force behavior
+- `OTEL_TRACES_SAMPLER_RATIO` (default `0.10`)
+- `OTEL_SERVICE_NAMESPACE` (default `aca-urlscanner`)
+- `APPINSIGHTS_CONN` or `APPLICATIONINSIGHTS_CONNECTION_STRING`
 
 ## Azure Integration
 
-### Azure Container Apps
+### Log Analytics
 
-Azure Container Apps automatically captures stdout/stderr from containers and forwards them to:
+Container logs are queryable in `ContainerAppConsoleLogs_CL`.
 
-- Azure Log Analytics workspace
-- Application Insights (if configured)
+Use the query pack in `docs/observability/kql/`:
 
-**No additional configuration required** - JSON logs are automatically parsed and indexed.
-
-### Log Analytics Queries
-
-Query logs by correlation ID to trace a request through all services:
-
-```kusto
-ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(1h)
-| extend logData = parse_json(Log_s)
-| where logData.correlation_id == "test-scan-001"
-| project 
-    TimeGenerated, 
-    Service=logData.service,
-    Level=logData.level,
-    Message=logData.message,
-    JobId=logData.job_id,
-    Url=logData.url,
-    Verdict=logData.verdict
-| order by TimeGenerated asc
-```
-
-Query by job ID:
-
-```kusto
-ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(24h)
-| extend logData = parse_json(Log_s)
-| where logData.job_id == "eea2a65e-f40d-44a5-9bee-03e618dea6fb"
-| project 
-    TimeGenerated,
-    Service=logData.service,
-    Message=logData.message,
-    Status=logData.status,
-    Verdict=logData.verdict,
-    Duration=logData.duration_ms
-| order by TimeGenerated asc
-```
-
-Find errors:
-
-```kusto
-ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(1h)
-| extend logData = parse_json(Log_s)
-| where logData.level in ("ERROR", "CRITICAL")
-| project 
-    TimeGenerated,
-    Service=logData.service,
-    Message=logData.message,
-    Error=logData.error,
-    ErrorType=logData.error_type,
-    CorrelationId=logData.correlation_id
-| order by TimeGenerated desc
-```
-
-Analyze scan performance:
-
-```kusto
-ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(1h)
-| extend logData = parse_json(Log_s)
-| where logData.message == "Scan completed successfully"
-| project 
-    TimeGenerated,
-    Duration=toint(logData.duration_ms),
-    Size=toint(logData.size_bytes),
-    Verdict=logData.verdict
-| summarize 
-    AvgDuration=avg(Duration),
-    P50=percentile(Duration, 50),
-    P95=percentile(Duration, 95),
-    P99=percentile(Duration, 99),
-    Count=count()
-    by Verdict
-```
+- `api_5xx.kql`
+- `pipeline_errors.kql`
+- `queue_backlog.kql`
+- `deadletter_growth.kql`
+- `stalled_pipeline.kql`
+- `correlation_flow.kql`
+- `scan_latency.kql`
 
 ### Application Insights
 
-If Application Insights is configured, JSON fields are automatically extracted and available as custom dimensions for:
+OpenTelemetry spans are exported through Azure Monitor exporter.
 
-- **Dependency tracking** (external calls, database queries)
-- **Request telemetry** (API endpoints)
-- **Custom metrics** (duration_ms, size_bytes)
-- **Distributed tracing** (via correlation_id)
+Typical troubleshooting flow:
 
-Example Application Insights query:
-
-```kusto
-traces
-| where timestamp > ago(1h)
-| where customDimensions.service == "worker"
-| where customDimensions.message == "Scan completed successfully"
-| project 
-    timestamp,
-    message,
-    verdict=customDimensions.verdict,
-    duration=toint(customDimensions.duration_ms),
-    correlationId=customDimensions.correlation_id
-| order by timestamp desc
-```
+1. Find `correlation_id`/`trace_id` in Log Analytics.
+2. Pivot to Application Insights traces for latency and dependency timing.
 
 ## Local Development
 
 ### Viewing Logs
 
-View JSON logs from Docker containers:
-
 ```bash
 # All services
 docker compose logs -f
 
-# Specific service
-docker logs azure-devsecops-aca-api-1 -f
-
 # Filter by correlation ID
-docker logs azure-devsecops-aca-api-1 2>&1 | grep "correlation_id.*test-scan-001"
+docker compose logs -f api | grep "my-correlation-id"
 
-# Pretty print JSON logs
-docker logs azure-devsecops-aca-worker-1 2>&1 | tail -20 | jq -r '. | "\(.timestamp) [\(.level)] \(.service).\(.logger): \(.message) \(if .correlation_id then "(\(.correlation_id))" else "" end)"'
+# Pretty-print JSON from worker
+docker logs azure-devsecops-aca-worker-1 2>&1 | tail -20 | jq .
 ```
 
-### Testing Correlation IDs
-
-Submit a request with a custom correlation ID:
+### Testing Correlation and Trace Context
 
 ```bash
 curl -X POST http://localhost:8000/scan \
   -H "Content-Type: application/json" \
   -H "X-API-Key: local-dev-key" \
   -H "X-Correlation-ID: my-custom-trace-id" \
-  -d '{"url": "https://example.com", "type": "url", "source": "test"}'
+  -d '{"url": "https://example.com", "type": "url"}'
 ```
 
-Then trace it through the logs:
+Then inspect logs in `api`, `fetcher`, and `worker` for the same `correlation_id`.
 
-```bash
-docker logs azure-devsecops-aca-api-1 2>&1 | grep "my-custom-trace-id"
-docker logs azure-devsecops-aca-worker-1 2>&1 | grep "correlation_id"
-```
+## Implementation Map
 
-## Implementation Details
+- Logging format/config: `app/common/logging_config.py`
+- Telemetry setup and trace helpers: `app/common/telemetry.py`
+- API request + queue propagation: `app/api/main.py`
+- Fetcher propagation + forwarding: `app/worker/fetcher.py`
+- Worker trace extraction and child spans: `app/worker/worker.py`
 
-### Logging Configuration
+## Operations References
 
-The logging infrastructure is implemented in `app/common/logging_config.py`:
-
-- **JSONFormatter**: Custom formatter that outputs structured JSON
-- **setup_logging()**: Initializes JSON logging for a service
-- **get_logger()**: Returns a logger instance with JSON formatting
-- **set_correlation_id()**: Sets correlation ID in context for current request/task
-- **clear_correlation_id()**: Clears correlation ID from context
-- **log_with_context()**: Logs with automatic correlation ID and custom fields
-
-### API Middleware
-
-The API service uses FastAPI middleware to capture correlation IDs from incoming requests:
-
-```python
-@app.middleware("http")
-async def correlation_id_middleware(request: Request, call_next):
-    correlation_id = (
-        request.headers.get("X-Correlation-ID") 
-        or request.headers.get("X-Request-ID") 
-        or str(uuid4())
-    )
-    set_correlation_id(correlation_id)
-    # ... process request
-    response.headers["X-Correlation-ID"] = correlation_id
-    return response
-```
-
-### Worker Correlation ID Propagation
-
-Workers extract correlation IDs from Service Bus message metadata:
-
-```python
-correlation_id = task.get("correlation_id")
-if correlation_id:
-    set_correlation_id(correlation_id)
-```
-
-### Example Usage in Code
-
-```python
-from common.logging_config import get_logger, log_with_context
-import logging
-
-logger = get_logger(__name__)
-
-# Simple log with automatic correlation ID
-log_with_context(logger, logging.INFO, "Processing started", job_id=job_id)
-
-# Log with additional context fields
-log_with_context(
-    logger, 
-    logging.INFO, 
-    "Scan completed",
-    job_id=job_id,
-    verdict=verdict,
-    duration_ms=duration,
-    size_bytes=size
-)
-
-# Error logging with exception details
-log_with_context(
-    logger, 
-    logging.ERROR, 
-    "Scan failed",
-    job_id=job_id,
-    error=str(e),
-    error_type=e.__class__.__name__
-)
-```
-
-## Benefits
-
-### For Development
-
-- **Easy debugging**: Filter logs by correlation ID to trace a single request
-- **Rich context**: All relevant data included in log statements
-- **Consistent format**: All services use the same JSON structure
-
-### For Production
-
-- **Auto-indexed**: Azure automatically parses JSON and indexes all fields
-- **Queryable**: Use KQL to filter, aggregate, and analyze logs
-- **Distributed tracing**: Follow requests across services via correlation IDs
-- **Performance monitoring**: Track duration_ms and size_bytes metrics
-- **Error tracking**: Quickly identify and diagnose issues with structured error logs
-
-### For Operations
-
-- **Alerting**: Create alerts based on specific field values (verdict, error_type, duration)
-- **Dashboards**: Build Azure dashboards using structured log data
-- **Compliance**: Structured logs make audit trails and compliance reporting easier
-- **Cost optimization**: Efficient indexing reduces query costs
+- Query pack: `docs/observability/kql/`
+- Incident guide: `docs/observability/runbook.md`
+- Terraform monitoring resources: `infra/monitoring.tf`

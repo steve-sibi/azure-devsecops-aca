@@ -209,6 +209,13 @@ sequenceDiagram
 - **Log Analytics**: `<prefix>-la` (workspace)
     
 - **Application Insights**: `<prefix>-appi` (workspace-based)
+
+- **Observability (Terraform-managed)**:
+    
+    - Log Analytics saved searches for API 5xx, pipeline errors, queue backlog, DLQ growth, and stalled pipeline detection
+    - Azure Monitor Action Group (email receivers via `monitor_action_group_email_receivers`)
+    - Scheduled Query Alerts (v2) for API errors, pipeline errors, backlog, dead-letter growth, and stalled pipeline
+    - Application Insights workbook (toggle via `monitor_workbook_enabled`)
     
 - **Key Vault**: `<prefix>-kv` (secrets: Service Bus SAS, scan results conn, API key)
     
@@ -447,6 +454,9 @@ Configuration (recommended):
   - `ACA_RESOURCE_GROUP` (e.g. `rg-devsecops-aca`)
   - `ACA_DEPLOY_ENABLED` (`true` to allow CI to build/push + deploy; CI skips deploy when false)
   - `ACA_KV_SECRET_READER_OBJECT_IDS_JSON` (optional; JSON array of Entra object IDs for Key Vault secret readers used by the Deploy workflow)
+  - `ACA_MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON` (optional; JSON array of email addresses for Azure Monitor Action Group, e.g. `["secops@example.com"]`)
+  - `ACA_MONITOR_ALERTS_ENABLED` (optional; `true`/`false`, defaults to Terraform variable default)
+  - `ACA_MONITOR_WORKBOOK_ENABLED` (optional; `true`/`false`, defaults to Terraform variable default)
   - `RUN_PR_SECURITY_SCANS` (optional, `true` to enable Checkov/Trivy on PRs)
 - Secrets remain the same as Deploy: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
 
@@ -810,6 +820,26 @@ curl -sS -X POST "${API_URL}/file/scan" \
 - **System logs**
     
     `az containerapp logs show -g rg-devsecops-aca -n devsecopsaca-api --type system --follow`
+
+### Query pack + runbook
+
+- KQL query pack: `docs/observability/kql/`
+- Incident runbook: `docs/observability/runbook.md`
+- Logging/tracing guide: `docs/azure-logging-guide.md`
+
+### App Insights tracing
+
+- `api`, `fetcher`, and `worker` use OpenTelemetry trace context propagation (`traceparent`/`tracestate` in queue payloads).
+- Use `correlation_id` in Log Analytics and `trace_id` to pivot to trace-level diagnostics in Application Insights.
+
+### Terraform-managed alerts/workbook
+
+- Monitoring resources are defined in `infra/monitoring.tf`.
+- Key toggles/inputs:
+  - `monitor_alerts_enabled`
+  - `monitor_action_group_email_receivers`
+  - `monitor_workbook_enabled`
+  - threshold vars (`monitor_api_5xx_threshold`, `monitor_pipeline_error_threshold`, `monitor_queue_backlog_threshold`, `monitor_deadletter_threshold`)
 
 ### KEDA scaling
 
