@@ -181,6 +181,18 @@ def validate_scan_task_v1(payload: Any) -> dict[str, Any]:
         max_length=64,
         required=False,
     )
+    request_id = _normalize_str(
+        payload.get("request_id"),
+        field="request_id",
+        max_length=SCAN_ID_MAX_LENGTH,
+        required=False,
+    )
+    run_id = _normalize_str(
+        payload.get("run_id"),
+        field="run_id",
+        max_length=SCAN_ID_MAX_LENGTH,
+        required=False,
+    )
     traceparent = _normalize_str(
         payload.get("traceparent"),
         field="traceparent",
@@ -229,6 +241,10 @@ def validate_scan_task_v1(payload: Any) -> dict[str, Any]:
         out["source"] = source
     if submitted_at:
         out["submitted_at"] = submitted_at
+    if request_id:
+        out["request_id"] = request_id
+    if run_id:
+        out["run_id"] = run_id
     if traceparent:
         out["traceparent"] = traceparent
     if tracestate:

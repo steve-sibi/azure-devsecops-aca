@@ -127,6 +127,8 @@ result_persister: Optional[ResultPersister] = None
 def process(task: dict):
     task = validate_scan_artifact_v1(task)
     job_id = task.get("job_id")
+    request_id = task.get("request_id")
+    run_id = task.get("run_id") or job_id
     url = task.get("url")
     correlation_id = task.get("correlation_id")
     api_key_hash = task.get("api_key_hash")
@@ -152,6 +154,9 @@ def process(task: dict):
             if span:
                 span.set_attribute("app.component", "worker")
                 span.set_attribute("app.job_id", str(job_id))
+                span.set_attribute("app.run_id", str(run_id))
+                if request_id:
+                    span.set_attribute("app.request_id", str(request_id))
                 span.set_attribute("app.queue_name", str(QUEUE_NAME))
                 if isinstance(url, str):
                     span.set_attribute("url.full", url)

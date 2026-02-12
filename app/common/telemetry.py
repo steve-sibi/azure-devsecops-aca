@@ -22,11 +22,41 @@ def get_appinsights_connection_string() -> str:
     ).strip()
 
 
+def get_otlp_traces_endpoint() -> str:
+    traces_endpoint = (os.getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT") or "").strip()
+    if traces_endpoint:
+        return traces_endpoint
+
+    otlp_endpoint = (os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT") or "").strip()
+    if not otlp_endpoint:
+        return ""
+    if otlp_endpoint.lower().endswith("/v1/traces"):
+        return otlp_endpoint
+    return otlp_endpoint.rstrip("/") + "/v1/traces"
+
+
+def get_otlp_headers() -> dict[str, str]:
+    raw = (os.getenv("OTEL_EXPORTER_OTLP_HEADERS") or "").strip()
+    if not raw:
+        return {}
+    headers: dict[str, str] = {}
+    for part in raw.split(","):
+        item = part.strip()
+        if not item or "=" not in item:
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if key:
+            headers[key] = value
+    return headers
+
+
 def telemetry_enabled_from_env() -> bool:
     raw = os.getenv("OTEL_ENABLED")
     if isinstance(raw, str) and raw.strip():
         return _is_truthy(raw)
-    return bool(get_appinsights_connection_string())
+    return bool(get_appinsights_connection_string() or get_otlp_traces_endpoint())
 
 
 def telemetry_is_active() -> bool:
@@ -44,7 +74,7 @@ def _trace_sampler_ratio() -> float:
 
 def setup_telemetry(*, service_name: str, logger_obj: Optional[logging.Logger] = None) -> bool:
     """
-    Configure OpenTelemetry trace export to Azure Monitor.
+    Configure OpenTelemetry trace export for the configured backend.
 
     Returns True when telemetry is active; False when disabled/unavailable.
     Safe to call repeatedly.
@@ -61,16 +91,7 @@ def setup_telemetry(*, service_name: str, logger_obj: Optional[logging.Logger] =
         _TELEMETRY_ACTIVE = False
         return False
 
-    conn = get_appinsights_connection_string()
-    if not conn:
-        log.warning(
-            "OpenTelemetry requested but App Insights connection string is not set."
-        )
-        _TELEMETRY_ACTIVE = False
-        return False
-
     try:
-        from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
         from opentelemetry import trace
         from opentelemetry.sdk.resources import Resource
         from opentelemetry.sdk.trace import TracerProvider
@@ -99,13 +120,42 @@ def setup_telemetry(*, service_name: str, logger_obj: Optional[logging.Logger] =
             resource=resource,
             sampler=ParentBased(TraceIdRatioBased(ratio)),
         )
-        exporter = AzureMonitorTraceExporter(connection_string=conn)
+
+        exporter_name = ""
+        conn = get_appinsights_connection_string()
+        if conn:
+            from azure.monitor.opentelemetry.exporter import AzureMonitorTraceExporter
+
+            exporter = AzureMonitorTraceExporter(connection_string=conn)
+            exporter_name = "azure-monitor"
+        else:
+            otlp_endpoint = get_otlp_traces_endpoint()
+            if not otlp_endpoint:
+                log.warning(
+                    "OpenTelemetry requested but no trace exporter is configured. "
+                    "Set APPINSIGHTS_CONN/APPLICATIONINSIGHTS_CONNECTION_STRING or "
+                    "OTEL_EXPORTER_OTLP_ENDPOINT."
+                )
+                _TELEMETRY_ACTIVE = False
+                return False
+
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import \
+                OTLPSpanExporter
+
+            headers = get_otlp_headers()
+            exporter = OTLPSpanExporter(
+                endpoint=otlp_endpoint,
+                headers=headers or None,
+            )
+            exporter_name = f"otlp-http ({otlp_endpoint})"
+
         provider.add_span_processor(BatchSpanProcessor(exporter))
         trace.set_tracer_provider(provider)
         _TELEMETRY_ACTIVE = True
         log.info(
-            "OpenTelemetry enabled (service=%s sampler_ratio=%.2f).",
+            "OpenTelemetry enabled (service=%s exporter=%s sampler_ratio=%.2f).",
             service_name,
+            exporter_name,
             ratio,
         )
         return True

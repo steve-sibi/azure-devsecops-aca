@@ -13,11 +13,13 @@ azure-messaging-webpubsubservice>=1.3.0
 # Azure Identity (Managed Identity, DefaultAzureCredential)
 azure-identity>=1.25
 
-# OpenTelemetry (Azure Monitor exporter) — pin versions to avoid breaking API changes
+# OpenTelemetry exporters (Azure Monitor + OTLP HTTP)
+# Pin versions to avoid breaking API changes.
 # NOTE: azure-monitor-opentelemetry-exporter currently imports LogData from opentelemetry.sdk._logs
 # which was removed in newer OpenTelemetry releases; keep these in a compatible range.
 opentelemetry-api>=1.35
 opentelemetry-sdk>=1.35
+opentelemetry-exporter-otlp-proto-http>=1.35
 azure-monitor-opentelemetry-exporter>=1.0.0b45
 
 # Table storage for scan results

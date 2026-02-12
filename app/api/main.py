@@ -1155,6 +1155,23 @@ async def otel_request_spans(request: Request, call_next):
         return response
 
 
+def _annotate_current_span_ids(*, request_id: str, run_id: str) -> None:
+    """Attach stable request/run identifiers to the current API span."""
+    try:
+        from opentelemetry import trace
+
+        span = trace.get_current_span()
+        span_ctx = span.get_span_context() if span else None
+        if not span_ctx or not span_ctx.is_valid:
+            return
+        span.set_attribute("app.request_id", str(request_id))
+        span.set_attribute("app.run_id", str(run_id))
+        # Keep existing tag semantics for compatibility with existing queries.
+        span.set_attribute("app.job_id", str(run_id))
+    except Exception:
+        return
+
+
 @app.get("/healthz", tags=["Health"])
 async def healthz():
     return {
@@ -1655,6 +1672,8 @@ async def enqueue_scan(
 
     run_payload = {
         "job_id": run_id,
+        "request_id": request_id,
+        "run_id": run_id,
         "correlation_id": correlation_id,
         "url": req.url,
         "type": req.type,
@@ -1784,6 +1803,9 @@ async def enqueue_scan(
                         canonical_url=url_index_key.canonical_url,
                         status=run_status,
                     )
+                    _annotate_current_span_ids(
+                        request_id=request_id, run_id=existing_run_id
+                    )
                     return {
                         "job_id": request_id,
                         "run_id": existing_run_id,
@@ -1849,6 +1871,7 @@ async def enqueue_scan(
             url=req.url,
             scan_type=req.type,
         )
+        _annotate_current_span_ids(request_id=request_id, run_id=run_id)
         if api_key_hash:
             job_record = build_job_record(
                 api_key_hash_value=api_key_hash,

@@ -104,6 +104,12 @@ def _enqueue_scan(payload: dict, *, message_id: str):
     correlation_id = payload.get("correlation_id")
     if correlation_id is not None:
         app_props["correlation_id"] = str(correlation_id)
+    request_id = payload.get("request_id")
+    if request_id is not None:
+        app_props["request_id"] = str(request_id)
+    run_id = payload.get("run_id")
+    if run_id is not None:
+        app_props["run_id"] = str(run_id)
     traceparent = payload.get("traceparent")
     if traceparent is not None:
         app_props["traceparent"] = str(traceparent)
@@ -146,6 +152,8 @@ def _enqueue_scan(payload: dict, *, message_id: str):
 def process(task: dict):
     task = validate_scan_task_v1(task)
     job_id = task.get("job_id")
+    request_id = task.get("request_id")
+    run_id = task.get("run_id") or job_id
     url = task.get("url")
     correlation_id = task.get("correlation_id")
     api_key_hash = task.get("api_key_hash")
@@ -177,6 +185,9 @@ def process(task: dict):
             if span:
                 span.set_attribute("app.component", "fetcher")
                 span.set_attribute("app.job_id", str(job_id))
+                span.set_attribute("app.run_id", str(run_id))
+                if request_id:
+                    span.set_attribute("app.request_id", str(request_id))
                 span.set_attribute("app.queue_name", str(QUEUE_NAME))
                 span.set_attribute("app.scan_queue_name", str(SCAN_QUEUE_NAME))
                 span.set_attribute("url.full", str(url))
@@ -215,6 +226,8 @@ def process(task: dict):
 
             forward_payload = {
                 "job_id": job_id,
+                "request_id": request_id,
+                "run_id": run_id,
                 "correlation_id": correlation_id,
                 "api_key_hash": api_key_hash,
                 "url": url,
