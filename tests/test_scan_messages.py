@@ -86,6 +86,8 @@ class TestValidateScanTaskV1:
     def test_valid_full_payload(self):
         payload = {
             "job_id": "abc123",
+            "request_id": "req-123",
+            "run_id": "run-123",
             "url": "https://example.com",
             "type": "url",
             "correlation_id": "corr-456",
@@ -98,6 +100,8 @@ class TestValidateScanTaskV1:
         }
         result = validate_scan_task_v1(payload)
         assert result["job_id"] == "abc123"
+        assert result["request_id"] == "req-123"
+        assert result["run_id"] == "run-123"
         assert result["correlation_id"] == "corr-456"
         assert result["traceparent"] == payload["traceparent"]
         assert result["tracestate"] == payload["tracestate"]
@@ -281,6 +285,8 @@ class TestValidateScanArtifactV1:
     def test_trace_fields_are_preserved_in_artifact_payload(self):
         payload = {
             "job_id": "abc123",
+            "request_id": "req-123",
+            "run_id": "run-123",
             "url": "https://example.com",
             "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
             "tracestate": "congo=t61rcWkgMzE",
@@ -288,5 +294,7 @@ class TestValidateScanArtifactV1:
             "artifact_size_bytes": 12,
         }
         result = validate_scan_artifact_v1(payload)
+        assert result["request_id"] == payload["request_id"]
+        assert result["run_id"] == payload["run_id"]
         assert result["traceparent"] == payload["traceparent"]
         assert result["tracestate"] == payload["tracestate"]

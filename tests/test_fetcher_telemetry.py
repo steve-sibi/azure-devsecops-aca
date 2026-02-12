@@ -58,6 +58,8 @@ def test_fetcher_process_propagates_trace_and_clears_correlation(monkeypatch, tm
     fetcher.process(
         {
             "job_id": "job-1",
+            "request_id": "req-1",
+            "run_id": "run-1",
             "url": "https://example.com",
             "correlation_id": "corr-1",
             "submitted_at": "2026-01-01T00:00:00Z",
@@ -67,6 +69,8 @@ def test_fetcher_process_propagates_trace_and_clears_correlation(monkeypatch, tm
     )
 
     assert forwarded["message_id"] == "job-1"
+    assert forwarded["payload"]["request_id"] == "req-1"
+    assert forwarded["payload"]["run_id"] == "run-1"
     assert (
         forwarded["payload"]["traceparent"]
         == "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
