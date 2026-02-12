@@ -92,8 +92,7 @@ run_count_query() {
   if ! out="$(az monitor log-analytics query \
     --workspace "${workspace_id}" \
     --analytics-query "${query}" \
-    --query "tables[0].rows[0][0]" \
-    -o tsv 2>"${err_file}")"; then
+    -o json 2>"${err_file}")"; then
     local err_text
     err_text="$(cat "${err_file}" 2>/dev/null || true)"
     rm -f "${err_file}"
@@ -102,11 +101,26 @@ run_count_query() {
     return 1
   fi
   rm -f "${err_file}"
-  if [[ ! "${out}" =~ ^[0-9]+$ ]]; then
-    echo "0"
-  else
-    echo "${out}"
-  fi
+  python3 -c 'import json,sys
+raw=sys.stdin.read().strip()
+if not raw:
+    print(0); raise SystemExit(0)
+try:
+    data=json.loads(raw)
+except Exception:
+    print(0); raise SystemExit(0)
+tables=data.get("tables") if isinstance(data,dict) else None
+if not isinstance(tables,list) or not tables:
+    print(0); raise SystemExit(0)
+rows=tables[0].get("rows") if isinstance(tables[0],dict) else None
+if not isinstance(rows,list) or not rows:
+    print(0); raise SystemExit(0)
+first=rows[0][0] if isinstance(rows[0],list) and rows[0] else 0
+try:
+    print(int(first))
+except Exception:
+    print(0)
+' <<<"${out}"
 }
 
 run_presence_query() {
@@ -117,8 +131,7 @@ run_presence_query() {
   if ! out="$(az monitor log-analytics query \
     --workspace "${workspace_id}" \
     --analytics-query "${query}" \
-    --query "tables[0].rows | length(@)" \
-    -o tsv 2>"${err_file}")"; then
+    -o json 2>"${err_file}")"; then
     local err_text
     err_text="$(cat "${err_file}" 2>/dev/null || true)"
     rm -f "${err_file}"
@@ -127,11 +140,20 @@ run_presence_query() {
     return 1
   fi
   rm -f "${err_file}"
-  if [[ ! "${out}" =~ ^[0-9]+$ ]]; then
-    echo "0"
-  else
-    echo "${out}"
-  fi
+  python3 -c 'import json,sys
+raw=sys.stdin.read().strip()
+if not raw:
+    print(0); raise SystemExit(0)
+try:
+    data=json.loads(raw)
+except Exception:
+    print(0); raise SystemExit(0)
+tables=data.get("tables") if isinstance(data,dict) else None
+if not isinstance(tables,list) or not tables:
+    print(0); raise SystemExit(0)
+rows=tables[0].get("rows") if isinstance(tables[0],dict) else None
+print(len(rows) if isinstance(rows,list) else 0)
+' <<<"${out}"
 }
 
 for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
@@ -164,13 +186,35 @@ if [[ "${log_count}" -eq 0 ]]; then
   fi
 fi
 
+sample_table=""
+sample_row_count=0
+
+# Final fallback: if aggregate/presence checks still say 0, inspect table output directly.
+# This avoids false negatives when the extension returns null rows for JSON but renders table rows.
+if [[ "${log_count}" -eq 0 ]]; then
+  sample_table="$(az monitor log-analytics query \
+    --workspace "${workspace_id}" \
+    --analytics-query "${query_sample}" \
+    -o table 2>/dev/null || true)"
+  sample_row_count="$(grep -cE '^[[:space:]]*PrimaryResult[[:space:]]' <<<"${sample_table}" || true)"
+  [[ "${sample_row_count}" =~ ^[0-9]+$ ]] || sample_row_count=0
+  if [[ "${sample_row_count}" -gt 0 ]]; then
+    log_count="${sample_row_count}"
+    echo "[observability] Aggregate query returned 0 but table output contains matching rows; continuing." >&2
+  fi
+fi
+
 if [[ "${log_count}" -eq 0 ]]; then
   echo "[observability] No matching Log Analytics entries found for E2E IDs (job_id=${JOB_ID}, run_id=${RUN_ID})." >&2
   echo "[observability] Sample query output (if any):" >&2
-  az monitor log-analytics query \
-    --workspace "${workspace_id}" \
-    --analytics-query "${query_sample}" \
-    -o table || true
+  if [[ -n "${sample_table}" ]]; then
+    echo "${sample_table}"
+  else
+    az monitor log-analytics query \
+      --workspace "${workspace_id}" \
+      --analytics-query "${query_sample}" \
+      -o table || true
+  fi
   exit 1
 fi
 
