@@ -644,6 +644,35 @@ curl -s http://localhost:8000/ | rg WEBPUBSUB_ENABLED
 - `true`: dashboard will use Web PubSub (if it can negotiate).
 - `false`: dashboard will use polling only.
 
+#### Local traces (no Azure) with Jaeger + sampler validation
+
+Use the optional Compose profile to run Jaeger locally and validate `OTEL_TRACES_SAMPLER_RATIO`.
+
+```bash
+OTEL_ENABLED=true OTEL_TRACES_SAMPLER_RATIO=0.10 \
+  docker compose --profile observability up --build -d
+```
+
+- Jaeger UI: `http://localhost:16686`
+- API: `http://localhost:8000`
+- OTLP collector ports (optional debug from host): `4318` (HTTP), `4317` (gRPC)
+
+Run the local sampler validation:
+
+```bash
+python3 scripts/local/verify_trace_sampling.py \
+  --api-url http://localhost:8000 \
+  --api-key local-dev-key \
+  --jaeger-url http://localhost:16686 \
+  --expected-ratio 0.10 \
+  --requests 80
+```
+
+Expected result:
+- script exits `0`
+- output ends with `PASS`
+- observed ratio is close to expected ratio (within tolerance window)
+
 #### Docker “\<none\>” images (dangling)
 
 If you rebuild often, Docker will keep old, untagged images (shown as `\<none\>`) when a new build replaces the tag. They’re safe to delete.
@@ -831,6 +860,10 @@ curl -sS -X POST "${API_URL}/file/scan" \
 
 - `api`, `fetcher`, and `worker` use OpenTelemetry trace context propagation (`traceparent`/`tracestate` in queue payloads).
 - Use `correlation_id` in Log Analytics and `trace_id` to pivot to trace-level diagnostics in Application Insights.
+- Jaeger/App Insights span tags include both identifiers for unambiguous filtering:
+  - `app.request_id` = API `job_id` response field (per submission)
+  - `app.run_id` = API `run_id` response field (pipeline execution)
+  - `app.job_id` remains as a compatibility alias for `app.run_id`
 
 ### Terraform-managed alerts/workbook
 

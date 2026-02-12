@@ -2,10 +2,12 @@
 
 ## Overview
 
-This project emits structured JSON logs for all services (`api`, `fetcher`, `worker`) and exports OpenTelemetry traces to workspace-based Application Insights.
+This project emits structured JSON logs for all services (`api`, `fetcher`, `worker`) and exports OpenTelemetry traces to workspace-based Application Insights (Azure) or any OTLP endpoint (local/dev).
 
 - Logs: stdout/stderr -> Azure Container Apps -> Log Analytics
-- Traces: OpenTelemetry -> Azure Monitor exporter -> Application Insights
+- Traces:
+  - Azure: OpenTelemetry -> Azure Monitor exporter -> Application Insights
+  - Local/dev: OpenTelemetry -> OTLP HTTP exporter -> Jaeger (or another OTLP backend)
 - Correlation: `correlation_id` (app-level) + `trace_id`/`span_id` (trace-level)
 
 ## Log Format
@@ -61,6 +63,10 @@ Depending on operation, events can include:
 - API injects W3C trace context into scan messages (`traceparent`, `tracestate`).
 - Fetcher extracts incoming trace context and forwards refreshed context to scan queue.
 - Worker extracts trace context and creates child spans for read/analyze/persist work.
+- Spans also carry explicit identifiers for search:
+  - `app.request_id`: per-request id returned as API `job_id`
+  - `app.run_id`: execution id returned as API `run_id`
+  - `app.job_id`: compatibility alias of `app.run_id`
 
 ## OpenTelemetry Configuration
 
@@ -74,6 +80,9 @@ Runtime environment variables:
 - `OTEL_TRACES_SAMPLER_RATIO` (default `0.10`)
 - `OTEL_SERVICE_NAMESPACE` (default `aca-urlscanner`)
 - `APPINSIGHTS_CONN` or `APPLICATIONINSIGHTS_CONNECTION_STRING`
+- `OTEL_EXPORTER_OTLP_ENDPOINT` (base endpoint, e.g. `http://jaeger:4318`)
+- `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` (optional explicit traces endpoint override)
+- `OTEL_EXPORTER_OTLP_HEADERS` (optional comma-separated `k=v` headers)
 
 ## Azure Integration
 
@@ -126,6 +135,31 @@ curl -X POST http://localhost:8000/scan \
 ```
 
 Then inspect logs in `api`, `fetcher`, and `worker` for the same `correlation_id`.
+
+### Local sampler-ratio validation (without Azure)
+
+```bash
+OTEL_ENABLED=true OTEL_TRACES_SAMPLER_RATIO=0.10 \
+  docker compose --profile observability up --build -d
+```
+
+Jaeger endpoints:
+- UI/API: `http://localhost:16686`
+- OTLP HTTP ingest: `http://localhost:4318/v1/traces`
+- OTLP gRPC ingest: `localhost:4317`
+
+Run validation against Jaeger:
+
+```bash
+python3 scripts/local/verify_trace_sampling.py \
+  --api-url http://localhost:8000 \
+  --api-key local-dev-key \
+  --jaeger-url http://localhost:16686 \
+  --expected-ratio 0.10 \
+  --requests 80
+```
+
+If this returns `PASS`, observed sampled traces are within tolerance for the configured ratio.
 
 ## Implementation Map
 
