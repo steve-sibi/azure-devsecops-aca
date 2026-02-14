@@ -15,5 +15,8 @@ ContainerAppConsoleLogs_CL
     trace_id = tostring(logData.trace_id),
     span_id = tostring(logData.span_id),
     duration_ms = toint(logData.duration_ms),
-    url = tostring(logData.url)
+    url = tostring(logData.url),
+    delivery_count = toint(logData.delivery_count),
+    error_code = tostring(logData.error_code),
+    dlq_reason = tostring(logData.dlq_reason)
 | order by TimeGenerated asc

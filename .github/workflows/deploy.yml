@@ -56,7 +56,7 @@ env:
   MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON: ${{ vars.ACA_MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON || '' }}
   MONITOR_ALERTS_ENABLED: ${{ vars.ACA_MONITOR_ALERTS_ENABLED || '' }}
   MONITOR_WORKBOOK_ENABLED: ${{ vars.ACA_MONITOR_WORKBOOK_ENABLED || '' }}
-  OBS_VERIFY_REQUIRE_TRACE: ${{ vars.ACA_OBS_VERIFY_REQUIRE_TRACE || 'false' }}
+  OBS_VERIFY_REQUIRE_TRACE: ${{ vars.ACA_OBS_VERIFY_REQUIRE_TRACE || 'true' }}
 
 jobs:
   infra-bootstrap:
@@ -284,7 +284,7 @@ jobs:
       - name: Verify observability ingestion
         id: verify_observability
         if: always()
-        continue-on-error: ${{ !(vars.ACA_OBS_VERIFY_REQUIRE_TRACE == 'true' || vars.ACA_OBS_VERIFY_REQUIRE_TRACE == '1' || vars.ACA_OBS_VERIFY_REQUIRE_TRACE == 'yes') }}
+        continue-on-error: ${{ !(env.OBS_VERIFY_REQUIRE_TRACE == 'true' || env.OBS_VERIFY_REQUIRE_TRACE == '1' || env.OBS_VERIFY_REQUIRE_TRACE == 'yes' || env.OBS_VERIFY_REQUIRE_TRACE == 'TRUE' || env.OBS_VERIFY_REQUIRE_TRACE == 'YES') }}
         shell: bash
         env:
           OBS_VERIFY_REQUIRE_TRACE: ${{ env.OBS_VERIFY_REQUIRE_TRACE }}

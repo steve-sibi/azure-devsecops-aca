@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -12,11 +13,13 @@ APP_ROOT = REPO_ROOT / "app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
+from common.errors import ErrorInfo  # noqa: E402
 from common.message_consumer import (  # noqa: E402
     ShutdownFlag,
     decode_redis_body,
     decode_servicebus_body,
     install_signal_handlers,
+    run_consumer,
 )
 
 
@@ -144,3 +147,134 @@ class TestDecodeRedisBody:
         assert task == {"job_id": "abc123", "url": "https://example.com"}
         assert delivery_count == 1
         assert error is not None  # Conversion error
+
+
+class _FakeRedisClient:
+    def __init__(self, queue_key: str, payload: str) -> None:
+        self._queue_key = queue_key
+        self._payload = payload
+        self._served = False
+        self.rpush_calls: list[tuple[str, str]] = []
+
+    def blpop(self, _key: str, timeout: int):  # noqa: ARG002
+        if self._served:
+            return None
+        self._served = True
+        return (self._queue_key, self._payload)
+
+    def rpush(self, key: str, value: str):
+        self.rpush_calls.append((key, value))
+
+
+def test_run_consumer_logs_structured_retry_fields(monkeypatch, caplog):
+    queue_key = "queue:tasks"
+    dlq_key = "dlq:tasks"
+    payload = json.dumps(
+        {
+            "schema": "scan-task-v1",
+            "delivery_count": 1,
+            "payload": {"job_id": "job-1", "correlation_id": "corr-1"},
+        }
+    )
+    redis_client = _FakeRedisClient(queue_key, payload)
+    flag = ShutdownFlag()
+
+    monkeypatch.setattr(
+        "common.message_consumer.classify_exception",
+        lambda _exc: ErrorInfo(
+            code="network_error",
+            message="network error",
+            retryable=True,
+            log_traceback=False,
+        ),
+    )
+
+    def _process(_task: dict):
+        flag.shutdown = True
+        raise RuntimeError("boom")
+
+    with caplog.at_level(logging.WARNING):
+        run_consumer(
+            component="worker",
+            shutdown_flag=flag,
+            queue_backend="redis",
+            queue_name="tasks",
+            batch_size=1,
+            max_wait=1,
+            prefetch=1,
+            max_retries=5,
+            process=_process,
+            redis_client=redis_client,
+            redis_queue_key=queue_key,
+            redis_dlq_key=dlq_key,
+        )
+
+    assert redis_client.rpush_calls
+    assert redis_client.rpush_calls[0][0] == queue_key
+    retried = json.loads(redis_client.rpush_calls[0][1])
+    assert retried["delivery_count"] == 2
+
+    record = next(r for r in caplog.records if "Requeued message" in r.getMessage())
+    fields = record.extra_fields
+    assert fields["job_id"] == "job-1"
+    assert fields["correlation_id"] == "corr-1"
+    assert fields["delivery_count"] == 1
+    assert fields["error_code"] == "network_error"
+    assert "dlq_reason" in fields
+
+
+def test_run_consumer_logs_structured_dlq_fields(monkeypatch, caplog):
+    queue_key = "queue:tasks"
+    dlq_key = "dlq:tasks"
+    payload = json.dumps(
+        {
+            "schema": "scan-task-v1",
+            "delivery_count": 1,
+            "payload": {"job_id": "job-2", "correlation_id": "corr-2"},
+        }
+    )
+    redis_client = _FakeRedisClient(queue_key, payload)
+    flag = ShutdownFlag()
+
+    monkeypatch.setattr(
+        "common.message_consumer.classify_exception",
+        lambda _exc: ErrorInfo(
+            code="invalid_message",
+            message="invalid payload",
+            retryable=False,
+            log_traceback=False,
+        ),
+    )
+
+    def _process(_task: dict):
+        flag.shutdown = True
+        raise ValueError("bad payload")
+
+    with caplog.at_level(logging.ERROR):
+        run_consumer(
+            component="fetcher",
+            shutdown_flag=flag,
+            queue_backend="redis",
+            queue_name="tasks",
+            batch_size=1,
+            max_wait=1,
+            prefetch=1,
+            max_retries=5,
+            process=_process,
+            redis_client=redis_client,
+            redis_queue_key=queue_key,
+            redis_dlq_key=dlq_key,
+        )
+
+    assert redis_client.rpush_calls
+    assert redis_client.rpush_calls[0][0] == dlq_key
+    dlq_entry = json.loads(redis_client.rpush_calls[0][1])
+    assert dlq_entry["dlq_reason"] == "invalid_message"
+
+    record = next(r for r in caplog.records if "DLQ'd message" in r.getMessage())
+    fields = record.extra_fields
+    assert fields["job_id"] == "job-2"
+    assert fields["correlation_id"] == "corr-2"
+    assert fields["delivery_count"] == 1
+    assert fields["error_code"] == "invalid_message"
+    assert fields["dlq_reason"] == "invalid_message"

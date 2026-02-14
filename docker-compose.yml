@@ -24,6 +24,12 @@ services:
       - sh
       - -c
       - freshclam --config-file=/etc/clamav/freshclam.conf && exec /usr/sbin/clamd --config-file=/etc/clamav/clamd.compose.conf
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/clamav-healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 20
+      start_period: 20s
 
   jaeger:
     image: jaegertracing/all-in-one:1.59.0
@@ -100,7 +106,7 @@ services:
       redis:
         condition: service_healthy
       clamav:
-        condition: service_started
+        condition: service_healthy
     healthcheck:
       test:
         - CMD

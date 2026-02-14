@@ -32,22 +32,6 @@ retry() {
   done
 }
 
-# Curl wrapper with better error handling
-# Returns HTTP code, captures body to stdout, network errors return 000
-curl_with_code() {
-  local url="$1"
-  shift
-  local http_code body
-  # Use a temp file to capture body while getting status code
-  local tmp
-  tmp="$(mktemp)"
-  http_code="$(curl --connect-timeout 10 --max-time 30 -sS -w '%{http_code}' -o "${tmp}" "$@" "${url}" 2>/dev/null)" || http_code="000"
-  body="$(cat "${tmp}" 2>/dev/null || true)"
-  rm -f "${tmp}"
-  echo "${http_code}"
-  # Return body on fd 3 if needed, or callers can use separate calls
-}
-
 require_env RG
 require_env PREFIX
 require_env TFSTATE_SA

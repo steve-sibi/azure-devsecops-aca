@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from uuid import UUID
 
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
 # The application code is built/run from within ./app in Docker; add it to sys.path for tests.
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -339,3 +340,92 @@ def test_admin_key_mint_and_revoke_lifecycle(monkeypatch):
 
     revoked = _run(api.admin_revoke_api_key(minted_hash, _="f" * 64))
     assert revoked["revoked"] is True
+
+
+def test_otel_request_spans_extracts_inbound_trace_context(monkeypatch):
+    extracted: dict = {}
+    sentinel_ctx = object()
+    monkeypatch.setattr(api, "TELEMETRY_ACTIVE", True)
+    monkeypatch.setattr(
+        api,
+        "extract_trace_context",
+        lambda *, traceparent, tracestate: extracted.update(
+            {"traceparent": traceparent, "tracestate": tracestate}
+        )
+        or sentinel_ctx,
+    )
+
+    class _FakeSpan:
+        def __init__(self) -> None:
+            self.attributes: dict[str, object] = {}
+            self.updated_name = ""
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):  # noqa: ANN001
+            return False
+
+        def set_attribute(self, key: str, value):
+            self.attributes[key] = value
+
+        def update_name(self, value: str):
+            self.updated_name = value
+
+        def set_status(self, *_args, **_kwargs):
+            return None
+
+        def record_exception(self, *_args, **_kwargs):
+            return None
+
+        def add_event(self, *_args, **_kwargs):
+            return None
+
+    class _FakeTracer:
+        def __init__(self) -> None:
+            self.calls: list[dict] = []
+
+        def start_as_current_span(self, name: str, *, context=None, kind=None):
+            span = _FakeSpan()
+            self.calls.append(
+                {"name": name, "context": context, "kind": kind, "span": span}
+            )
+            return span
+
+    fake_tracer = _FakeTracer()
+    from opentelemetry import trace as otel_trace
+
+    monkeypatch.setattr(otel_trace, "get_tracer", lambda _name: fake_tracer)
+
+    scope = {
+        "type": "http",
+        "http_version": "1.1",
+        "method": "GET",
+        "path": "/scan/test-job",
+        "raw_path": b"/scan/test-job",
+        "query_string": b"",
+        "headers": [
+            (
+                b"traceparent",
+                b"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            ),
+            (b"tracestate", b"congo=t61rcWkgMzE"),
+            (b"host", b"testserver"),
+        ],
+        "scheme": "http",
+        "server": ("testserver", 80),
+        "client": ("testclient", 50000),
+        "root_path": "",
+    }
+    request = Request(scope)
+
+    async def _call_next(_request: Request):
+        return JSONResponse({"ok": True}, status_code=200)
+
+    response = _run(api.otel_request_spans(request, _call_next))
+    assert response.status_code == 200
+    assert extracted["traceparent"] == (
+        "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    )
+    assert extracted["tracestate"] == "congo=t61rcWkgMzE"
+    assert fake_tracer.calls[0]["context"] is sentinel_ctx

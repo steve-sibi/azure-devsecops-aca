@@ -12,6 +12,9 @@ ContainerAppConsoleLogs_CL
     job_id = tostring(logData.job_id),
     correlation_id = tostring(logData.correlation_id),
     trace_id = tostring(logData.trace_id),
+    delivery_count = toint(logData.delivery_count),
+    error_code = tostring(logData.error_code),
+    dlq_reason = tostring(logData.dlq_reason),
     error = tostring(logData.error),
     error_type = tostring(logData.error_type)
 | order by TimeGenerated desc

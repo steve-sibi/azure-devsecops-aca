@@ -22,6 +22,7 @@ def main() -> int:
     logging_guide = repo_root / "docs" / "azure-logging-guide.md"
     deploy_summary = repo_root / ".github" / "scripts" / "deploy_summary.py"
     obs_verify = repo_root / "scripts" / "gha" / "verify_observability.sh"
+    docker_cleanup = repo_root / "scripts" / "docker_cleanup.sh"
     api_main = repo_root / "app" / "api" / "main.py"
 
     unsupported_tokens = ("USE_MANAGED_IDENTITY", "SERVICEBUS_FQDN")
@@ -59,6 +60,13 @@ def main() -> int:
     if '@app.get("/", response_class=HTMLResponse' not in api_text:
         errors.append(
             f"{api_main}: expected dashboard route `GET /` was not found"
+        )
+
+    readme_text = _read(readme)
+    docker_cleanup_text = _read(docker_cleanup)
+    if "PRUNE_BUILD_CACHE" in readme_text and "PRUNE_BUILD_CACHE" not in docker_cleanup_text:
+        errors.append(
+            f"{readme}: references `PRUNE_BUILD_CACHE`, but {docker_cleanup} does not support it"
         )
 
     if errors:

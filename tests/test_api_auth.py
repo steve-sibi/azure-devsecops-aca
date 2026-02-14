@@ -73,3 +73,35 @@ def test_non_admin_auth_can_still_be_disabled(monkeypatch):
     api._rate_buckets.clear()
     req = _request("/scan", "POST")
     assert _run(api.require_api_key(req, None)) is None
+
+
+def test_list_jobs_still_requires_key_when_auth_toggle_disabled(monkeypatch):
+    monkeypatch.setattr(api, "REQUIRE_API_KEY", False)
+    monkeypatch.setattr(api, "RESULT_BACKEND", "redis")
+    monkeypatch.setattr(api, "redis_client", object())
+    monkeypatch.setattr(api, "table_client", None)
+
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            api.list_jobs(
+                _request("/jobs", "GET"),
+                limit=10,
+                scan_type=None,
+                status=None,
+                api_key_hash=None,
+            )
+        )
+    assert exc.value.status_code == 401
+    assert "Missing API key" in str(exc.value.detail)
+
+
+def test_clear_jobs_still_requires_key_when_auth_toggle_disabled(monkeypatch):
+    monkeypatch.setattr(api, "REQUIRE_API_KEY", False)
+    monkeypatch.setattr(api, "RESULT_BACKEND", "redis")
+    monkeypatch.setattr(api, "redis_client", object())
+    monkeypatch.setattr(api, "table_client", None)
+
+    with pytest.raises(HTTPException) as exc:
+        _run(api.clear_jobs(scan_type=None, api_key_hash=None))
+    assert exc.value.status_code == 401
+    assert "Missing API key" in str(exc.value.detail)

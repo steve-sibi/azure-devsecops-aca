@@ -18,7 +18,7 @@ locals {
     | where tostring(logData.service) in ("fetcher", "worker")
     | where tostring(logData.level) in ("ERROR", "CRITICAL", "WARNING")
     | where tostring(logData.message) has_any ("error", "failed", "DLQ", "blocked", "retry")
-    | project TimeGenerated, service=tostring(logData.service), level=tostring(logData.level), message=tostring(logData.message), job_id=tostring(logData.job_id), correlation_id=tostring(logData.correlation_id), trace_id=tostring(logData.trace_id)
+    | project TimeGenerated, service=tostring(logData.service), level=tostring(logData.level), message=tostring(logData.message), job_id=tostring(logData.job_id), correlation_id=tostring(logData.correlation_id), trace_id=tostring(logData.trace_id), delivery_count=toint(logData.delivery_count), error_code=tostring(logData.error_code), dlq_reason=tostring(logData.dlq_reason)
   KQL
 
   kql_queue_backlog = <<-KQL

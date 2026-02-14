@@ -1,11 +1,14 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
 HOST="${CLAMAV_HEALTH_HOST:-127.0.0.1}"
 PORT="${CLAMAV_HEALTH_PORT:-3310}"
 TIMEOUT_SECONDS="${CLAMAV_HEALTH_TIMEOUT_SECONDS:-2}"
 
-resp="$(printf 'PING\n' | nc -N -w "${TIMEOUT_SECONDS}" "${HOST}" "${PORT}" 2>/dev/null || true)"
-resp="$(printf '%s' "${resp}" | tr -d '\r\n')"
+exec 3<>"/dev/tcp/${HOST}/${PORT}"
+printf 'PING\n' >&3
+IFS= read -r -t "${TIMEOUT_SECONDS}" RESP <&3
+RESP="${RESP//$'\r'/}"
+RESP="${RESP//$'\n'/}"
 
-[ "${resp}" = "PONG" ]
+[[ "${RESP}" == "PONG" ]]

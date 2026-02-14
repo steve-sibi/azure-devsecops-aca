@@ -20,8 +20,10 @@ COPY clamav/freshclam.conf /etc/clamav/freshclam.conf
 COPY clamav/clamd.sidecar.conf /etc/clamav/clamd.sidecar.conf
 COPY clamav/clamd.compose.conf /etc/clamav/clamd.compose.conf
 COPY clamav/freshclam-updater.sh /usr/local/bin/clamav-freshclam-updater
+COPY clamav/healthcheck.sh /usr/local/bin/clamav-healthcheck
 
 RUN chmod +x /usr/local/bin/clamav-freshclam-updater \
+    && chmod +x /usr/local/bin/clamav-healthcheck \
     && if ! id -u clamav >/dev/null 2>&1; then useradd -r -s /usr/sbin/nologin clamav; fi \
     && mkdir -p /var/lib/clamav /var/log/clamav \
     && chown -R clamav:clamav /var/lib/clamav /var/log/clamav

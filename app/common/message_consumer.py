@@ -24,6 +24,8 @@ from azure.servicebus import ServiceBusClient
 from azure.servicebus.exceptions import OperationTimeoutError, ServiceBusError
 from common.errors import classify_exception
 
+logger = logging.getLogger(__name__)
+
 
 def _is_http_4xx(code: str) -> bool:
     if not isinstance(code, str):
@@ -115,6 +117,66 @@ def _safe_delivery_count(msg) -> int:
         return 0
 
 
+def _consumer_extra_fields(
+    *,
+    component: str,
+    queue_backend: str,
+    job_id: Optional[str],
+    correlation_id: Optional[str],
+    delivery_count: int,
+    error_code: str,
+    error_message: str,
+    retryable: bool,
+    dlq_reason: Optional[str] = None,
+) -> dict[str, Any]:
+    return {
+        "component": component,
+        "queue_backend": queue_backend,
+        "job_id": job_id,
+        "correlation_id": correlation_id,
+        "delivery_count": int(delivery_count),
+        "error_code": str(error_code or ""),
+        "error_message": str(error_message or ""),
+        "retryable": bool(retryable),
+        "dlq_reason": dlq_reason,
+    }
+
+
+def _log_consumer_event(
+    *,
+    level: int,
+    message: str,
+    component: str,
+    queue_backend: str,
+    job_id: Optional[str],
+    correlation_id: Optional[str],
+    delivery_count: int,
+    error_code: str,
+    error_message: str,
+    retryable: bool,
+    dlq_reason: Optional[str] = None,
+    exc_info: bool = False,
+) -> None:
+    logger.log(
+        level,
+        message,
+        extra={
+            "extra_fields": _consumer_extra_fields(
+                component=component,
+                queue_backend=queue_backend,
+                job_id=job_id,
+                correlation_id=correlation_id,
+                delivery_count=delivery_count,
+                error_code=error_code,
+                error_message=error_message,
+                retryable=retryable,
+                dlq_reason=dlq_reason,
+            )
+        },
+        exc_info=exc_info,
+    )
+
+
 def run_consumer(
     *,
     component: str,
@@ -177,36 +239,44 @@ def run_consumer(
                     }
                     next_envelope["delivery_count"] = delivery_count + 1
                     redis_client.rpush(redis_queue_key, json.dumps(next_envelope))
-                    if info.log_traceback:
-                        logging.exception(
-                            "[%s] Requeued message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
-                            component,
-                            job_id,
-                            correlation_id,
-                            delivery_count,
-                            info.code,
-                            info.message,
-                        )
-                    else:
-                        logging.warning(
-                            "[%s] Requeued message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
-                            component,
-                            job_id,
-                            correlation_id,
-                            delivery_count,
-                            info.code,
-                            info.message,
-                        )
+                    _log_consumer_event(
+                        level=logging.ERROR if info.log_traceback else logging.WARNING,
+                        message=(
+                            f"[{component}] Requeued message "
+                            f"(delivery_count={delivery_count} code={info.code}): {info.message}"
+                        ),
+                        component=component,
+                        queue_backend="redis",
+                        job_id=str(job_id) if job_id is not None else None,
+                        correlation_id=(
+                            str(correlation_id) if correlation_id is not None else None
+                        ),
+                        delivery_count=delivery_count,
+                        error_code=info.code,
+                        error_message=info.message,
+                        retryable=info.retryable,
+                        exc_info=info.log_traceback,
+                    )
                 else:
                     if _should_soft_complete(info):
-                        logging.warning(
-                            "[%s] Soft-failed message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
-                            component,
-                            job_id,
-                            correlation_id,
-                            delivery_count,
-                            info.code,
-                            info.message,
+                        _log_consumer_event(
+                            level=logging.WARNING,
+                            message=(
+                                f"[{component}] Soft-failed message "
+                                f"(delivery_count={delivery_count} code={info.code}): {info.message}"
+                            ),
+                            component=component,
+                            queue_backend="redis",
+                            job_id=str(job_id) if job_id is not None else None,
+                            correlation_id=(
+                                str(correlation_id)
+                                if correlation_id is not None
+                                else None
+                            ),
+                            delivery_count=delivery_count,
+                            error_code=info.code,
+                            error_message=info.message,
+                            retryable=info.retryable,
                         )
                         continue
                     dlq_reason = info.code
@@ -220,28 +290,26 @@ def run_consumer(
                     dlq_envelope["last_error_code"] = info.code
                     dlq_envelope["dlq_reason"] = dlq_reason
                     redis_client.rpush(redis_dlq_key, json.dumps(dlq_envelope))
-                    if info.log_traceback:
-                        logging.exception(
-                            "[%s] DLQ'd message (job_id=%s correlation_id=%s delivery_count=%s dlq_reason=%s code=%s): %s",
-                            component,
-                            job_id,
-                            correlation_id,
-                            delivery_count,
-                            dlq_reason,
-                            info.code,
-                            info.message,
-                        )
-                    else:
-                        logging.error(
-                            "[%s] DLQ'd message (job_id=%s correlation_id=%s delivery_count=%s dlq_reason=%s code=%s): %s",
-                            component,
-                            job_id,
-                            correlation_id,
-                            delivery_count,
-                            dlq_reason,
-                            info.code,
-                            info.message,
-                        )
+                    _log_consumer_event(
+                        level=logging.ERROR,
+                        message=(
+                            f"[{component}] DLQ'd message "
+                            f"(delivery_count={delivery_count} dlq_reason={dlq_reason} "
+                            f"code={info.code}): {info.message}"
+                        ),
+                        component=component,
+                        queue_backend="redis",
+                        job_id=str(job_id) if job_id is not None else None,
+                        correlation_id=(
+                            str(correlation_id) if correlation_id is not None else None
+                        ),
+                        delivery_count=delivery_count,
+                        error_code=info.code,
+                        error_message=info.message,
+                        retryable=info.retryable,
+                        dlq_reason=str(dlq_reason),
+                        exc_info=info.log_traceback,
+                    )
         return
 
     if queue_backend == "servicebus":
@@ -299,47 +367,83 @@ def run_consumer(
 
                                 if retrying:
                                     receiver.abandon_message(msg)
-                                    if info.log_traceback:
-                                        logging.exception(
-                                            "[%s] Abandoned message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
-                                            component,
-                                            job_id,
-                                            correlation_id,
-                                            delivery_count,
-                                            info.code,
-                                            info.message,
-                                        )
-                                    else:
-                                        logging.warning(
-                                            "[%s] Abandoned message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
-                                            component,
-                                            job_id,
-                                            correlation_id,
-                                            delivery_count,
-                                            info.code,
-                                            info.message,
-                                        )
+                                    _log_consumer_event(
+                                        level=(
+                                            logging.ERROR
+                                            if info.log_traceback
+                                            else logging.WARNING
+                                        ),
+                                        message=(
+                                            f"[{component}] Abandoned message "
+                                            f"(delivery_count={delivery_count} code={info.code}): {info.message}"
+                                        ),
+                                        component=component,
+                                        queue_backend="servicebus",
+                                        job_id=(
+                                            str(job_id) if job_id is not None else None
+                                        ),
+                                        correlation_id=(
+                                            str(correlation_id)
+                                            if correlation_id is not None
+                                            else None
+                                        ),
+                                        delivery_count=delivery_count,
+                                        error_code=info.code,
+                                        error_message=info.message,
+                                        retryable=info.retryable,
+                                        exc_info=info.log_traceback,
+                                    )
                                 else:
                                     if _should_soft_complete(info):
                                         try:
                                             receiver.complete_message(msg)
-                                            logging.warning(
-                                                "[%s] Soft-completed message (job_id=%s correlation_id=%s delivery_count=%s code=%s): %s",
-                                                component,
-                                                job_id,
-                                                correlation_id,
-                                                delivery_count,
-                                                info.code,
-                                                info.message,
+                                            _log_consumer_event(
+                                                level=logging.WARNING,
+                                                message=(
+                                                    f"[{component}] Soft-completed message "
+                                                    f"(delivery_count={delivery_count} code={info.code}): {info.message}"
+                                                ),
+                                                component=component,
+                                                queue_backend="servicebus",
+                                                job_id=(
+                                                    str(job_id)
+                                                    if job_id is not None
+                                                    else None
+                                                ),
+                                                correlation_id=(
+                                                    str(correlation_id)
+                                                    if correlation_id is not None
+                                                    else None
+                                                ),
+                                                delivery_count=delivery_count,
+                                                error_code=info.code,
+                                                error_message=info.message,
+                                                retryable=info.retryable,
                                             )
                                         except Exception as complete_exc:
-                                            logging.error(
-                                                "[%s] Failed to complete soft-failed message (job_id=%s correlation_id=%s delivery_count=%s): %s",
-                                                component,
-                                                job_id,
-                                                correlation_id,
-                                                delivery_count,
-                                                complete_exc,
+                                            _log_consumer_event(
+                                                level=logging.ERROR,
+                                                message=(
+                                                    f"[{component}] Failed to complete soft-failed message "
+                                                    f"(delivery_count={delivery_count}): {complete_exc}"
+                                                ),
+                                                component=component,
+                                                queue_backend="servicebus",
+                                                job_id=(
+                                                    str(job_id)
+                                                    if job_id is not None
+                                                    else None
+                                                ),
+                                                correlation_id=(
+                                                    str(correlation_id)
+                                                    if correlation_id is not None
+                                                    else None
+                                                ),
+                                                delivery_count=delivery_count,
+                                                error_code=info.code,
+                                                error_message=str(complete_exc),
+                                                retryable=False,
+                                                dlq_reason="complete-failed",
                                             )
                                         continue
                                     dlq_reason = info.code or "error"
@@ -356,32 +460,45 @@ def run_consumer(
                                         reason=dlq_reason,
                                         error_description=dlq_description,
                                     )
-                                    if info.log_traceback:
-                                        logging.exception(
-                                            "[%s] DLQ'd message (job_id=%s correlation_id=%s delivery_count=%s dlq_reason=%s code=%s): %s",
-                                            component,
-                                            job_id,
-                                            correlation_id,
-                                            delivery_count,
-                                            dlq_reason,
-                                            info.code,
-                                            info.message,
-                                        )
-                                    else:
-                                        logging.error(
-                                            "[%s] DLQ'd message (job_id=%s correlation_id=%s delivery_count=%s dlq_reason=%s code=%s): %s",
-                                            component,
-                                            job_id,
-                                            correlation_id,
-                                            delivery_count,
-                                            dlq_reason,
-                                            info.code,
-                                            info.message,
-                                        )
+                                    _log_consumer_event(
+                                        level=logging.ERROR,
+                                        message=(
+                                            f"[{component}] DLQ'd message "
+                                            f"(delivery_count={delivery_count} dlq_reason={dlq_reason} "
+                                            f"code={info.code}): {info.message}"
+                                        ),
+                                        component=component,
+                                        queue_backend="servicebus",
+                                        job_id=(
+                                            str(job_id) if job_id is not None else None
+                                        ),
+                                        correlation_id=(
+                                            str(correlation_id)
+                                            if correlation_id is not None
+                                            else None
+                                        ),
+                                        delivery_count=delivery_count,
+                                        error_code=info.code,
+                                        error_message=info.message,
+                                        retryable=info.retryable,
+                                        dlq_reason=str(dlq_reason),
+                                        exc_info=info.log_traceback,
+                                    )
                     except OperationTimeoutError:
                         continue
                     except ServiceBusError as e:
-                        logging.error("[%s] ServiceBusError: %s", component, e)
+                        logger.error(
+                            "[%s] ServiceBusError",
+                            component,
+                            extra={
+                                "extra_fields": {
+                                    "component": component,
+                                    "queue_backend": "servicebus",
+                                    "error_code": "servicebus_error",
+                                    "error_message": str(e),
+                                }
+                            },
+                        )
                         time.sleep(2)
         return
 

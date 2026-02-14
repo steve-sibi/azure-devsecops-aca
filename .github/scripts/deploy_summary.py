@@ -21,7 +21,6 @@ Security Note:
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import sys
 from dataclasses import dataclass
@@ -75,11 +74,6 @@ def md_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
-def md_collapsible(title: str, content: str) -> str:
-    """Wrap content in a collapsible details block."""
-    return f"<details>\n<summary>{title}</summary>\n\n{content}\n\n</details>"
-
-
 def md_code_block(content: str, lang: str = "") -> str:
     """Wrap content in a fenced code block."""
     return f"```{lang}\n{content}\n```"
@@ -108,15 +102,6 @@ def sanitize_monitor_id(value: str) -> str:
     if lower in {"null", "none"}:
         return ""
     return text
-
-
-def get_env_json(name: str) -> Any:
-    """Parse environment variable as JSON."""
-    raw = get_env(name, "{}")
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        return {}
 
 
 def get_timestamp() -> str:

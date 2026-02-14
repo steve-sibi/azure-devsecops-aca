@@ -613,6 +613,7 @@ The API stores a lightweight job index keyed by a **hash of the caller’s API k
 - `GET /jobs` lists only jobs created with *your* API key.
 - `GET /scan/{job_id}` and `GET /scan/{job_id}/screenshot` are owner-protected (a different API key won’t be able to fetch another user’s request IDs).
 - Per-key rate limits can be attached when minting keys via `POST /admin/api-keys`.
+- Even when `REQUIRE_API_KEY=false`, history endpoints remain key-scoped: `GET /jobs` and `DELETE /jobs` still require an API key so ownership can be enforced.
 
 You can still use static env keys (`ACA_API_KEY`, `ACA_API_KEYS`) as bootstrap/fallback keys.
 
@@ -678,7 +679,7 @@ Expected result:
 If you rebuild often, Docker will keep old, untagged images (shown as `\<none\>`) when a new build replaces the tag. They’re safe to delete.
 
 - Remove dangling images: `bash scripts/docker_cleanup.sh`
-- Also remove build cache (more aggressive): `PRUNE_BUILD_CACHE=true bash scripts/docker_cleanup.sh`
+- To prune global build cache separately (outside this script): `docker builder prune -af`
 
 ### Azure (Container Apps)
 - Trigger the **Deploy** workflow manually (Actions tab → Deploy → Run workflow).

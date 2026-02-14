@@ -74,6 +74,7 @@ from common.webpubsub import (
     group_for_run,
 )
 from common.telemetry import (
+    extract_trace_context,
     inject_trace_context,
     setup_telemetry,
 )
@@ -718,7 +719,6 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
     url = None
     engines = []
     sha256 = None
-    download_blocked = None
 
     if isinstance(details, dict):
         url_val = details.get("url")
@@ -734,9 +734,6 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
         sha_val = details.get("sha256")
         if isinstance(sha_val, str) and sha_val:
             sha256 = sha_val
-
-        if isinstance(details.get("download_blocked"), bool):
-            download_blocked = bool(details.get("download_blocked"))
 
     size_bytes = _safe_int(entity.get("size_bytes"))
     duration_ms = _safe_int(entity.get("duration_ms"))
@@ -754,9 +751,6 @@ def _build_summary(entity: dict, details: Optional[dict]) -> dict:
         summary["duration_ms"] = duration_ms
     if correlation_id:
         summary["correlation_id"] = correlation_id
-
-    if download_blocked is not None:
-        summary["download_blocked"] = download_blocked
 
     # Download metadata (if present)
     if isinstance(details, dict) and isinstance(details.get("download"), dict):
@@ -1098,8 +1092,14 @@ async def otel_request_spans(request: Request, call_next):
 
     tracer = trace.get_tracer("aca-fastapi-api")
     span_name = f"{request.method} {request.url.path}"
+    parent_ctx = extract_trace_context(
+        traceparent=request.headers.get("traceparent"),
+        tracestate=request.headers.get("tracestate"),
+    )
 
-    with tracer.start_as_current_span(span_name, kind=SpanKind.SERVER) as span:
+    with tracer.start_as_current_span(
+        span_name, context=parent_ctx, kind=SpanKind.SERVER
+    ) as span:
         span.set_attribute("http.method", request.method)
         span.set_attribute("http.target", request.url.path)
         span.set_attribute("http.url", str(request.url))
