@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
@@ -393,9 +394,28 @@ def test_otel_request_spans_extracts_inbound_trace_context(monkeypatch):
             return span
 
     fake_tracer = _FakeTracer()
-    from opentelemetry import trace as otel_trace
+    fake_trace_module = types.ModuleType("opentelemetry.trace")
+    fake_trace_module.get_tracer = lambda _name: fake_tracer
 
-    monkeypatch.setattr(otel_trace, "get_tracer", lambda _name: fake_tracer)
+    class _FakeSpanKind:
+        SERVER = "server"
+
+    class _FakeStatusCode:
+        ERROR = "error"
+
+    class _FakeStatus:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+    fake_trace_module.SpanKind = _FakeSpanKind
+    fake_trace_module.StatusCode = _FakeStatusCode
+    fake_trace_module.Status = _FakeStatus
+
+    fake_otel_module = types.ModuleType("opentelemetry")
+    fake_otel_module.trace = fake_trace_module
+
+    monkeypatch.setitem(sys.modules, "opentelemetry", fake_otel_module)
+    monkeypatch.setitem(sys.modules, "opentelemetry.trace", fake_trace_module)
 
     scope = {
         "type": "http",
