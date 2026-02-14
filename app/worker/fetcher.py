@@ -1,7 +1,7 @@
 """
 Fetcher stage (URL scan pipeline).
 
-Consumes `scan-task-v1` messages from the "fetch" queue, downloads the URL (with the
+Consumes `scan-v1` messages from the "fetch" queue, downloads the URL (with the
 same SSRF protections as the rest of the pipeline), writes the bytes to the shared
 artifact directory, and forwards a `scan-artifact-v1` message to the "scan" queue.
 
@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Optional
 
 from azure.data.tables import TableClient
-from azure.servicebus import ServiceBusClient, ServiceBusMessage
+from azure.servicebus import ServiceBusClient, ServiceBusMessage, ServiceBusSender
 from azure.servicebus._common.message import PrimitiveTypes
 from common.config import (
     ConsumerConfig,
@@ -85,6 +85,8 @@ install_signal_handlers(shutdown_flag)
 table_client: Optional[TableClient] = None
 redis_client = None
 result_persister: Optional[ResultPersister] = None
+scan_sb_client: Optional[ServiceBusClient] = None
+scan_sb_sender: Optional[ServiceBusSender] = None
 
 
 def _ensure_artifact_dir() -> Path:
@@ -97,6 +99,38 @@ def _atomic_write(path: Path, data: bytes) -> None:
     tmp = path.with_name(f".{path.name}.tmp")
     tmp.write_bytes(data)
     tmp.replace(path)
+
+
+def _ensure_scan_sender() -> ServiceBusSender:
+    global scan_sb_client, scan_sb_sender
+    if scan_sb_sender is not None:
+        return scan_sb_sender
+    if not SERVICEBUS_SCAN_CONN:
+        raise RuntimeError("SERVICEBUS_SCAN_CONN is required for fetcher forwarding")
+
+    scan_sb_client = ServiceBusClient.from_connection_string(SERVICEBUS_SCAN_CONN)
+    scan_sb_client.__enter__()
+    scan_sb_sender = scan_sb_client.get_queue_sender(queue_name=SCAN_QUEUE_NAME)
+    scan_sb_sender.__enter__()
+    return scan_sb_sender
+
+
+def _close_scan_sender() -> None:
+    global scan_sb_client, scan_sb_sender
+    if scan_sb_sender is not None:
+        try:
+            scan_sb_sender.__exit__(None, None, None)
+        except Exception:
+            pass
+        finally:
+            scan_sb_sender = None
+    if scan_sb_client is not None:
+        try:
+            scan_sb_client.__exit__(None, None, None)
+        except Exception:
+            pass
+        finally:
+            scan_sb_client = None
 
 
 def _enqueue_scan(payload: dict, *, message_id: str):
@@ -131,19 +165,14 @@ def _enqueue_scan(payload: dict, *, message_id: str):
         return
 
     if QUEUE_BACKEND == "servicebus":
-        if not SERVICEBUS_SCAN_CONN:
-            raise RuntimeError(
-                "SERVICEBUS_SCAN_CONN is required for fetcher forwarding"
-            )
-        with ServiceBusClient.from_connection_string(SERVICEBUS_SCAN_CONN) as client:
-            with client.get_queue_sender(queue_name=SCAN_QUEUE_NAME) as sender:
-                msg = ServiceBusMessage(
-                    json.dumps(payload),
-                    content_type="application/json",
-                    message_id=message_id,
-                    application_properties=app_props,
-                )
-                sender.send_messages(msg)
+        sender = _ensure_scan_sender()
+        msg = ServiceBusMessage(
+            json.dumps(payload),
+            content_type="application/json",
+            message_id=message_id,
+            application_properties=app_props,
+        )
+        sender.send_messages(msg)
         return
 
     raise RuntimeError(f"Unsupported QUEUE_BACKEND: {QUEUE_BACKEND}")
@@ -328,6 +357,9 @@ def main() -> None:
         publisher=publisher,
     )
 
+    if QUEUE_BACKEND == "servicebus":
+        _ensure_scan_sender()
+
     log_with_context(
         logger,
         logging.INFO,
@@ -395,22 +427,25 @@ def main() -> None:
             dlq_name=REDIS_DLQ_KEY,
         )
 
-    run_consumer(
-        component="fetcher",
-        shutdown_flag=shutdown_flag,
-        queue_backend=QUEUE_BACKEND,
-        servicebus_conn=SERVICEBUS_CONN,
-        queue_name=QUEUE_NAME,
-        batch_size=BATCH_SIZE,
-        max_wait=MAX_WAIT,
-        prefetch=PREFETCH,
-        max_retries=MAX_RETRIES,
-        redis_client=redis_client,
-        redis_queue_key=REDIS_QUEUE_KEY,
-        redis_dlq_key=REDIS_DLQ_KEY,
-        process=process,
-        on_exception=_on_exception,
-    )
+    try:
+        run_consumer(
+            component="fetcher",
+            shutdown_flag=shutdown_flag,
+            queue_backend=QUEUE_BACKEND,
+            servicebus_conn=SERVICEBUS_CONN,
+            queue_name=QUEUE_NAME,
+            batch_size=BATCH_SIZE,
+            max_wait=MAX_WAIT,
+            prefetch=PREFETCH,
+            max_retries=MAX_RETRIES,
+            redis_client=redis_client,
+            redis_queue_key=REDIS_QUEUE_KEY,
+            redis_dlq_key=REDIS_DLQ_KEY,
+            process=process,
+            on_exception=_on_exception,
+        )
+    finally:
+        _close_scan_sender()
 
     log_with_context(logger, logging.INFO, "Fetcher shutdown complete")
 

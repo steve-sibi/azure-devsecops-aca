@@ -226,40 +226,6 @@ async def get_url_index_entry_async(
 
     raise RuntimeError(f"Unsupported backend: {backend}")
 
-
-def get_url_index_entry_sync(
-    *,
-    backend: str,
-    cfg: UrlDedupeConfig,
-    key: UrlIndexKey,
-    table_client=None,
-    redis_client=None,
-) -> Optional[dict[str, Any]]:
-    if backend == "table":
-        if not table_client:
-            return None
-        try:
-            return table_client.get_entity(
-                partition_key=key.partition_key, row_key=key.row_key
-            )
-        except Exception as e:
-            if _is_table_not_found(e):
-                return None
-            return None
-
-    if backend == "redis":
-        if not redis_client:
-            return None
-        k = redis_url_index_key(cfg=cfg, key=key)
-        try:
-            data = redis_client.hgetall(k)
-        except Exception:
-            return None
-        return data or None
-
-    raise RuntimeError(f"Unsupported backend: {backend}")
-
-
 def _redis_ttl_for_status(*, cfg: UrlDedupeConfig, status: str, result_ttl_seconds: int) -> int:
     ttl = cfg.ttl_seconds if status in _TERMINAL_STATUSES else cfg.in_progress_ttl_seconds
     ttl = int(ttl or 0)
@@ -307,44 +273,6 @@ async def upsert_url_index_entry_async(
 
     raise RuntimeError(f"Unsupported backend: {backend}")
 
-
-def upsert_url_index_entry_sync(
-    *,
-    backend: str,
-    cfg: UrlDedupeConfig,
-    key: UrlIndexKey,
-    record: dict[str, Any],
-    table_client=None,
-    redis_client=None,
-    result_ttl_seconds: int = 0,
-) -> bool:
-    if backend == "table":
-        if not table_client:
-            return False
-        try:
-            table_client.upsert_entity(entity=record)
-            return True
-        except Exception:
-            return False
-
-    if backend == "redis":
-        if not redis_client:
-            return False
-        k = redis_url_index_key(cfg=cfg, key=key)
-        try:
-            redis_client.hset(k, mapping=record)
-            ttl = _redis_ttl_for_status(
-                cfg=cfg, status=str(record.get("status") or ""), result_ttl_seconds=result_ttl_seconds
-            )
-            if ttl > 0:
-                redis_client.expire(k, ttl)
-            return True
-        except Exception:
-            return False
-
-    raise RuntimeError(f"Unsupported backend: {backend}")
-
-
 _REDIS_CONDITIONAL_UPDATE_LUA = r"""
 local key = KEYS[1]
 local expected = ARGV[1]
@@ -365,77 +293,6 @@ end
 
 return 1
 """
-
-
-async def update_url_index_if_job_matches_async(
-    *,
-    backend: str,
-    cfg: UrlDedupeConfig,
-    key: UrlIndexKey,
-    expected_job_id: str,
-    fields: dict[str, Any],
-    table_client=None,
-    redis_client=None,
-    result_ttl_seconds: int = 0,
-) -> bool:
-    if backend == "table":
-        if not table_client:
-            return False
-        try:
-            existing = await table_client.get_entity(
-                partition_key=key.partition_key, row_key=key.row_key
-            )
-        except Exception as e:
-            if _is_table_not_found(e):
-                return False
-            return False
-
-        if str(existing.get("job_id") or "") != str(expected_job_id or ""):
-            return False
-
-        etag = _extract_etag(existing)
-        if not etag:
-            return False
-
-        # Only send the fields we want to merge. The entity returned by get_entity may
-        # include metadata keys (e.g., @odata.etag / metadata) that are not valid
-        # Table Storage properties and can cause update_entity to fail.
-        entity: dict[str, Any] = {"PartitionKey": key.partition_key, "RowKey": key.row_key}
-        entity.update({str(k): v for k, v in fields.items()})
-
-        try:
-            from azure.core.match_conditions import MatchConditions
-            from azure.data.tables import UpdateMode
-
-            await table_client.update_entity(
-                entity=entity,
-                mode=UpdateMode.MERGE,
-                etag=etag,
-                match_condition=MatchConditions.IfNotModified,
-            )
-            return True
-        except Exception:
-            return False
-
-    if backend == "redis":
-        if not redis_client:
-            return False
-        k = redis_url_index_key(cfg=cfg, key=key)
-        ttl = _redis_ttl_for_status(
-            cfg=cfg, status=str(fields.get("status") or ""), result_ttl_seconds=result_ttl_seconds
-        )
-        args: list[str] = [str(expected_job_id), str(int(ttl or 0))]
-        for fk, fv in fields.items():
-            args.append(str(fk))
-            args.append("" if fv is None else str(fv))
-        try:
-            updated = await redis_client.eval(_REDIS_CONDITIONAL_UPDATE_LUA, 1, k, *args)
-            return int(updated or 0) == 1
-        except Exception:
-            return False
-
-    raise RuntimeError(f"Unsupported backend: {backend}")
-
 
 def update_url_index_if_job_matches_sync(
     *,

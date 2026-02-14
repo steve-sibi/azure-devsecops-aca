@@ -385,30 +385,3 @@ def upsert_result_sync(
         return
 
     raise RuntimeError(f"Unsupported RESULT_BACKEND: {backend}")
-
-
-def get_result_sync(
-    *,
-    backend: str,
-    partition_key: str,
-    job_id: str,
-    table_client=None,
-    redis_client=None,
-    redis_prefix: str = "scan:",
-) -> Optional[dict]:
-    if backend == "table":
-        if not table_client:
-            return None
-        try:
-            return table_client.get_entity(partition_key=partition_key, row_key=job_id)
-        except ResourceNotFoundError:
-            return None
-
-    if backend == "redis":
-        if not redis_client:
-            return None
-        key = _redis_key(redis_prefix, job_id)
-        data = redis_client.hgetall(key)
-        return data or None
-
-    raise RuntimeError(f"Unsupported RESULT_BACKEND: {backend}")

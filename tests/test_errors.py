@@ -14,8 +14,7 @@ APP_ROOT = REPO_ROOT / "app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-from common.errors import classify_exception  # noqa: E402
-from common.errors import ErrorInfo
+from common.errors import ErrorInfo, classify_exception  # noqa: E402
 from common.scan_messages import ScanMessageValidationError  # noqa: E402
 from common.url_validation import UrlValidationError  # noqa: E402
 

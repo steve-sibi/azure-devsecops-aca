@@ -13,8 +13,8 @@ APP_ROOT = REPO_ROOT / "app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-from common.scan_messages import (
-    ScanMessageValidationError,  # noqa: E402
+from common.scan_messages import (  # noqa: E402
+    ScanMessageValidationError,
     normalize_metadata,
     validate_scan_artifact_v1,
     validate_scan_task_v1,

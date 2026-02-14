@@ -15,9 +15,9 @@ APP_ROOT = REPO_ROOT / "app"
 if str(APP_ROOT) not in sys.path:
     sys.path.insert(0, str(APP_ROOT))
 
-from common.limits import (
+from common.limits import (  # noqa: E402
     ApiLimits,
-    FileScanLimits,  # noqa: E402
+    FileScanLimits,
     ResultStoreLimits,
     ScreenshotLimits,
     WebAnalysisLimits,
