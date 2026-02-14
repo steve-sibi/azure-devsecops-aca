@@ -468,12 +468,17 @@ async def _authenticate_api_key(
     *,
     require_admin: bool = False,
 ) -> Optional[str]:
-    if not REQUIRE_API_KEY:
+    if not REQUIRE_API_KEY and not require_admin:
         return None
 
     configured_keys = _configured_keys(API_KEY, API_KEYS)
     store_ready = _api_key_store_ready()
-    if not configured_keys and not store_ready:
+    admin_keys = _default_admin_keys() if require_admin else []
+
+    if require_admin:
+        if not admin_keys and not store_ready:
+            raise HTTPException(status_code=500, detail="No admin API keys are configured")
+    elif not configured_keys and not store_ready:
         raise HTTPException(status_code=500, detail="No API keys are configured")
 
     if not api_key:
@@ -484,15 +489,15 @@ async def _authenticate_api_key(
     store_active = api_key_is_active(key_record)
     static_allowed = _is_match(api_key, configured_keys)
 
-    if not static_allowed and not store_active:
-        raise HTTPException(status_code=403, detail="Invalid API key")
-
     if require_admin:
-        is_admin = _is_match(api_key, _default_admin_keys())
-        if not is_admin and store_active and isinstance(key_record, dict):
-            is_admin = bool(key_record.get("is_admin"))
-        if not is_admin:
+        is_admin_static = _is_match(api_key, admin_keys)
+        is_admin_store = (
+            store_active and isinstance(key_record, dict) and bool(key_record.get("is_admin"))
+        )
+        if not is_admin_static and not is_admin_store:
             raise HTTPException(status_code=403, detail="Admin API key required")
+    elif not static_allowed and not store_active:
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
     scope, default_limit = _rate_limit_scope_for_request(request)
     limit_rpm = _limit_for_scope(

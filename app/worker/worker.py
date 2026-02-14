@@ -186,12 +186,13 @@ def process(task: dict):
                     expected_size = task.get("artifact_size_bytes")
                     if expected_size is not None:
                         try:
-                            if int(expected_size) != size_bytes:
-                                raise ValueError(
-                                    f"artifact size mismatch (expected={expected_size} actual={size_bytes})"
-                                )
-                        except Exception:
-                            pass
+                            expected_size_int = int(expected_size)
+                        except (TypeError, ValueError):
+                            raise ValueError("artifact_size_bytes must be an integer")
+                        if expected_size_int != size_bytes:
+                            raise ValueError(
+                                f"artifact size mismatch (expected={expected_size_int} actual={size_bytes})"
+                            )
 
                     expected_sha = task.get("artifact_sha256")
                     if isinstance(expected_sha, str) and expected_sha:
