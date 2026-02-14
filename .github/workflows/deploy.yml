@@ -56,6 +56,7 @@ env:
   MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON: ${{ vars.ACA_MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON || '' }}
   MONITOR_ALERTS_ENABLED: ${{ vars.ACA_MONITOR_ALERTS_ENABLED || '' }}
   MONITOR_WORKBOOK_ENABLED: ${{ vars.ACA_MONITOR_WORKBOOK_ENABLED || '' }}
+  OBS_VERIFY_REQUIRE_TRACE: ${{ vars.ACA_OBS_VERIFY_REQUIRE_TRACE || 'false' }}
 
 jobs:
   infra-bootstrap:
@@ -280,11 +281,13 @@ jobs:
           echo "E2E_JOB_ID=${E2E_JOB_ID}" >> "$GITHUB_ENV"
           echo "E2E_RUN_ID=${E2E_RUN_ID}" >> "$GITHUB_ENV"
 
-      - name: Verify observability ingestion (warn-only)
+      - name: Verify observability ingestion
         id: verify_observability
         if: always()
-        continue-on-error: true
+        continue-on-error: ${{ !(vars.ACA_OBS_VERIFY_REQUIRE_TRACE == 'true' || vars.ACA_OBS_VERIFY_REQUIRE_TRACE == '1' || vars.ACA_OBS_VERIFY_REQUIRE_TRACE == 'yes') }}
         shell: bash
+        env:
+          OBS_VERIFY_REQUIRE_TRACE: ${{ env.OBS_VERIFY_REQUIRE_TRACE }}
         run: |
           chmod +x scripts/gha/verify_observability.sh
           bash scripts/gha/verify_observability.sh

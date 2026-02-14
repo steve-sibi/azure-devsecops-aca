@@ -13,6 +13,7 @@ require_env RG
 require_env PREFIX
 
 LA_NAME="${LA_NAME:-${PREFIX}-la}"
+APPI_NAME="${APPI_NAME:-${PREFIX}-appi}"
 JOB_ID="${E2E_JOB_ID:-}"
 RUN_ID="${E2E_RUN_ID:-}"
 LOOKBACK_MINUTES="${OBS_VERIFY_LOOKBACK_MINUTES:-120}"
@@ -46,6 +47,15 @@ if [[ -z "${workspace_id}" ]]; then
   exit 1
 fi
 
+appi_app_id="$(az monitor app-insights component show \
+  -g "${RG}" \
+  -a "${APPI_NAME}" \
+  --query appId -o tsv 2>/dev/null || true)"
+
+if [[ -z "${appi_app_id}" ]]; then
+  echo "[observability] App Insights appId not resolved (name=${APPI_NAME}); App Insights trace verification may be unavailable." >&2
+fi
+
 query_logs="ContainerAppConsoleLogs_CL
 | where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
 | extend logData = parse_json(Log_s)
@@ -61,6 +71,16 @@ query_trace="ContainerAppConsoleLogs_CL
    or tostring(logData.request_id) in~ ('${JOB_ID}', '${RUN_ID}')
    or tostring(logData.run_id) in~ ('${JOB_ID}', '${RUN_ID}')
 | where isnotempty(tostring(logData.trace_id))
+| summarize count()"
+
+query_appi_traces="traces
+| where timestamp > ago(${LOOKBACK_MINUTES}m)
+| extend job_id=tostring(customDimensions['app.job_id']),
+         request_id=tostring(customDimensions['app.request_id']),
+         run_id=tostring(customDimensions['app.run_id'])
+| where job_id in~ ('${JOB_ID}', '${RUN_ID}')
+   or request_id in~ ('${JOB_ID}', '${RUN_ID}')
+   or run_id in~ ('${JOB_ID}', '${RUN_ID}')
 | summarize count()"
 
 query_presence="ContainerAppConsoleLogs_CL
@@ -83,8 +103,9 @@ query_sample="ContainerAppConsoleLogs_CL
 
 log_count=0
 trace_count=0
+appi_trace_count=0
 
-run_count_query() {
+run_la_count_query() {
   local query="$1"
   local out
   local err_file
@@ -97,6 +118,49 @@ run_count_query() {
     err_text="$(cat "${err_file}" 2>/dev/null || true)"
     rm -f "${err_file}"
     echo "[observability] Query execution failed: ${err_text}" >&2
+    echo "0"
+    return 1
+  fi
+  rm -f "${err_file}"
+  python3 -c 'import json,sys
+raw=sys.stdin.read().strip()
+if not raw:
+    print(0); raise SystemExit(0)
+try:
+    data=json.loads(raw)
+except Exception:
+    print(0); raise SystemExit(0)
+tables=data.get("tables") if isinstance(data,dict) else None
+if not isinstance(tables,list) or not tables:
+    print(0); raise SystemExit(0)
+rows=tables[0].get("rows") if isinstance(tables[0],dict) else None
+if not isinstance(rows,list) or not rows:
+    print(0); raise SystemExit(0)
+first=rows[0][0] if isinstance(rows[0],list) and rows[0] else 0
+try:
+    print(int(first))
+except Exception:
+    print(0)
+' <<<"${out}"
+}
+
+run_appi_count_query() {
+  local query="$1"
+  local out
+  local err_file
+  if [[ -z "${appi_app_id}" ]]; then
+    echo "0"
+    return 0
+  fi
+  err_file="$(mktemp)"
+  if ! out="$(az monitor app-insights query \
+    --app "${appi_app_id}" \
+    --analytics-query "${query}" \
+    -o json 2>"${err_file}")"; then
+    local err_text
+    err_text="$(cat "${err_file}" 2>/dev/null || true)"
+    rm -f "${err_file}"
+    echo "[observability] App Insights query failed: ${err_text}" >&2
     echo "0"
     return 1
   fi
@@ -157,13 +221,19 @@ print(len(rows) if isinstance(rows,list) else 0)
 }
 
 for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
-  log_count="$(run_count_query "${query_logs}" || true)"
-  trace_count="$(run_count_query "${query_trace}" || true)"
+  log_count="$(run_la_count_query "${query_logs}" || true)"
+  trace_count="$(run_la_count_query "${query_trace}" || true)"
+  appi_trace_count="$(run_appi_count_query "${query_appi_traces}" || true)"
 
-  echo "[observability] attempt=${attempt}/${MAX_ATTEMPTS} job_id=${JOB_ID} run_id=${RUN_ID} log_count=${log_count} trace_count=${trace_count}"
+  echo "[observability] attempt=${attempt}/${MAX_ATTEMPTS} job_id=${JOB_ID} run_id=${RUN_ID} log_count=${log_count} log_trace_count=${trace_count} appi_trace_count=${appi_trace_count}"
 
   if [[ "${log_count}" -gt 0 ]]; then
-    break
+    if ! is_truthy "${REQUIRE_TRACE}"; then
+      break
+    fi
+    if [[ -n "${appi_app_id}" && "${appi_trace_count}" -gt 0 ]]; then
+      break
+    fi
   fi
 
   if [[ "${attempt}" -lt "${MAX_ATTEMPTS}" ]]; then
@@ -173,9 +243,10 @@ done
 
 # One final immediate check to reduce race conditions around ingestion timing.
 if [[ "${log_count}" -eq 0 ]]; then
-  log_count="$(run_count_query "${query_logs}" || true)"
-  trace_count="$(run_count_query "${query_trace}" || true)"
-  echo "[observability] final-check job_id=${JOB_ID} run_id=${RUN_ID} log_count=${log_count} trace_count=${trace_count}"
+  log_count="$(run_la_count_query "${query_logs}" || true)"
+  trace_count="$(run_la_count_query "${query_trace}" || true)"
+  appi_trace_count="$(run_appi_count_query "${query_appi_traces}" || true)"
+  echo "[observability] final-check job_id=${JOB_ID} run_id=${RUN_ID} log_count=${log_count} log_trace_count=${trace_count} appi_trace_count=${appi_trace_count}"
 fi
 
 if [[ "${log_count}" -eq 0 ]]; then
@@ -219,11 +290,21 @@ if [[ "${log_count}" -eq 0 ]]; then
 fi
 
 if [[ "${trace_count}" -eq 0 ]]; then
+  echo "[observability] Logs found but no trace_id in container logs yet (sampling or delayed export)." >&2
+fi
+
+if [[ -z "${appi_app_id}" ]]; then
   if is_truthy "${REQUIRE_TRACE}"; then
-    echo "[observability] Logs found but no trace_id for E2E IDs (job_id=${JOB_ID}, run_id=${RUN_ID})." >&2
+    echo "[observability] Strict trace verification enabled but App Insights appId could not be resolved." >&2
     exit 1
   fi
-  echo "[observability] Logs found but no trace_id yet (sampling or delayed export). Continuing." >&2
+  echo "[observability] App Insights appId unavailable; skipping App Insights trace count check." >&2
+elif [[ "${appi_trace_count}" -eq 0 ]]; then
+  if is_truthy "${REQUIRE_TRACE}"; then
+    echo "[observability] Logs found but no matching App Insights traces for E2E IDs (job_id=${JOB_ID}, run_id=${RUN_ID})." >&2
+    exit 1
+  fi
+  echo "[observability] Logs found but no matching App Insights traces yet (sampling or delayed export). Continuing." >&2
 fi
 
 echo "[observability] Verification passed."

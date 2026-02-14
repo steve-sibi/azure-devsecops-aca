@@ -85,3 +85,4 @@ Given a `job_id` or `correlation_id`:
 
 - Logs are emitted as structured JSON with `service`, `correlation_id`, `trace_id`, and `span_id`.
 - App Insights is used for traces; Log Analytics remains the primary operations view.
+- Deployment workflow trace enforcement can be made strict by setting repo variable `ACA_OBS_VERIFY_REQUIRE_TRACE=true`.
