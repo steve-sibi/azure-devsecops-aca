@@ -324,7 +324,7 @@ def generate_create_apps_summary() -> str:
         lines.append("")
         lines.append(f"- Health check: `GET {safe_url}/healthz`")
         lines.append(f"- Submit scan: `POST {safe_url}/scan`")
-        lines.append(f"- Dashboard: `{safe_url}/dashboard`")
+        lines.append(f"- Dashboard: `{safe_url}/`")
     else:
         lines.append("_API URL not available._")
 

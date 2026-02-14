@@ -280,7 +280,7 @@ sequenceDiagram
 - API/worker env `RESULT_STORE_CONN` and `RESULT_TABLE` for scan status storage (from Storage Table)
 - API/fetcher/worker env `WEBPUBSUB_CONNECTION_STRING` + `WEBPUBSUB_HUB` for realtime update publish/subscribe token negotiation
 
-> The apps use the connection string path by default. You can toggle **Managed Identity** in the API for Service Bus (`USE_MANAGED_IDENTITY=true` + `SERVICEBUS_FQDN`), but it’s optional.
+> The apps use connection strings for Service Bus auth in both Azure and local workflows.
 
 ## 3) Prerequisites
 

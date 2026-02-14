@@ -29,7 +29,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, NoReturn, Optional, Tuple, Union
+from typing import Any, NoReturn, Tuple, Union
 
 __version__ = "1.0.0"
 
@@ -41,6 +41,7 @@ SCAN_STATUS_CHOICES = (
     "fetching",
     "queued_scan",
     "retrying",
+    "blocked",
     "completed",
     "error",
 )
