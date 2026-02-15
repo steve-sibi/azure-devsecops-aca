@@ -483,7 +483,7 @@ jobs:
         id: hadolint_api
         continue-on-error: true
         if: ${{ needs.changes.outputs.api_changed == 'true' }}
-        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
           dockerfile: app/api/Dockerfile
 
@@ -491,7 +491,7 @@ jobs:
         id: hadolint_worker
         continue-on-error: true
         if: ${{ needs.changes.outputs.worker_changed == 'true' }}
-        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
           dockerfile: app/worker/Dockerfile.sidecar
 
@@ -499,7 +499,7 @@ jobs:
         id: hadolint_clamav
         continue-on-error: true
         if: ${{ needs.changes.outputs.clamav_changed == 'true' }}
-        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
+        uses: hadolint/hadolint-action@2332a7b74a6de0dda2e2221d575162eba76ba5e5 # v3.3.0
         with:
           dockerfile: app/clamav/Dockerfile
 
