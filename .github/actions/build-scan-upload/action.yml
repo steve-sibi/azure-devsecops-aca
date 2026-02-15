@@ -20,18 +20,44 @@ inputs:
   sarif_category:
     description: Code scanning SARIF category.
     required: true
+  pull:
+    description: Whether Docker build should pull base images (true/false).
+    required: false
+    default: "true"
+  push:
+    description: Whether Docker build should push the built image (true/false).
+    required: false
+    default: "true"
+  load:
+    description: Whether Docker build should load image into local Docker (true/false).
+    required: false
+    default: "false"
+  upload_sarif:
+    description: Whether SARIF upload should run (true/false).
+    required: false
+    default: "true"
+
+outputs:
+  build_outcome:
+    description: Outcome of docker build step.
+    value: ${{ steps.outcomes.outputs.build_outcome }}
+  scan_outcome:
+    description: Outcome of Trivy scan step.
+    value: ${{ steps.outcomes.outputs.scan_outcome }}
 
 runs:
   using: composite
   steps:
     - name: Build & push image
+      id: docker_build
       if: ${{ inputs.enabled == 'true' }}
       uses: docker/build-push-action@v6
       with:
         context: ./app
         file: ${{ inputs.dockerfile }}
-        pull: true
-        push: true
+        pull: ${{ inputs.pull }}
+        push: ${{ inputs.push }}
+        load: ${{ inputs.load }}
         tags: ${{ inputs.image_ref }}
         cache-from: type=gha,scope=${{ inputs.cache_scope }}
         cache-to: type=gha,mode=max,scope=${{ inputs.cache_scope }},ignore-error=true
@@ -59,8 +85,25 @@ runs:
       run: bash "${{ github.workspace }}/scripts/ci/prepare_trivy_sarif.sh"
 
     - name: Upload Trivy SARIF
-      if: ${{ inputs.enabled == 'true' && steps.trivy_sarif.outputs.found == 'true' }}
+      if: ${{ inputs.enabled == 'true' && inputs.upload_sarif == 'true' && steps.trivy_sarif.outputs.found == 'true' }}
       uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}
         category: ${{ inputs.sarif_category }}
+
+    - name: Export outcomes
+      id: outcomes
+      if: ${{ always() }}
+      shell: bash
+      env:
+        FLOW_ENABLED: ${{ inputs.enabled }}
+        BUILD_STEP_OUTCOME: ${{ steps.docker_build.outcome }}
+        SCAN_STEP_OUTCOME: ${{ steps.trivy_scan.outcome }}
+      run: |
+        if [[ "${FLOW_ENABLED}" == "true" ]]; then
+          echo "build_outcome=${BUILD_STEP_OUTCOME:-skipped}" >> "${GITHUB_OUTPUT}"
+          echo "scan_outcome=${SCAN_STEP_OUTCOME:-skipped}" >> "${GITHUB_OUTPUT}"
+        else
+          echo "build_outcome=skipped" >> "${GITHUB_OUTPUT}"
+          echo "scan_outcome=skipped" >> "${GITHUB_OUTPUT}"
+        fi

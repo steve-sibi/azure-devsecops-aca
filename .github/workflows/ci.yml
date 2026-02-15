@@ -654,51 +654,20 @@ jobs:
           restore-keys: |
             trivy-db-ubuntu-
 
-      - name: Build ${{ matrix.name }} (cache)
-        id: docker_build
-        uses: docker/build-push-action@v6
+      - name: Build/scan/upload ${{ matrix.name }} image
+        id: component_flow
+        uses: ./.github/actions/build-scan-upload
         with:
-          context: ./app
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64
-          pull: false
-          push: false
-          load: true # load into local Docker so Trivy can scan
-          tags: ${{ matrix.image }}
-          cache-from: type=gha,scope=${{ matrix.cache_scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }},ignore-error=true
-
-      - name: Trivy scan ${{ matrix.name }} image → SARIF
-        id: trivy_scan
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          image-ref: ${{ matrix.image }}
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: ${{ matrix.trivy_output }}
-          exit-code: '0'
-
-      - name: Prepare Trivy SARIF (${{ matrix.name }})
-        id: trivy_sarif
-        if: ${{ always() }}
-        shell: bash
-        env:
-          TRIVY_SARIF_FILE: ${{ github.workspace }}/${{ matrix.trivy_output }}
-          TRIVY_SCAN_OUTCOME: ${{ steps.trivy_scan.outcome }}
-        run: |
-          bash scripts/ci/prepare_trivy_sarif.sh
-
-      - name: Upload Trivy SARIF (${{ matrix.name }})
-        if: >-
-          ${{ always()
-            && steps.trivy_sarif.outputs.found == 'true'
-            && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}
-          category: trivy-${{ matrix.name }}
+          enabled: "true"
+          dockerfile: ${{ matrix.dockerfile }}
+          image_ref: ${{ matrix.image }}
+          cache_scope: ${{ matrix.cache_scope }}
+          trivy_output: ${{ matrix.trivy_output }}
+          sarif_category: trivy-${{ matrix.name }}
+          pull: "false"
+          push: "false"
+          load: "true"
+          upload_sarif: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false }}
 
       - name: Prepare logs
         if: ${{ always() }}
@@ -713,8 +682,8 @@ jobs:
             echo ""
             echo "| Step | Result |"
             echo "|---|---|"
-            echo "| Docker build | ${{ steps.docker_build.outcome }} |"
-            echo "| Trivy scan | ${{ steps.trivy_scan.outcome }} |"
+            echo "| Docker build | ${{ steps.component_flow.outputs.build_outcome }} |"
+            echo "| Trivy scan | ${{ steps.component_flow.outputs.scan_outcome }} |"
             echo ""
 
             sarif_file="${{ matrix.trivy_output }}"
