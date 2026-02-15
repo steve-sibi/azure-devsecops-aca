@@ -16,7 +16,7 @@ azure-messaging-webpubsubservice>=1.3.0,<2.0.0
 # which was removed in newer OpenTelemetry releases; keep these in a compatible range.
 opentelemetry-api>=1.35,<1.39
 opentelemetry-sdk>=1.35,<1.39
-opentelemetry-exporter-otlp-proto-http>=1.35,<1.39
+opentelemetry-exporter-otlp-proto-http>=1.35,<1.40
 azure-monitor-opentelemetry-exporter>=1.0.0b45,<1.1.0
 
 # Table storage for scan results
