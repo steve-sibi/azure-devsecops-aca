@@ -222,6 +222,38 @@ else
 fi
 
 default_internal_e2e_scan_url="${API_URL}/healthz?e2e=${e2e_nonce}"
+e2e_blob_storage_account=""
+e2e_blob_container=""
+e2e_blob_name=""
+
+cleanup_e2e_blob() {
+  if [[ -z "${e2e_blob_storage_account}" || -z "${e2e_blob_container}" || -z "${e2e_blob_name}" ]]; then
+    return 0
+  fi
+
+  local account_key=""
+  account_key="$(az storage account keys list \
+    -g "${RG}" \
+    -n "${e2e_blob_storage_account}" \
+    --query "[0].value" -o tsv 2>/dev/null || true)"
+  if [[ -z "${account_key}" ]]; then
+    echo "[deploy] Warning: unable to resolve storage account key for E2E blob cleanup (${e2e_blob_storage_account}/${e2e_blob_container}/${e2e_blob_name})."
+    return 0
+  fi
+
+  if az storage blob delete \
+    --account-name "${e2e_blob_storage_account}" \
+    --account-key "${account_key}" \
+    --container-name "${e2e_blob_container}" \
+    --name "${e2e_blob_name}" \
+    --only-show-errors >/dev/null 2>&1; then
+    echo "[deploy] Cleaned up temporary E2E blob (${e2e_blob_container}/${e2e_blob_name})."
+  else
+    echo "[deploy] Warning: failed to clean up temporary E2E blob (${e2e_blob_container}/${e2e_blob_name})."
+  fi
+}
+
+trap cleanup_e2e_blob EXIT
 
 build_storage_backed_e2e_url() {
   local storage_account="${E2E_RESULTS_STORAGE_ACCOUNT:-${PREFIX}scan}"
@@ -278,6 +310,10 @@ build_storage_backed_e2e_url() {
   if [[ -z "${sas}" ]]; then
     return 1
   fi
+
+  e2e_blob_storage_account="${storage_account}"
+  e2e_blob_container="${container_name}"
+  e2e_blob_name="${blob_name}"
 
   echo "https://${storage_account}.blob.core.windows.net/${container_name}/${blob_name}?${sas}"
 }
