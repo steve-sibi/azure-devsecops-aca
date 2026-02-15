@@ -79,11 +79,12 @@ query_trace="${query_source}
 | where isnotempty(trace_id)
 | summarize count()"
 
-query_appi_traces="traces
+query_appi_traces="union isfuzzy=true traces, requests, dependencies
 | where timestamp > ago(${LOOKBACK_MINUTES}m)
-| extend job_id=tostring(customDimensions['app.job_id']),
-         request_id=tostring(customDimensions['app.request_id']),
-         run_id=tostring(customDimensions['app.run_id'])
+| extend dimensions=todynamic(customDimensions)
+| extend job_id=tostring(coalesce(dimensions['app.job_id'], dimensions['job_id'])),
+         request_id=tostring(coalesce(dimensions['app.request_id'], dimensions['request_id'])),
+         run_id=tostring(coalesce(dimensions['app.run_id'], dimensions['run_id']))
 | where job_id in~ ('${JOB_ID}', '${RUN_ID}')
    or request_id in~ ('${JOB_ID}', '${RUN_ID}')
    or run_id in~ ('${JOB_ID}', '${RUN_ID}')

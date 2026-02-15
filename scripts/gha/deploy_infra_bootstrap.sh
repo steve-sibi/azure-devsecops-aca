@@ -143,6 +143,10 @@ fi
 if [[ -n "${MONITOR_WORKBOOK_ENABLED:-}" ]]; then
   export TF_VAR_monitor_workbook_enabled="${MONITOR_WORKBOOK_ENABLED}"
 fi
+if [[ -n "${OTEL_TRACES_SAMPLER_RATIO:-}" ]]; then
+  export TF_VAR_otel_traces_sampler_ratio="${OTEL_TRACES_SAMPLER_RATIO}"
+  echo "[deploy] Using OTEL trace sampler ratio from workflow configuration."
+fi
 
 az role assignment list --assignee-object-id "${SP_OBJ_ID}" --scope "${SCOPE}" \
   --role "Storage Blob Data Contributor" --query "[0].id" -o tsv | grep . >/dev/null || \

@@ -75,6 +75,10 @@ fi
 if [[ -n "${MONITOR_WORKBOOK_ENABLED:-}" ]]; then
   export TF_VAR_monitor_workbook_enabled="${MONITOR_WORKBOOK_ENABLED}"
 fi
+if [[ -n "${OTEL_TRACES_SAMPLER_RATIO:-}" ]]; then
+  export TF_VAR_otel_traces_sampler_ratio="${OTEL_TRACES_SAMPLER_RATIO}"
+  echo "[deploy] Using OTEL trace sampler ratio from workflow configuration."
+fi
 
 terraform -chdir="${INFRA_DIR}" init \
   -backend-config="resource_group_name=${RG}" \
@@ -217,25 +221,78 @@ else
   e2e_nonce="$(date +%s)"
 fi
 
-default_e2e_scan_url="${API_URL}/healthz?e2e=${e2e_nonce}"
-fallback_public_e2e_scan_url="${E2E_PUBLIC_FALLBACK_URL:-https://www.msftconnecttest.com/connecttest.txt}"
+default_internal_e2e_scan_url="${API_URL}/healthz?e2e=${e2e_nonce}"
 
-scan_targets=()
-if [[ -n "${E2E_SCAN_URL:-}" ]]; then
-  scan_targets+=("${E2E_SCAN_URL}")
-else
-  scan_targets+=("${default_e2e_scan_url}" "${fallback_public_e2e_scan_url}")
-fi
+build_storage_backed_e2e_url() {
+  local storage_account="${E2E_RESULTS_STORAGE_ACCOUNT:-${PREFIX}scan}"
+  local container_name="${E2E_BLOB_CONTAINER:-e2e}"
+  local blob_name="e2e-${e2e_nonce}.txt"
+  local account_key
+  local expiry
+  local sas
+  local tmp_file
 
-submit=""
-job_id=""
-run_id=""
-error_code=""
-last_index=$((${#scan_targets[@]} - 1))
+  account_key="$(az storage account keys list \
+    -g "${RG}" \
+    -n "${storage_account}" \
+    --query "[0].value" -o tsv 2>/dev/null || true)"
+  if [[ -z "${account_key}" ]]; then
+    return 1
+  fi
 
-for idx in "${!scan_targets[@]}"; do
-  target_url="${scan_targets[$idx]}"
+  tmp_file="$(mktemp)"
+  printf 'aca e2e probe %s\n' "${e2e_nonce}" >"${tmp_file}"
+
+  if ! az storage container create \
+    --account-name "${storage_account}" \
+    --account-key "${account_key}" \
+    --name "${container_name}" \
+    --only-show-errors >/dev/null 2>&1; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
+
+  if ! az storage blob upload \
+    --account-name "${storage_account}" \
+    --account-key "${account_key}" \
+    --container-name "${container_name}" \
+    --name "${blob_name}" \
+    --file "${tmp_file}" \
+    --overwrite true \
+    --only-show-errors >/dev/null 2>&1; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
+
+  rm -f "${tmp_file}"
+  expiry="$(python3 -c 'from datetime import datetime, timedelta, timezone; print((datetime.now(timezone.utc)+timedelta(hours=2)).strftime("%Y-%m-%dT%H:%MZ"))')"
+  sas="$(az storage blob generate-sas \
+    --account-name "${storage_account}" \
+    --account-key "${account_key}" \
+    --container-name "${container_name}" \
+    --name "${blob_name}" \
+    --permissions r \
+    --https-only \
+    --expiry "${expiry}" \
+    -o tsv 2>/dev/null || true)"
+  if [[ -z "${sas}" ]]; then
+    return 1
+  fi
+
+  echo "https://${storage_account}.blob.core.windows.net/${container_name}/${blob_name}?${sas}"
+}
+
+submit_e2e_scan() {
+  local target_url="$1"
+  local submit
+  local job_id
+  local run_id
+  local error_code
+  local resp
+  local status
+
   echo "[deploy] E2E scan target URL: ${target_url}"
+
   scan_payload="$(
     E2E_SCAN_URL="${target_url}" python3 -c 'import json, os
 print(json.dumps({
@@ -246,6 +303,7 @@ print(json.dumps({
 }))
 '
   )"
+
   submit="$(curl -sS -X POST "${API_URL}/scan" \
     -H "content-type: application/json" \
     -H "X-API-Key: ${API_KEY}" \
@@ -253,52 +311,63 @@ print(json.dumps({
 
   job_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("job_id") or "")' <<<"${submit}" || true)"
   run_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("run_id") or "")' <<<"${submit}" || true)"
-  if [[ -n "${job_id}" ]]; then
-    break
+  if [[ -z "${job_id}" ]]; then
+    error_code="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("code") or "")' <<<"${submit}" 2>/dev/null || true)"
+    echo "[deploy] E2E submit did not return job_id (code=${error_code:-unknown})."
+    echo "${submit}"
+    return 1
   fi
 
-  error_code="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("code") or "")' <<<"${submit}" 2>/dev/null || true)"
-  if [[ "${error_code}" == "non_public_ip" && "${idx}" -lt "${last_index}" ]]; then
-    echo "[deploy] E2E target rejected by SSRF guard (non_public_ip); trying fallback target..."
-    continue
+  echo "job_id=${job_id}"
+  if [[ -n "${run_id}" ]]; then
+    echo "run_id=${run_id}"
   fi
 
-  echo "[deploy] E2E scan failed:"
-  echo "${submit}"
-  diagnose_e2e
-  exit 1
-done
+  for i in {1..40}; do
+    resp="$(curl -sS "${API_URL}/scan/${job_id}" -H "X-API-Key: ${API_KEY}" || true)"
+    status="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("status") or "")' <<<"${resp}" 2>/dev/null || true)"
 
-if [[ -z "${job_id}" ]]; then
-  echo "[deploy] E2E scan failed:"
-  echo "${submit}"
-  diagnose_e2e
-  exit 1
+    if [[ "${status}" == "completed" ]]; then
+      echo "[deploy] E2E scan completed."
+      return 0
+    fi
+    if [[ "${status}" == "error" ]]; then
+      echo "[deploy] E2E scan failed:"
+      echo "${resp}"
+      return 1
+    fi
+    echo "[deploy] Waiting for scan... (${i}/40) status=${status:-unknown}"
+    sleep 10
+  done
+
+  echo "[deploy] E2E scan timed out waiting for completion."
+  return 1
+}
+
+scan_targets=()
+if [[ -n "${E2E_SCAN_URL:-}" ]]; then
+  scan_targets+=("${E2E_SCAN_URL}")
+else
+  storage_backed_url="$(build_storage_backed_e2e_url || true)"
+  if [[ -n "${storage_backed_url}" ]]; then
+    scan_targets+=("${storage_backed_url}")
+  else
+    echo "[deploy] Warning: failed to build storage-backed E2E URL; falling back to public probe URLs."
+  fi
+  scan_targets+=(
+    "${default_internal_e2e_scan_url}"
+    "https://example.com"
+    "${E2E_PUBLIC_FALLBACK_URL:-https://msftconnecttest.com/connecttest.txt}"
+  )
 fi
 
-echo "job_id=${job_id}"
-if [[ -n "${run_id}" ]]; then
-  echo "run_id=${run_id}"
-fi
-for i in {1..40}; do
-  resp="$(curl -sS "${API_URL}/scan/${job_id}" -H "X-API-Key: ${API_KEY}" || true)"
-  status="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("status") or "")' <<<"${resp}" 2>/dev/null || true)"
-
-  if [[ "${status}" == "completed" ]]; then
-    echo "[deploy] E2E scan completed."
+for target_url in "${scan_targets[@]}"; do
+  if submit_e2e_scan "${target_url}"; then
     echo "[deploy] Deploy create-apps + tests complete."
     exit 0
   fi
-  if [[ "${status}" == "error" ]]; then
-    echo "[deploy] E2E scan failed:"
-    echo "${resp}"
-    diagnose_e2e
-    exit 1
-  fi
-  echo "[deploy] Waiting for scan... (${i}/40) status=${status:-unknown}"
-  sleep 10
 done
 
-echo "[deploy] Timed out waiting for scan to complete."
+echo "[deploy] E2E scan failed for all configured targets."
 diagnose_e2e
 exit 1
