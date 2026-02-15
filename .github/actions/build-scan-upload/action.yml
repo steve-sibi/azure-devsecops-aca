@@ -1,0 +1,66 @@
+name: Build Scan Upload
+description: Build and push an image, run Trivy, prepare SARIF fallback, and upload SARIF.
+
+inputs:
+  enabled:
+    description: Whether to execute this component flow (true/false).
+    required: true
+  dockerfile:
+    description: Dockerfile path relative to repository root.
+    required: true
+  image_ref:
+    description: Full image reference (registry/repo:tag).
+    required: true
+  cache_scope:
+    description: GHA cache scope identifier for Docker build cache.
+    required: true
+  trivy_output:
+    description: Output SARIF filename (relative to workspace root).
+    required: true
+  sarif_category:
+    description: Code scanning SARIF category.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Build & push image
+      if: ${{ inputs.enabled == 'true' }}
+      uses: docker/build-push-action@v6
+      with:
+        context: ./app
+        file: ${{ inputs.dockerfile }}
+        pull: true
+        push: true
+        tags: ${{ inputs.image_ref }}
+        cache-from: type=gha,scope=${{ inputs.cache_scope }}
+        cache-to: type=gha,mode=max,scope=${{ inputs.cache_scope }},ignore-error=true
+
+    - name: Trivy scan image -> SARIF
+      id: trivy_scan
+      if: ${{ inputs.enabled == 'true' }}
+      continue-on-error: true
+      uses: aquasecurity/trivy-action@0.20.0
+      with:
+        image-ref: ${{ inputs.image_ref }}
+        ignore-unfixed: true
+        severity: HIGH,CRITICAL
+        format: sarif
+        output: ${{ inputs.trivy_output }}
+        exit-code: "0"
+
+    - name: Prepare Trivy SARIF
+      id: trivy_sarif
+      if: ${{ inputs.enabled == 'true' }}
+      shell: bash
+      env:
+        TRIVY_SARIF_FILE: ${{ github.workspace }}/${{ inputs.trivy_output }}
+        TRIVY_SCAN_OUTCOME: ${{ steps.trivy_scan.outcome }}
+      run: bash "${{ github.workspace }}/scripts/ci/prepare_trivy_sarif.sh"
+
+    - name: Upload Trivy SARIF
+      if: ${{ inputs.enabled == 'true' && steps.trivy_sarif.outputs.found == 'true' }}
+      uses: github/codeql-action/upload-sarif@v4
+      with:
+        sarif_file: ${{ steps.trivy_sarif.outputs.sarif_file }}
+        category: ${{ inputs.sarif_category }}

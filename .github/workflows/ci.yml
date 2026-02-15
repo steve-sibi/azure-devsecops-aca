@@ -816,137 +816,35 @@ jobs:
           restore-keys: |
             trivy-db-ubuntu-
 
-      - name: Build & push API
-        if: ${{ needs.changes.outputs.api_changed == 'true' }}
-        uses: docker/build-push-action@v6
+      - name: Build/scan/upload API image
+        uses: ./.github/actions/build-scan-upload
         with:
-          context: ./app
-          file: app/api/Dockerfile
-          pull: true
-          push: true
-          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
-          cache-from: type=gha,scope=api
-          cache-to: type=gha,mode=max,scope=api,ignore-error=true
+          enabled: ${{ needs.changes.outputs.api_changed }}
+          dockerfile: app/api/Dockerfile
+          image_ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
+          cache_scope: api
+          trivy_output: trivy-api.sarif
+          sarif_category: trivy-api
 
-      - name: Build & push Worker
-        if: ${{ needs.changes.outputs.worker_changed == 'true' }}
-        uses: docker/build-push-action@v6
+      - name: Build/scan/upload Worker image
+        uses: ./.github/actions/build-scan-upload
         with:
-          context: ./app
-          file: app/worker/Dockerfile.sidecar
-          pull: true
-          push: true
-          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
-          cache-from: type=gha,scope=worker
-          cache-to: type=gha,mode=max,scope=worker,ignore-error=true
+          enabled: ${{ needs.changes.outputs.worker_changed }}
+          dockerfile: app/worker/Dockerfile.sidecar
+          image_ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
+          cache_scope: worker
+          trivy_output: trivy-worker.sarif
+          sarif_category: trivy-worker
 
-      - name: Build & push ClamAV
-        if: ${{ needs.changes.outputs.clamav_changed == 'true' }}
-        uses: docker/build-push-action@v6
+      - name: Build/scan/upload ClamAV image
+        uses: ./.github/actions/build-scan-upload
         with:
-          context: ./app
-          file: app/clamav/Dockerfile
-          pull: true
-          push: true
-          tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
-          cache-from: type=gha,scope=clamav
-          cache-to: type=gha,mode=max,scope=clamav,ignore-error=true
-
-      - name: Trivy scan API image → SARIF
-        id: trivy_api
-        if: ${{ needs.changes.outputs.api_changed == 'true' }}
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          image-ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: trivy-api.sarif
-          exit-code: '0'
-
-      - name: Prepare Trivy SARIF (API)
-        id: trivy_api_sarif
-        if: ${{ always() && needs.changes.outputs.api_changed == 'true' }}
-        shell: bash
-        env:
-          TRIVY_SARIF_FILE: ${{ github.workspace }}/trivy-api.sarif
-          TRIVY_SCAN_OUTCOME: ${{ steps.trivy_api.outcome }}
-        run: |
-          bash scripts/ci/prepare_trivy_sarif.sh
-
-      - name: Upload Trivy SARIF (API)
-        if: >-
-          ${{ always()
-            && steps.trivy_api_sarif.outputs.found == 'true' }}
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: ${{ steps.trivy_api_sarif.outputs.sarif_file }}
-          category: trivy-api
-
-      - name: Trivy scan Worker image → SARIF
-        id: trivy_worker
-        if: ${{ needs.changes.outputs.worker_changed == 'true' }}
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          image-ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: trivy-worker.sarif
-          exit-code: '0'
-
-      - name: Prepare Trivy SARIF (Worker)
-        id: trivy_worker_sarif
-        if: ${{ always() && needs.changes.outputs.worker_changed == 'true' }}
-        shell: bash
-        env:
-          TRIVY_SARIF_FILE: ${{ github.workspace }}/trivy-worker.sarif
-          TRIVY_SCAN_OUTCOME: ${{ steps.trivy_worker.outcome }}
-        run: |
-          bash scripts/ci/prepare_trivy_sarif.sh
-
-      - name: Upload Trivy SARIF (Worker)
-        if: >-
-          ${{ always()
-            && steps.trivy_worker_sarif.outputs.found == 'true' }}
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: ${{ steps.trivy_worker_sarif.outputs.sarif_file }}
-          category: trivy-worker
-
-      - name: Trivy scan ClamAV image → SARIF
-        id: trivy_clamav
-        if: ${{ needs.changes.outputs.clamav_changed == 'true' }}
-        continue-on-error: true
-        uses: aquasecurity/trivy-action@0.20.0
-        with:
-          image-ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
-          ignore-unfixed: true
-          severity: HIGH,CRITICAL
-          format: sarif
-          output: trivy-clamav.sarif
-          exit-code: '0'
-
-      - name: Prepare Trivy SARIF (ClamAV)
-        id: trivy_clamav_sarif
-        if: ${{ always() && needs.changes.outputs.clamav_changed == 'true' }}
-        shell: bash
-        env:
-          TRIVY_SARIF_FILE: ${{ github.workspace }}/trivy-clamav.sarif
-          TRIVY_SCAN_OUTCOME: ${{ steps.trivy_clamav.outcome }}
-        run: |
-          bash scripts/ci/prepare_trivy_sarif.sh
-
-      - name: Upload Trivy SARIF (ClamAV)
-        if: >-
-          ${{ always()
-            && steps.trivy_clamav_sarif.outputs.found == 'true' }}
-        uses: github/codeql-action/upload-sarif@v4
-        with:
-          sarif_file: ${{ steps.trivy_clamav_sarif.outputs.sarif_file }}
-          category: trivy-clamav
+          enabled: ${{ needs.changes.outputs.clamav_changed }}
+          dockerfile: app/clamav/Dockerfile
+          image_ref: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
+          cache_scope: clamav
+          trivy_output: trivy-clamav.sarif
+          sarif_category: trivy-clamav
 
       - name: Set image outputs
         id: images
