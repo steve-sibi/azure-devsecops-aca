@@ -120,6 +120,28 @@ jobs:
           print(f"scan_matrix_count={len(items)}")
           PY
 
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install shellcheck + actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest
+
+      - name: Lint workflows
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./bin/actionlint -color .github/workflows/*.yml
+
   deploy-gate:
     needs: [changes]
     if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -726,7 +748,7 @@ jobs:
           if-no-files-found: ignore
 
   build-and-push:
-    needs: [changes, python-quality, iac-and-docker-lint, deploy-gate]
+    needs: [changes, actionlint, python-quality, iac-and-docker-lint, deploy-gate]
     if: >-
       ${{ always()
         && github.event_name == 'push'
@@ -821,9 +843,11 @@ jobs:
         run: |
           set -euo pipefail
           ACR="${{ steps.acr.outputs.login_server }}"
-          echo "api_image=${ACR}/${PREFIX}-api:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "worker_image=${ACR}/${PREFIX}-worker:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "clamav_image=${ACR}/${PREFIX}-clamav:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          {
+            echo "api_image=${ACR}/${PREFIX}-api:${GITHUB_SHA}"
+            echo "worker_image=${ACR}/${PREFIX}-worker:${GITHUB_SHA}"
+            echo "clamav_image=${ACR}/${PREFIX}-clamav:${GITHUB_SHA}"
+          } >> "$GITHUB_OUTPUT"
 
   app-deploy:
     name: App Deploy (CD)
@@ -843,7 +867,7 @@ jobs:
     uses: ./.github/workflows/app-deploy.yml
     secrets: inherit
     with:
-      build_images: "false"
+      build_images: ${{ 'false' }}
       acr_login_server: ${{ needs.build-and-push.outputs.acr_login_server }}
       api_image: ${{ needs.build-and-push.outputs.api_image }}
       worker_image: ${{ needs.build-and-push.outputs.worker_image }}

@@ -242,10 +242,12 @@ jobs:
             exit 1
           fi
 
-          echo "acr_login_server=${acr}" >> "$GITHUB_OUTPUT"
-          echo "api_image=${api_image}" >> "$GITHUB_OUTPUT"
-          echo "worker_image=${worker_image}" >> "$GITHUB_OUTPUT"
-          echo "clamav_image=${clamav_image}" >> "$GITHUB_OUTPUT"
+          {
+            echo "acr_login_server=${acr}"
+            echo "api_image=${api_image}"
+            echo "worker_image=${worker_image}"
+            echo "clamav_image=${clamav_image}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Summary (images)
         if: always()
