@@ -31,13 +31,13 @@ jobs:
       scan_matrix: ${{ steps.scan_matrix.outputs.scan_matrix }}
       scan_matrix_count: ${{ steps.scan_matrix.outputs.scan_matrix_count }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
 
       - name: Detect app changes
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         with:
           filters: |
             api:
@@ -162,7 +162,7 @@ jobs:
         if: ${{ steps.decide.outputs.should_check == 'true' }}
         id: login
         continue-on-error: true
-        uses: azure/login@v2
+        uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -218,13 +218,13 @@ jobs:
     env:
       LOG_DIR: .ci-logs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         with: { python-version: "3.11" }
 
       - name: Cache pip
-        uses: actions/cache@v5
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
         with:
           path: ~/.cache/pip
           key: pip-ubuntu-python-quality-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
@@ -329,7 +329,7 @@ jobs:
 
       - name: Upload logs (python-quality)
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ci-logs-python-quality
           path: ${{ env.LOG_DIR }}
@@ -357,20 +357,20 @@ jobs:
       LOG_DIR: .ci-logs
       TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
         if: >-
           ${{ needs.changes.outputs.infra_changed == 'true'
             && (github.event_name == 'push' && github.ref == 'refs/heads/main'
               || needs.changes.outputs.run_pr_scans == 'true') }}
         with: { python-version: "3.11" }
 
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
 
       - name: Cache Terraform plugins
         if: ${{ needs.changes.outputs.infra_changed == 'true' }}
-        uses: actions/cache@v5
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
         with:
           path: ${{ env.TF_PLUGIN_CACHE_DIR }}
           key: terraform-ubuntu-${{ hashFiles('infra/.terraform.lock.hcl') }}
@@ -382,7 +382,7 @@ jobs:
           ${{ needs.changes.outputs.infra_changed == 'true'
             && (github.event_name == 'push' && github.ref == 'refs/heads/main'
               || needs.changes.outputs.run_pr_scans == 'true') }}
-        uses: actions/cache@v5
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
         with:
           path: ~/.cache/pip
           key: pip-ubuntu-checkov-${{ hashFiles('checkov.yml') }}
@@ -474,7 +474,7 @@ jobs:
           ${{ always()
             && steps.checkov_sarif.outputs.found == 'true'
             && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
-        uses: github/codeql-action/upload-sarif@v4
+        uses: github/codeql-action/upload-sarif@58d4c8134bcf8ae089f888d056501755e0da2b44 # v4
         with:
           sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
           category: checkov-terraform
@@ -483,7 +483,7 @@ jobs:
         id: hadolint_api
         continue-on-error: true
         if: ${{ needs.changes.outputs.api_changed == 'true' }}
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
           dockerfile: app/api/Dockerfile
 
@@ -491,7 +491,7 @@ jobs:
         id: hadolint_worker
         continue-on-error: true
         if: ${{ needs.changes.outputs.worker_changed == 'true' }}
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
           dockerfile: app/worker/Dockerfile.sidecar
 
@@ -499,7 +499,7 @@ jobs:
         id: hadolint_clamav
         continue-on-error: true
         if: ${{ needs.changes.outputs.clamav_changed == 'true' }}
-        uses: hadolint/hadolint-action@v3.1.0
+        uses: hadolint/hadolint-action@54c9adbab1582c2ef04b2016b760714a4bfde3cf # v3.1.0
         with:
           dockerfile: app/clamav/Dockerfile
 
@@ -601,7 +601,7 @@ jobs:
 
       - name: Upload logs (iac-and-docker-lint)
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ci-logs-iac-and-docker-lint
           path: |
@@ -641,13 +641,13 @@ jobs:
     env:
       LOG_DIR: .ci-logs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Cache Trivy DB
-        uses: actions/cache@v5
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
         with:
           path: ~/.cache/trivy
           key: trivy-db-ubuntu
@@ -717,7 +717,7 @@ jobs:
 
       - name: Upload logs (build-and-scan ${{ matrix.name }})
         if: ${{ always() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ci-logs-build-and-scan-${{ matrix.name }}
           path: |
@@ -751,10 +751,10 @@ jobs:
       worker_image: ${{ steps.images.outputs.worker_image }}
       clamav_image: ${{ steps.images.outputs.clamav_image }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -775,10 +775,10 @@ jobs:
           az acr login --name "${PREFIX}acr"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Cache Trivy DB
-        uses: actions/cache@v5
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
         with:
           path: ~/.cache/trivy
           key: trivy-db-ubuntu
