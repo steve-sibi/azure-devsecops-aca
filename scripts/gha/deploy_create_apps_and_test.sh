@@ -218,11 +218,26 @@ else
 fi
 
 default_e2e_scan_url="${API_URL}/healthz?e2e=${e2e_nonce}"
-resolved_e2e_scan_url="${E2E_SCAN_URL:-${default_e2e_scan_url}}"
-echo "[deploy] E2E scan target URL: ${resolved_e2e_scan_url}"
+fallback_public_e2e_scan_url="${E2E_PUBLIC_FALLBACK_URL:-https://www.msftconnecttest.com/connecttest.txt}"
 
-scan_payload="$(
-  E2E_SCAN_URL="${resolved_e2e_scan_url}" python3 -c 'import json, os
+scan_targets=()
+if [[ -n "${E2E_SCAN_URL:-}" ]]; then
+  scan_targets+=("${E2E_SCAN_URL}")
+else
+  scan_targets+=("${default_e2e_scan_url}" "${fallback_public_e2e_scan_url}")
+fi
+
+submit=""
+job_id=""
+run_id=""
+error_code=""
+last_index=$((${#scan_targets[@]} - 1))
+
+for idx in "${!scan_targets[@]}"; do
+  target_url="${scan_targets[$idx]}"
+  echo "[deploy] E2E scan target URL: ${target_url}"
+  scan_payload="$(
+    E2E_SCAN_URL="${target_url}" python3 -c 'import json, os
 print(json.dumps({
     "url": os.environ["E2E_SCAN_URL"],
     "type": "url",
@@ -230,17 +245,32 @@ print(json.dumps({
     "visibility": "private",
 }))
 '
-)"
+  )"
+  submit="$(curl -sS -X POST "${API_URL}/scan" \
+    -H "content-type: application/json" \
+    -H "X-API-Key: ${API_KEY}" \
+    -d "${scan_payload}")"
 
-submit="$(curl -sS -X POST "${API_URL}/scan" \
-  -H "content-type: application/json" \
-  -H "X-API-Key: ${API_KEY}" \
-  -d "${scan_payload}")"
+  job_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("job_id") or "")' <<<"${submit}" || true)"
+  run_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("run_id") or "")' <<<"${submit}" || true)"
+  if [[ -n "${job_id}" ]]; then
+    break
+  fi
 
-job_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("job_id") or "")' <<<"${submit}" || true)"
-run_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("run_id") or "")' <<<"${submit}" || true)"
+  error_code="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("code") or "")' <<<"${submit}" 2>/dev/null || true)"
+  if [[ "${error_code}" == "non_public_ip" && "${idx}" -lt "${last_index}" ]]; then
+    echo "[deploy] E2E target rejected by SSRF guard (non_public_ip); trying fallback target..."
+    continue
+  fi
+
+  echo "[deploy] E2E scan failed:"
+  echo "${submit}"
+  diagnose_e2e
+  exit 1
+done
+
 if [[ -z "${job_id}" ]]; then
-  echo "[deploy] Failed to get job_id from /scan response:"
+  echo "[deploy] E2E scan failed:"
   echo "${submit}"
   diagnose_e2e
   exit 1
