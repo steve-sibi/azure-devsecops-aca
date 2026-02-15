@@ -1,13 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-require_env() {
-  local name="$1"
-  if [[ -z "${!name:-}" ]]; then
-    echo "Missing required env var: ${name}" >&2
-    exit 2
-  fi
-}
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=scripts/gha/lib/common.sh
+source "${ROOT_DIR}/scripts/gha/lib/common.sh"
 
 require_env RG
 require_env PREFIX
@@ -20,13 +16,6 @@ LOOKBACK_MINUTES="${OBS_VERIFY_LOOKBACK_MINUTES:-180}"
 MAX_ATTEMPTS="${OBS_VERIFY_ATTEMPTS:-12}"
 SLEEP_SECONDS="${OBS_VERIFY_SLEEP_SECONDS:-30}"
 REQUIRE_TRACE="${OBS_VERIFY_REQUIRE_TRACE:-false}"
-
-is_truthy() {
-  case "${1,,}" in
-    1|true|yes|y|on) return 0 ;;
-    *) return 1 ;;
-  esac
-}
 
 if [[ -z "${JOB_ID}" ]]; then
   echo "[observability] E2E_JOB_ID is empty; skipping observability verification."

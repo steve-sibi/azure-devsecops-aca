@@ -4,33 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INFRA_DIR="${ROOT_DIR}/infra"
 FORMAT_LOGS_PY="${ROOT_DIR}/.github/scripts/format_aca_logs.py"
-
-require_env() {
-  local name="$1"
-  if [[ -z "${!name:-}" ]]; then
-    echo "Missing required env var: ${name}" >&2
-    exit 2
-  fi
-}
-
-# Retry helper for transient Azure API failures
-retry() {
-  local max_attempts="${RETRY_MAX:-3}"
-  local delay="${RETRY_DELAY:-10}"
-  local attempt=1
-  while true; do
-    if "$@"; then
-      return 0
-    fi
-    if [[ ${attempt} -ge ${max_attempts} ]]; then
-      echo "[retry] Command failed after ${max_attempts} attempts: $*" >&2
-      return 1
-    fi
-    echo "[retry] Attempt ${attempt}/${max_attempts} failed, retrying in ${delay}s..." >&2
-    sleep "${delay}"
-    ((attempt++))
-  done
-}
+# shellcheck source=scripts/gha/lib/common.sh
+source "${ROOT_DIR}/scripts/gha/lib/common.sh"
 
 require_env RG
 require_env PREFIX
@@ -226,6 +201,7 @@ e2e_blob_storage_account=""
 e2e_blob_container=""
 e2e_blob_name=""
 
+# shellcheck disable=SC2329 # Invoked via trap.
 cleanup_e2e_blob() {
   if [[ -z "${e2e_blob_storage_account}" || -z "${e2e_blob_container}" || -z "${e2e_blob_name}" ]]; then
     return 0

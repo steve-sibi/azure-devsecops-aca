@@ -3,14 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 INFRA_DIR="${ROOT_DIR}/infra"
-
-require_env() {
-  local name="$1"
-  if [[ -z "${!name:-}" ]]; then
-    echo "Missing required env var: ${name}" >&2
-    exit 2
-  fi
-}
+# shellcheck source=scripts/gha/lib/common.sh
+source "${ROOT_DIR}/scripts/gha/lib/common.sh"
 
 require_env RG
 require_env PREFIX
