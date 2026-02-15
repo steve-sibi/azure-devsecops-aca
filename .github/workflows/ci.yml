@@ -684,29 +684,11 @@ jobs:
         id: trivy_sarif
         if: ${{ always() }}
         shell: bash
+        env:
+          TRIVY_SARIF_FILE: ${{ github.workspace }}/${{ matrix.trivy_output }}
+          TRIVY_SCAN_OUTCOME: ${{ steps.trivy_scan.outcome }}
         run: |
-          set -euo pipefail
-          sarif_file="$GITHUB_WORKSPACE/${{ matrix.trivy_output }}"
-          scan_outcome="${{ steps.trivy_scan.outcome }}"
-
-          if [ -s "$sarif_file" ]; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
-
-          if [ "$scan_outcome" = "success" ]; then
-            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
-            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          echo "found=false" >> "$GITHUB_OUTPUT"
-          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+          bash scripts/ci/prepare_trivy_sarif.sh
 
       - name: Upload Trivy SARIF (${{ matrix.name }})
         if: >-
@@ -887,25 +869,11 @@ jobs:
         id: trivy_api_sarif
         if: ${{ always() && needs.changes.outputs.api_changed == 'true' }}
         shell: bash
+        env:
+          TRIVY_SARIF_FILE: ${{ github.workspace }}/trivy-api.sarif
+          TRIVY_SCAN_OUTCOME: ${{ steps.trivy_api.outcome }}
         run: |
-          set -euo pipefail
-          sarif_file="$GITHUB_WORKSPACE/trivy-api.sarif"
-          scan_outcome="${{ steps.trivy_api.outcome }}"
-          if [ -s "$sarif_file" ]; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
-          if [ "$scan_outcome" = "success" ]; then
-            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
-            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "found=false" >> "$GITHUB_OUTPUT"
-          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+          bash scripts/ci/prepare_trivy_sarif.sh
 
       - name: Upload Trivy SARIF (API)
         if: >-
@@ -933,25 +901,11 @@ jobs:
         id: trivy_worker_sarif
         if: ${{ always() && needs.changes.outputs.worker_changed == 'true' }}
         shell: bash
+        env:
+          TRIVY_SARIF_FILE: ${{ github.workspace }}/trivy-worker.sarif
+          TRIVY_SCAN_OUTCOME: ${{ steps.trivy_worker.outcome }}
         run: |
-          set -euo pipefail
-          sarif_file="$GITHUB_WORKSPACE/trivy-worker.sarif"
-          scan_outcome="${{ steps.trivy_worker.outcome }}"
-          if [ -s "$sarif_file" ]; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
-          if [ "$scan_outcome" = "success" ]; then
-            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
-            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "found=false" >> "$GITHUB_OUTPUT"
-          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+          bash scripts/ci/prepare_trivy_sarif.sh
 
       - name: Upload Trivy SARIF (Worker)
         if: >-
@@ -979,25 +933,11 @@ jobs:
         id: trivy_clamav_sarif
         if: ${{ always() && needs.changes.outputs.clamav_changed == 'true' }}
         shell: bash
+        env:
+          TRIVY_SARIF_FILE: ${{ github.workspace }}/trivy-clamav.sarif
+          TRIVY_SCAN_OUTCOME: ${{ steps.trivy_clamav.outcome }}
         run: |
-          set -euo pipefail
-          sarif_file="$GITHUB_WORKSPACE/trivy-clamav.sarif"
-          scan_outcome="${{ steps.trivy_clamav.outcome }}"
-          if [ -s "$sarif_file" ]; then
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "::warning::Trivy did not create $sarif_file (scan_outcome=$scan_outcome)."
-          if [ "$scan_outcome" = "success" ]; then
-            printf '%s\n' '{"version":"2.1.0","$schema":"https://json.schemastore.org/sarif-2.1.0.json","runs":[{"tool":{"driver":{"name":"Trivy"}},"results":[]}]}' > "$sarif_file"
-            echo "::notice::Created an empty SARIF so GitHub code scanning stays in sync."
-            echo "found=true" >> "$GITHUB_OUTPUT"
-            echo "sarif_file=$sarif_file" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          echo "found=false" >> "$GITHUB_OUTPUT"
-          echo "sarif_file=" >> "$GITHUB_OUTPUT"
+          bash scripts/ci/prepare_trivy_sarif.sh
 
       - name: Upload Trivy SARIF (ClamAV)
         if: >-

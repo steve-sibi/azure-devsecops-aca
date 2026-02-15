@@ -131,11 +131,11 @@ jobs:
       clamav_image: ${{ steps.images.outputs.clamav_image }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Azure Login (OIDC)
         if: ${{ env.BUILD_IMAGES == 'true' }}
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -159,14 +159,15 @@ jobs:
 
       - name: Set up Docker Buildx
         if: ${{ env.BUILD_IMAGES == 'true' }}
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build & push API
         if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_API == 'true' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./app
           file: app/api/Dockerfile
+          pull: true
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-api:${{ github.sha }}
           cache-from: type=gha,scope=api
@@ -174,10 +175,11 @@ jobs:
 
       - name: Build & push Worker
         if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_WORKER == 'true' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./app
           file: app/worker/Dockerfile.sidecar
+          pull: true
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-worker:${{ github.sha }}
           cache-from: type=gha,scope=worker
@@ -185,10 +187,11 @@ jobs:
 
       - name: Build & push ClamAV
         if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_CLAMAV == 'true' }}
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: ./app
           file: app/clamav/Dockerfile
+          pull: true
           push: true
           tags: ${{ steps.acr.outputs.login_server }}/${{ env.PREFIX }}-clamav:${{ github.sha }}
           cache-from: type=gha,scope=clamav
@@ -202,19 +205,14 @@ jobs:
           INPUT_API_IMAGE: ${{ inputs.api_image }}
           INPUT_WORKER_IMAGE: ${{ inputs.worker_image }}
           INPUT_CLAMAV_IMAGE: ${{ inputs.clamav_image }}
+          ACR_LOGIN_SERVER: ${{ steps.acr.outputs.login_server }}
         run: |
           set -euo pipefail
-
-          is_truthy() {
-            case "${1,,}" in
-              1|true|yes|y|on) return 0 ;;
-              *) return 1 ;;
-            esac
-          }
+          source scripts/gha/lib/common.sh
 
           acr="${INPUT_ACR}"
           if [ -z "$acr" ] && [ "${BUILD_IMAGES}" = "true" ]; then
-            acr="${{ steps.acr.outputs.login_server }}"
+            acr="${ACR_LOGIN_SERVER}"
           fi
 
           api_image="${INPUT_API_IMAGE}"
@@ -268,10 +266,10 @@ jobs:
     permissions: { id-token: write, contents: read }
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Azure Login (OIDC)
-        uses: azure/login@v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
