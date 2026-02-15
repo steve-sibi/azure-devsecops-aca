@@ -136,11 +136,21 @@ jobs:
           sudo apt-get install -y shellcheck
           curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash | bash -s -- latest
 
+          if [[ -x "./actionlint" ]]; then
+            echo "ACTIONLINT_BIN=./actionlint" >> "$GITHUB_ENV"
+          elif [[ -x "./bin/actionlint" ]]; then
+            echo "ACTIONLINT_BIN=./bin/actionlint" >> "$GITHUB_ENV"
+          else
+            echo "::error::actionlint binary not found after install."
+            ls -la
+            exit 1
+          fi
+
       - name: Lint workflows
         shell: bash
         run: |
           set -euo pipefail
-          ./bin/actionlint -color .github/workflows/*.yml
+          "${ACTIONLINT_BIN}" -color .github/workflows/*.yml
 
   deploy-gate:
     needs: [changes]
