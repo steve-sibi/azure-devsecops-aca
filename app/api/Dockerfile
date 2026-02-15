@@ -1,5 +1,5 @@
 # app/api/Dockerfile
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 # Keep Python tidy and unbuffered
 ENV PYTHONDONTWRITEBYTECODE=1 \
