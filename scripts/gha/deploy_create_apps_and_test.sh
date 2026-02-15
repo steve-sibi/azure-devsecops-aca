@@ -207,10 +207,35 @@ if [[ -z "${API_KEY}" ]]; then
   exit 1
 fi
 
+e2e_nonce=""
+if [[ -n "${GITHUB_RUN_ID:-}" ]]; then
+  e2e_nonce="${GITHUB_RUN_ID}"
+  if [[ -n "${GITHUB_RUN_ATTEMPT:-}" ]]; then
+    e2e_nonce="${e2e_nonce}-${GITHUB_RUN_ATTEMPT}"
+  fi
+else
+  e2e_nonce="$(date +%s)"
+fi
+
+default_e2e_scan_url="${API_URL}/healthz?e2e=${e2e_nonce}"
+resolved_e2e_scan_url="${E2E_SCAN_URL:-${default_e2e_scan_url}}"
+echo "[deploy] E2E scan target URL: ${resolved_e2e_scan_url}"
+
+scan_payload="$(
+  E2E_SCAN_URL="${resolved_e2e_scan_url}" python3 -c 'import json, os
+print(json.dumps({
+    "url": os.environ["E2E_SCAN_URL"],
+    "type": "url",
+    "force": True,
+    "visibility": "private",
+}))
+'
+)"
+
 submit="$(curl -sS -X POST "${API_URL}/scan" \
   -H "content-type: application/json" \
   -H "X-API-Key: ${API_KEY}" \
-  -d '{"url":"https://example.com","type":"url"}')"
+  -d "${scan_payload}")"
 
 job_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("job_id") or "")' <<<"${submit}" || true)"
 run_id="$(python3 -c 'import json,sys; doc=json.loads(sys.stdin.read() or "{}"); print(doc.get("run_id") or "")' <<<"${submit}" || true)"

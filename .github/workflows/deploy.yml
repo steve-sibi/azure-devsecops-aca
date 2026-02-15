@@ -56,6 +56,10 @@ env:
   MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON: ${{ vars.ACA_MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON || '' }}
   MONITOR_ALERTS_ENABLED: ${{ vars.ACA_MONITOR_ALERTS_ENABLED || '' }}
   MONITOR_WORKBOOK_ENABLED: ${{ vars.ACA_MONITOR_WORKBOOK_ENABLED || '' }}
+  E2E_SCAN_URL: ${{ vars.ACA_E2E_SCAN_URL || '' }}
+  OBS_VERIFY_ATTEMPTS: ${{ vars.ACA_OBS_VERIFY_ATTEMPTS || '' }}
+  OBS_VERIFY_SLEEP_SECONDS: ${{ vars.ACA_OBS_VERIFY_SLEEP_SECONDS || '' }}
+  OBS_VERIFY_LOOKBACK_MINUTES: ${{ vars.ACA_OBS_VERIFY_LOOKBACK_MINUTES || '' }}
   OBS_VERIFY_REQUIRE_TRACE: ${{ vars.ACA_OBS_VERIFY_REQUIRE_TRACE || 'true' }}
 
 jobs:
@@ -272,8 +276,8 @@ jobs:
             fi
             
             # Extract job_id if present
-            E2E_JOB_ID="$(grep -o 'job_id=[^ ]*' deploy_output.log | head -1 | cut -d= -f2 || true)"
-            E2E_RUN_ID="$(grep -o 'run_id=[^ ]*' deploy_output.log | head -1 | cut -d= -f2 || true)"
+            E2E_JOB_ID="$(grep -o 'job_id=[^ ]*' deploy_output.log | tail -1 | cut -d= -f2 || true)"
+            E2E_RUN_ID="$(grep -o 'run_id=[^ ]*' deploy_output.log | tail -1 | cut -d= -f2 || true)"
           fi
           
           echo "HEALTH_STATUS=${HEALTH_STATUS}" >> "$GITHUB_ENV"

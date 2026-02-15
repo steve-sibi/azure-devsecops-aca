@@ -417,6 +417,8 @@ azure-devsecops-aca/
 - Runs smoke tests:
     - `GET /healthz`
     - end-to-end scan: `POST /scan` then poll `GET /scan/{job_id}` until `completed`
+      - default E2E target is `${API_URL}/healthz?e2e=<nonce>` to avoid external TLS dependency
+      - optional override via repo variable `ACA_E2E_SCAN_URL`
 
 > Docs-only changes (`**/*.md`, `docs/**`) do not trigger CI; Deploy is manual (`workflow_dispatch`).
 
@@ -457,6 +459,10 @@ Configuration (recommended):
   - `ACA_MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON` (optional; JSON array of email addresses for Azure Monitor Action Group, e.g. `["secops@example.com"]`)
   - `ACA_MONITOR_ALERTS_ENABLED` (optional; `true`/`false`, defaults to Terraform variable default)
   - `ACA_MONITOR_WORKBOOK_ENABLED` (optional; `true`/`false`, defaults to Terraform variable default)
+  - `ACA_E2E_SCAN_URL` (optional; override Deploy workflow E2E URL target; default is API `/healthz` with a unique query nonce)
+  - `ACA_OBS_VERIFY_ATTEMPTS` (optional; observability verification retry attempts)
+  - `ACA_OBS_VERIFY_SLEEP_SECONDS` (optional; seconds between observability verification retries)
+  - `ACA_OBS_VERIFY_LOOKBACK_MINUTES` (optional; Log Analytics/App Insights lookback window for observability verification)
   - `RUN_PR_SECURITY_SCANS` (optional, `true` to enable Checkov/Trivy on PRs)
 - Secrets remain the same as Deploy: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`
 

@@ -102,12 +102,14 @@ echo "[deploy] Ensuring Terraform state storage exists..."
 if az storage account show -g "${RG}" -n "${TFSTATE_SA}" >/dev/null 2>&1; then
   retry az storage account update \
     -g "${RG}" -n "${TFSTATE_SA}" \
-    --min-tls-version TLS1_2 >/dev/null
+    --min-tls-version TLS1_2 \
+    --only-show-errors >/dev/null
 else
   retry az storage account create \
     -g "${RG}" -n "${TFSTATE_SA}" -l "${REGION}" \
     --sku Standard_LRS --kind StorageV2 \
-    --min-tls-version TLS1_2 >/dev/null
+    --min-tls-version TLS1_2 \
+    --only-show-errors >/dev/null
 fi
 
 retry az storage container create \

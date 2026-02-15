@@ -16,9 +16,9 @@ LA_NAME="${LA_NAME:-${PREFIX}-la}"
 APPI_NAME="${APPI_NAME:-${PREFIX}-appi}"
 JOB_ID="${E2E_JOB_ID:-}"
 RUN_ID="${E2E_RUN_ID:-}"
-LOOKBACK_MINUTES="${OBS_VERIFY_LOOKBACK_MINUTES:-120}"
-MAX_ATTEMPTS="${OBS_VERIFY_ATTEMPTS:-6}"
-SLEEP_SECONDS="${OBS_VERIFY_SLEEP_SECONDS:-20}"
+LOOKBACK_MINUTES="${OBS_VERIFY_LOOKBACK_MINUTES:-180}"
+MAX_ATTEMPTS="${OBS_VERIFY_ATTEMPTS:-12}"
+SLEEP_SECONDS="${OBS_VERIFY_SLEEP_SECONDS:-30}"
 REQUIRE_TRACE="${OBS_VERIFY_REQUIRE_TRACE:-false}"
 
 is_truthy() {
@@ -56,21 +56,27 @@ if [[ -z "${appi_app_id}" ]]; then
   echo "[observability] App Insights appId not resolved (name=${APPI_NAME}); App Insights trace verification may be unavailable." >&2
 fi
 
-query_logs="ContainerAppConsoleLogs_CL
+query_source="union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
 | where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
-| extend logData = parse_json(Log_s)
-| where tostring(logData.job_id) in~ ('${JOB_ID}', '${RUN_ID}')
-   or tostring(logData.request_id) in~ ('${JOB_ID}', '${RUN_ID}')
-   or tostring(logData.run_id) in~ ('${JOB_ID}', '${RUN_ID}')
+| extend raw_log = tostring(coalesce(column_ifexists('Log_s', ''), column_ifexists('Log', '')))
+| extend logData = parse_json(raw_log)
+| extend job_id=tostring(logData.job_id),
+         request_id=tostring(logData.request_id),
+         run_id=tostring(logData.run_id),
+         trace_id=tostring(logData.trace_id),
+         service=tostring(logData.service),
+         message=tostring(logData.message)
+| where job_id in~ ('${JOB_ID}', '${RUN_ID}')
+   or request_id in~ ('${JOB_ID}', '${RUN_ID}')
+   or run_id in~ ('${JOB_ID}', '${RUN_ID}')
+   or raw_log has '${JOB_ID}'
+   or raw_log has '${RUN_ID}'"
+
+query_logs="${query_source}
 | summarize count()"
 
-query_trace="ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
-| extend logData = parse_json(Log_s)
-| where tostring(logData.job_id) in~ ('${JOB_ID}', '${RUN_ID}')
-   or tostring(logData.request_id) in~ ('${JOB_ID}', '${RUN_ID}')
-   or tostring(logData.run_id) in~ ('${JOB_ID}', '${RUN_ID}')
-| where isnotempty(tostring(logData.trace_id))
+query_trace="${query_source}
+| where isnotempty(trace_id)
 | summarize count()"
 
 query_appi_traces="traces
@@ -83,21 +89,11 @@ query_appi_traces="traces
    or run_id in~ ('${JOB_ID}', '${RUN_ID}')
 | summarize count()"
 
-query_presence="ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
-| extend logData = parse_json(Log_s)
-| where tostring(logData.job_id) in~ ('${JOB_ID}', '${RUN_ID}')
-   or tostring(logData.request_id) in~ ('${JOB_ID}', '${RUN_ID}')
-   or tostring(logData.run_id) in~ ('${JOB_ID}', '${RUN_ID}')
+query_presence="${query_source}
 | take 1"
 
-query_sample="ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(${LOOKBACK_MINUTES}m)
-| extend logData = parse_json(Log_s)
-| where tostring(logData.job_id) in~ ('${JOB_ID}', '${RUN_ID}')
-   or tostring(logData.request_id) in~ ('${JOB_ID}', '${RUN_ID}')
-   or tostring(logData.run_id) in~ ('${JOB_ID}', '${RUN_ID}')
-| project TimeGenerated, service=tostring(logData.service), message=tostring(logData.message), job_id=tostring(logData.job_id), request_id=tostring(logData.request_id), run_id=tostring(logData.run_id), trace_id=tostring(logData.trace_id)
+query_sample="${query_source}
+| project TimeGenerated, service, message=iff(isempty(message), raw_log, message), job_id, request_id, run_id, trace_id
 | order by TimeGenerated desc
 | take 10"
 
