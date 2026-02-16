@@ -34,6 +34,10 @@ on:
         description: Service Bus queue name
         required: true
         default: tasks
+      scan_queue_name:
+        description: Optional scan queue name (must match deploy if customized)
+        required: false
+        default: ""
 
 concurrency:
   # Prevent deploy/destroy/keda runs from overlapping for the same environment
@@ -49,6 +53,7 @@ env:
   TFSTATE_CONTAINER: ${{ inputs.tfstate_container }}
   TFSTATE_KEY: ${{ inputs.tfstate_key }}
   QUEUE_NAME: ${{ inputs.queue_name }}
+  SCAN_QUEUE_NAME: ${{ inputs.scan_queue_name }}
 
 jobs:
   destroy:

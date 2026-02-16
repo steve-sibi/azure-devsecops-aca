@@ -28,6 +28,17 @@ variable "kv_secret_reader_object_ids" {
   description = "Additional Entra object IDs (users/service principals/managed identities) that should be granted Key Vault Secrets User on the vault. Keep empty by default and set via Deploy workflow variables/inputs."
 }
 
+variable "kv_rbac_propagation_wait_duration" {
+  type        = string
+  default     = "30s"
+  description = "Wait duration after Key Vault RBAC role assignments before creating/reading secrets (mitigates RBAC propagation delays)."
+
+  validation {
+    condition     = can(regex("^[0-9]+(s|m|h)$", var.kv_rbac_propagation_wait_duration))
+    error_message = "kv_rbac_propagation_wait_duration must use a simple duration format like 30s, 2m, or 1h."
+  }
+}
+
 variable "create_apps" {
   type        = bool
   default     = false
@@ -106,18 +117,33 @@ variable "servicebus_sku" {
   type        = string
   default     = "Basic" # or "Standard"
   description = "SKU for the Service Bus namespace."
+
+  validation {
+    condition     = contains(["Basic", "Standard", "Premium"], var.servicebus_sku)
+    error_message = "servicebus_sku must be one of: Basic, Standard, Premium."
+  }
 }
 
 variable "webpubsub_sku" {
   type        = string
   default     = "Free_F1"
   description = "SKU for the Web PubSub service (e.g., Free_F1 or Standard_S1)."
+
+  validation {
+    condition     = can(regex("^(Free_F1|Standard_S[0-9]+|Premium_P[0-9]+)$", var.webpubsub_sku))
+    error_message = "webpubsub_sku must match Free_F1, Standard_S<n>, or Premium_P<n>."
+  }
 }
 
 variable "webpubsub_capacity" {
   type        = number
   default     = 1
   description = "Capacity units for Web PubSub (1 for Free_F1)."
+
+  validation {
+    condition     = var.webpubsub_capacity >= 1
+    error_message = "webpubsub_capacity must be >= 1."
+  }
 }
 
 variable "webpubsub_hub_name" {
@@ -234,22 +260,42 @@ variable "monitor_api_5xx_threshold" {
   type        = number
   default     = 5
   description = "Alert threshold for API 5xx errors per evaluation window."
+
+  validation {
+    condition     = var.monitor_api_5xx_threshold >= 0
+    error_message = "monitor_api_5xx_threshold must be >= 0."
+  }
 }
 
 variable "monitor_pipeline_error_threshold" {
   type        = number
   default     = 5
   description = "Alert threshold for blocked/error/retrying pipeline events per window."
+
+  validation {
+    condition     = var.monitor_pipeline_error_threshold >= 0
+    error_message = "monitor_pipeline_error_threshold must be >= 0."
+  }
 }
 
 variable "monitor_queue_backlog_threshold" {
   type        = number
   default     = 50
   description = "Alert threshold for sustained queue backlog."
+
+  validation {
+    condition     = var.monitor_queue_backlog_threshold >= 0
+    error_message = "monitor_queue_backlog_threshold must be >= 0."
+  }
 }
 
 variable "monitor_deadletter_threshold" {
   type        = number
   default     = 1
   description = "Alert threshold for DLQ growth in Service Bus queues."
+
+  validation {
+    condition     = var.monitor_deadletter_threshold >= 0
+    error_message = "monitor_deadletter_threshold must be >= 0."
+  }
 }

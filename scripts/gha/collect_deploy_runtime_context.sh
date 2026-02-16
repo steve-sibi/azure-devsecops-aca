@@ -10,9 +10,9 @@ require_env RG
 require_env PREFIX
 require_env QUEUE_NAME
 
-command -v az >/dev/null 2>&1 || { echo "az CLI not found" >&2; exit 1; }
-command -v terraform >/dev/null 2>&1 || { echo "terraform not found" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; exit 1; }
+require_command az
+require_command terraform
+require_command python3
 
 deploy_log_file="${DEPLOY_LOG_FILE:-deploy_output.log}"
 context_output_file="${DEPLOY_CONTEXT_OUTPUT_FILE:-deploy_runtime_context.env}"
@@ -51,6 +51,13 @@ PY
 api_url="$(read_tf_output_string "fastapi_url" || true)"
 monitor_action_group_id="$(read_tf_output_string "monitor_action_group_id" || true)"
 monitor_workbook_id="$(read_tf_output_string "monitor_workbook_id" || true)"
+scan_queue_name="${SCAN_QUEUE_NAME:-}"
+if [[ -z "${scan_queue_name}" ]]; then
+  scan_queue_name="$(read_tf_output_string "scan_queue_name" || true)"
+fi
+if [[ -z "${scan_queue_name}" ]]; then
+  scan_queue_name="${QUEUE_NAME}-scan"
+fi
 
 api_replicas="$(az containerapp replica list -g "${RG}" -n "${PREFIX}-api" --query "length(@)" -o tsv 2>/dev/null || echo "—")"
 fetcher_replicas="$(az containerapp replica list -g "${RG}" -n "${PREFIX}-fetcher" --query "length(@)" -o tsv 2>/dev/null || echo "—")"
@@ -59,8 +66,8 @@ worker_replicas="$(az containerapp replica list -g "${RG}" -n "${PREFIX}-worker"
 sbns="${PREFIX}-sbns"
 tasks_queue_active="$(az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${QUEUE_NAME}" --query "countDetails.activeMessageCount" -o tsv 2>/dev/null || echo "—")"
 tasks_queue_dead="$(az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${QUEUE_NAME}" --query "countDetails.deadLetterMessageCount" -o tsv 2>/dev/null || echo "—")"
-scan_queue_active="$(az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${QUEUE_NAME}-scan" --query "countDetails.activeMessageCount" -o tsv 2>/dev/null || echo "—")"
-scan_queue_dead="$(az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${QUEUE_NAME}-scan" --query "countDetails.deadLetterMessageCount" -o tsv 2>/dev/null || echo "—")"
+scan_queue_active="$(az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${scan_queue_name}" --query "countDetails.activeMessageCount" -o tsv 2>/dev/null || echo "—")"
+scan_queue_dead="$(az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${scan_queue_name}" --query "countDetails.deadLetterMessageCount" -o tsv 2>/dev/null || echo "—")"
 
 health_status="unknown"
 e2e_status="unknown"
@@ -100,6 +107,7 @@ context_keys=(
   TASKS_QUEUE_DEAD
   SCAN_QUEUE_ACTIVE
   SCAN_QUEUE_DEAD
+  SCAN_QUEUE_NAME
   HEALTH_STATUS
   E2E_STATUS
   E2E_JOB_ID
@@ -119,6 +127,7 @@ for key in "${context_keys[@]}"; do
     TASKS_QUEUE_DEAD) value="${tasks_queue_dead}" ;;
     SCAN_QUEUE_ACTIVE) value="${scan_queue_active}" ;;
     SCAN_QUEUE_DEAD) value="${scan_queue_dead}" ;;
+    SCAN_QUEUE_NAME) value="${scan_queue_name}" ;;
     HEALTH_STATUS) value="${health_status}" ;;
     E2E_STATUS) value="${e2e_status}" ;;
     E2E_JOB_ID) value="${e2e_job_id}" ;;

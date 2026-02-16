@@ -57,46 +57,92 @@ locals {
     print queue_active=queue_active, completed_scans=completed_scans
     | where queue_active > 0 and completed_scans == 0
   KQL
+
+  monitor_saved_searches = {
+    api_5xx = {
+      name_suffix  = "api-5xx"
+      display_name = "API 5xx Errors (10m)"
+      query        = local.kql_api_5xx
+    }
+    pipeline_errors = {
+      name_suffix  = "pipeline-errors"
+      display_name = "Pipeline Errors/Warnings (10m)"
+      query        = local.kql_pipeline_errors
+    }
+    queue_backlog = {
+      name_suffix  = "queue-backlog"
+      display_name = "Service Bus Queue Backlog (10m)"
+      query        = local.kql_queue_backlog
+    }
+    deadletter_growth = {
+      name_suffix  = "deadletter-growth"
+      display_name = "Service Bus Deadletter Growth (10m)"
+      query        = local.kql_deadletter_growth
+    }
+    stalled_pipeline = {
+      name_suffix  = "stalled-pipeline"
+      display_name = "Stalled Pipeline Detector (15m)"
+      query        = local.kql_stalled_pipeline
+    }
+  }
+
+  monitor_alerts = {
+    api_5xx = {
+      name_suffix          = "api-5xx-alert"
+      description          = "API 5xx errors exceed threshold."
+      severity             = 2
+      evaluation_frequency = "PT5M"
+      window_duration      = "PT10M"
+      query                = local.kql_api_5xx
+      threshold            = var.monitor_api_5xx_threshold
+    }
+    pipeline_errors = {
+      name_suffix          = "pipeline-errors-alert"
+      description          = "Pipeline blocked/error/retrying events exceed threshold."
+      severity             = 2
+      evaluation_frequency = "PT5M"
+      window_duration      = "PT10M"
+      query                = local.kql_pipeline_errors
+      threshold            = var.monitor_pipeline_error_threshold
+    }
+    queue_backlog = {
+      name_suffix          = "queue-backlog-alert"
+      description          = "Service Bus queue backlog sustained above threshold."
+      severity             = 3
+      evaluation_frequency = "PT5M"
+      window_duration      = "PT10M"
+      query                = local.kql_queue_backlog
+      threshold            = 0
+    }
+    deadletter_growth = {
+      name_suffix          = "deadletter-alert"
+      description          = "Service Bus dead-letter messages exceed threshold."
+      severity             = 2
+      evaluation_frequency = "PT5M"
+      window_duration      = "PT10M"
+      query                = local.kql_deadletter_growth
+      threshold            = 0
+    }
+    stalled_pipeline = {
+      name_suffix          = "stalled-pipeline-alert"
+      description          = "Queue has active messages but no scan completions."
+      severity             = 2
+      evaluation_frequency = "PT5M"
+      window_duration      = "PT15M"
+      query                = local.kql_stalled_pipeline
+      threshold            = 0
+    }
+  }
 }
 
-resource "azurerm_log_analytics_saved_search" "api_5xx" {
-  name                       = "${var.prefix}-api-5xx"
-  display_name               = "API 5xx Errors (10m)"
-  category                   = local.monitor_category
-  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
-  query                      = local.kql_api_5xx
-}
+resource "azurerm_log_analytics_saved_search" "saved_search" {
+  for_each = local.monitor_saved_searches
 
-resource "azurerm_log_analytics_saved_search" "pipeline_errors" {
-  name                       = "${var.prefix}-pipeline-errors"
-  display_name               = "Pipeline Errors/Warnings (10m)"
+  name                       = "${var.prefix}-${each.value.name_suffix}"
+  display_name               = each.value.display_name
   category                   = local.monitor_category
   log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
-  query                      = local.kql_pipeline_errors
-}
-
-resource "azurerm_log_analytics_saved_search" "queue_backlog" {
-  name                       = "${var.prefix}-queue-backlog"
-  display_name               = "Service Bus Queue Backlog (10m)"
-  category                   = local.monitor_category
-  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
-  query                      = local.kql_queue_backlog
-}
-
-resource "azurerm_log_analytics_saved_search" "deadletter_growth" {
-  name                       = "${var.prefix}-deadletter-growth"
-  display_name               = "Service Bus Deadletter Growth (10m)"
-  category                   = local.monitor_category
-  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
-  query                      = local.kql_deadletter_growth
-}
-
-resource "azurerm_log_analytics_saved_search" "stalled_pipeline" {
-  name                       = "${var.prefix}-stalled-pipeline"
-  display_name               = "Stalled Pipeline Detector (15m)"
-  category                   = local.monitor_category
-  log_analytics_workspace_id = data.azurerm_log_analytics_workspace.la.id
-  query                      = local.kql_stalled_pipeline
+  query                      = each.value.query
 }
 
 resource "azurerm_monitor_action_group" "observability" {
@@ -115,119 +161,24 @@ resource "azurerm_monitor_action_group" "observability" {
   }
 }
 
-resource "azurerm_monitor_scheduled_query_rules_alert_v2" "api_5xx" {
-  count                = local.monitor_enabled ? 1 : 0
-  name                 = "${var.prefix}-api-5xx-alert"
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "alert" {
+  for_each = local.monitor_enabled ? local.monitor_alerts : {}
+
+  name                 = "${var.prefix}-${each.value.name_suffix}"
   resource_group_name  = data.azurerm_resource_group.rg.name
   location             = data.azurerm_resource_group.rg.location
-  description          = "API 5xx errors exceed threshold."
-  severity             = 2
+  description          = each.value.description
+  severity             = each.value.severity
   enabled              = true
   scopes               = [data.azurerm_log_analytics_workspace.la.id]
-  evaluation_frequency = "PT5M"
-  window_duration      = "PT10M"
+  evaluation_frequency = each.value.evaluation_frequency
+  window_duration      = each.value.window_duration
 
   criteria {
-    query                   = local.kql_api_5xx
+    query                   = each.value.query
     time_aggregation_method = "Count"
     operator                = "GreaterThan"
-    threshold               = var.monitor_api_5xx_threshold
-  }
-
-  action {
-    action_groups = [azurerm_monitor_action_group.observability[0].id]
-  }
-}
-
-resource "azurerm_monitor_scheduled_query_rules_alert_v2" "pipeline_errors" {
-  count                = local.monitor_enabled ? 1 : 0
-  name                 = "${var.prefix}-pipeline-errors-alert"
-  resource_group_name  = data.azurerm_resource_group.rg.name
-  location             = data.azurerm_resource_group.rg.location
-  description          = "Pipeline blocked/error/retrying events exceed threshold."
-  severity             = 2
-  enabled              = true
-  scopes               = [data.azurerm_log_analytics_workspace.la.id]
-  evaluation_frequency = "PT5M"
-  window_duration      = "PT10M"
-
-  criteria {
-    query                   = local.kql_pipeline_errors
-    time_aggregation_method = "Count"
-    operator                = "GreaterThan"
-    threshold               = var.monitor_pipeline_error_threshold
-  }
-
-  action {
-    action_groups = [azurerm_monitor_action_group.observability[0].id]
-  }
-}
-
-resource "azurerm_monitor_scheduled_query_rules_alert_v2" "queue_backlog" {
-  count                = local.monitor_enabled ? 1 : 0
-  name                 = "${var.prefix}-queue-backlog-alert"
-  resource_group_name  = data.azurerm_resource_group.rg.name
-  location             = data.azurerm_resource_group.rg.location
-  description          = "Service Bus queue backlog sustained above threshold."
-  severity             = 3
-  enabled              = true
-  scopes               = [data.azurerm_log_analytics_workspace.la.id]
-  evaluation_frequency = "PT5M"
-  window_duration      = "PT10M"
-
-  criteria {
-    query                   = local.kql_queue_backlog
-    time_aggregation_method = "Count"
-    operator                = "GreaterThan"
-    threshold               = 0
-  }
-
-  action {
-    action_groups = [azurerm_monitor_action_group.observability[0].id]
-  }
-}
-
-resource "azurerm_monitor_scheduled_query_rules_alert_v2" "deadletter_growth" {
-  count                = local.monitor_enabled ? 1 : 0
-  name                 = "${var.prefix}-deadletter-alert"
-  resource_group_name  = data.azurerm_resource_group.rg.name
-  location             = data.azurerm_resource_group.rg.location
-  description          = "Service Bus dead-letter messages exceed threshold."
-  severity             = 2
-  enabled              = true
-  scopes               = [data.azurerm_log_analytics_workspace.la.id]
-  evaluation_frequency = "PT5M"
-  window_duration      = "PT10M"
-
-  criteria {
-    query                   = local.kql_deadletter_growth
-    time_aggregation_method = "Count"
-    operator                = "GreaterThan"
-    threshold               = 0
-  }
-
-  action {
-    action_groups = [azurerm_monitor_action_group.observability[0].id]
-  }
-}
-
-resource "azurerm_monitor_scheduled_query_rules_alert_v2" "stalled_pipeline" {
-  count                = local.monitor_enabled ? 1 : 0
-  name                 = "${var.prefix}-stalled-pipeline-alert"
-  resource_group_name  = data.azurerm_resource_group.rg.name
-  location             = data.azurerm_resource_group.rg.location
-  description          = "Queue has active messages but no scan completions."
-  severity             = 2
-  enabled              = true
-  scopes               = [data.azurerm_log_analytics_workspace.la.id]
-  evaluation_frequency = "PT5M"
-  window_duration      = "PT15M"
-
-  criteria {
-    query                   = local.kql_stalled_pipeline
-    time_aggregation_method = "Count"
-    operator                = "GreaterThan"
-    threshold               = 0
+    threshold               = each.value.threshold
   }
 
   action {

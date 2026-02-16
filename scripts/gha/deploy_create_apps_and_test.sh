@@ -20,47 +20,17 @@ if [[ -z "${IMAGE_TAG}" ]]; then
   exit 2
 fi
 
-command -v az >/dev/null 2>&1 || { echo "az CLI not found" >&2; exit 1; }
-command -v terraform >/dev/null 2>&1 || { echo "terraform not found" >&2; exit 1; }
-command -v curl >/dev/null 2>&1 || { echo "curl not found" >&2; exit 1; }
-command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; exit 1; }
+require_command az
+require_command terraform
+require_command curl
+require_command python3
 
 SUB_ID="$(az account show --query id -o tsv)"
-export ARM_SUBSCRIPTION_ID="${SUB_ID}"
-export TF_VAR_subscription_id="${SUB_ID}"
+set_terraform_subscription_env "${SUB_ID}"
+set_terraform_principal_env_from_client_id "${AZURE_CLIENT_ID:-}" >/dev/null
+apply_common_tf_var_overrides
 
-if [[ -n "${AZURE_CLIENT_ID:-}" ]]; then
-  SP_OBJ_ID="$(az ad sp show --id "${AZURE_CLIENT_ID}" --query id -o tsv)"
-  export TF_VAR_terraform_principal_object_id="${SP_OBJ_ID}"
-fi
-
-KV_SECRET_READERS_JSON="${KV_SECRET_READER_OBJECT_IDS_JSON:-${ACA_KV_SECRET_READER_OBJECT_IDS_JSON:-}}"
-if [[ -n "${KV_SECRET_READERS_JSON}" ]]; then
-  export TF_VAR_kv_secret_reader_object_ids="${KV_SECRET_READERS_JSON}"
-  echo "[deploy] Using kv_secret_reader_object_ids from workflow configuration."
-fi
-
-if [[ -n "${MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON:-}" ]]; then
-  export TF_VAR_monitor_action_group_email_receivers="${MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON}"
-  echo "[deploy] Using monitor_action_group_email_receivers from workflow configuration."
-fi
-if [[ -n "${MONITOR_ALERTS_ENABLED:-}" ]]; then
-  export TF_VAR_monitor_alerts_enabled="${MONITOR_ALERTS_ENABLED}"
-fi
-if [[ -n "${MONITOR_WORKBOOK_ENABLED:-}" ]]; then
-  export TF_VAR_monitor_workbook_enabled="${MONITOR_WORKBOOK_ENABLED}"
-fi
-if [[ -n "${OTEL_TRACES_SAMPLER_RATIO:-}" ]]; then
-  export TF_VAR_otel_traces_sampler_ratio="${OTEL_TRACES_SAMPLER_RATIO}"
-  echo "[deploy] Using OTEL trace sampler ratio from workflow configuration."
-fi
-
-terraform -chdir="${INFRA_DIR}" init \
-  -backend-config="resource_group_name=${RG}" \
-  -backend-config="storage_account_name=${TFSTATE_SA}" \
-  -backend-config="container_name=${TFSTATE_CONTAINER}" \
-  -backend-config="key=${TFSTATE_KEY}" \
-  -backend-config="use_azuread_auth=true"
+terraform_init_azure_backend "${INFRA_DIR}"
 
 echo "[deploy] Importing env + apps if they exist..."
 
@@ -69,30 +39,25 @@ API_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.App/co
 FETCHER_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-fetcher"
 WORKER_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.App/containerApps/${PREFIX}-worker"
 
-exists() { az resource show --ids "$1" >/dev/null 2>&1; }
-instate() { terraform -chdir="${INFRA_DIR}" state show "$1" >/dev/null 2>&1; }
-
-if exists "${ACA_ENV_ID}" && ! instate azurerm_container_app_environment.env; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_container_app_environment.env "${ACA_ENV_ID}" || true
-fi
-if exists "${API_ID}" && ! instate azurerm_container_app.api[0]; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_container_app.api[0] "${API_ID}" || true
-fi
-if exists "${FETCHER_ID}" && ! instate azurerm_container_app.fetcher[0]; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_container_app.fetcher[0] "${FETCHER_ID}" || true
-fi
-if exists "${WORKER_ID}" && ! instate azurerm_container_app.worker[0]; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_container_app.worker[0] "${WORKER_ID}" || true
-fi
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_container_app_environment.env" "${ACA_ENV_ID}"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_container_app.api[0]" "${API_ID}"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_container_app.fetcher[0]" "${FETCHER_ID}"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_container_app.worker[0]" "${WORKER_ID}"
 
 echo "[deploy] Terraform apply (create/update apps)..."
+SCAN_QUEUE_NAME_RESOLVED="$(resolve_scan_queue_name "${QUEUE_NAME}" "${INFRA_DIR}")"
+
+tf_var_args=(
+  "-var=prefix=${PREFIX}"
+  "-var=resource_group_name=${RG}"
+  "-var=queue_name=${QUEUE_NAME}"
+  "-var=scan_queue_name=${SCAN_QUEUE_NAME_RESOLVED}"
+  "-var=create_apps=true"
+  "-var=image_tag=${IMAGE_TAG}"
+)
 
 terraform -chdir="${INFRA_DIR}" apply -auto-approve -input=false -no-color -lock-timeout=2m \
-  -var="prefix=${PREFIX}" \
-  -var="resource_group_name=${RG}" \
-  -var="queue_name=${QUEUE_NAME}" \
-  -var="create_apps=true" \
-  -var="image_tag=${IMAGE_TAG}"
+  "${tf_var_args[@]}"
 
 API_URL="$(terraform -chdir="${INFRA_DIR}" output -raw fastapi_url)"
 echo "API_URL=${API_URL}"
@@ -109,7 +74,7 @@ diagnose_api() {
 
 diagnose_e2e() {
   local sbns="${PREFIX}-sbns"
-  local scan_queue="${QUEUE_NAME}-scan"
+  local scan_queue="${SCAN_QUEUE_NAME_RESOLVED}"
 
   echo "[deploy] Service Bus queue depths:"
   az servicebus queue show -g "${RG}" --namespace-name "${sbns}" -n "${QUEUE_NAME}" \

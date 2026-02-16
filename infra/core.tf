@@ -125,50 +125,62 @@ resource "azurerm_storage_account_queue_properties" "results" {
   }
 }
 
-# ---------- Least-privilege authorization rules at QUEUE scope ----------
-resource "azurerm_servicebus_queue_authorization_rule" "q_send" {
-  name     = "api-send"
-  queue_id = azurerm_servicebus_queue.q.id
-  send     = true
+# ---------- Least-privilege authorization rules ----------
+locals {
+  servicebus_queue_authorization_rules = {
+    q_send = {
+      name     = "api-send"
+      queue_id = azurerm_servicebus_queue.q.id
+      send     = true
+      listen   = false
+      manage   = false
+    }
+    q_listen = {
+      name     = "worker-listen"
+      queue_id = azurerm_servicebus_queue.q.id
+      send     = false
+      listen   = true
+      manage   = false
+    }
+    q_manage = {
+      name     = "scale-manage"
+      queue_id = azurerm_servicebus_queue.q.id
+      send     = true
+      listen   = true
+      manage   = true
+    }
+    q_scan_send = {
+      name     = "fetcher-send"
+      queue_id = azurerm_servicebus_queue.q_scan.id
+      send     = true
+      listen   = false
+      manage   = false
+    }
+    q_scan_listen = {
+      name     = "worker-scan-listen"
+      queue_id = azurerm_servicebus_queue.q_scan.id
+      send     = false
+      listen   = true
+      manage   = false
+    }
+    q_scan_manage = {
+      name     = "scale-manage-scan"
+      queue_id = azurerm_servicebus_queue.q_scan.id
+      send     = true
+      listen   = true
+      manage   = true
+    }
+  }
 }
 
-resource "azurerm_servicebus_queue_authorization_rule" "q_listen" {
-  name     = "worker-listen"
-  queue_id = azurerm_servicebus_queue.q.id
-  listen   = true
-}
+resource "azurerm_servicebus_queue_authorization_rule" "queue_rule" {
+  for_each = local.servicebus_queue_authorization_rules
 
-# KEDA scaler needs Manage to read queue metrics
-resource "azurerm_servicebus_queue_authorization_rule" "q_manage" {
-  name     = "scale-manage"
-  queue_id = azurerm_servicebus_queue.q.id
-
-  # Manage implies both of these must be true
-  manage = true
-  listen = true
-  send   = true
-}
-
-# ---------- Least-privilege authorization rules at SCAN QUEUE scope ----------
-resource "azurerm_servicebus_queue_authorization_rule" "q_scan_send" {
-  name     = "fetcher-send"
-  queue_id = azurerm_servicebus_queue.q_scan.id
-  send     = true
-}
-
-resource "azurerm_servicebus_queue_authorization_rule" "q_scan_listen" {
-  name     = "worker-scan-listen"
-  queue_id = azurerm_servicebus_queue.q_scan.id
-  listen   = true
-}
-
-resource "azurerm_servicebus_queue_authorization_rule" "q_scan_manage" {
-  name     = "scale-manage-scan"
-  queue_id = azurerm_servicebus_queue.q_scan.id
-
-  manage = true
-  listen = true
-  send   = true
+  name     = each.value.name
+  queue_id = each.value.queue_id
+  send     = each.value.send
+  listen   = each.value.listen
+  manage   = each.value.manage
 }
 
 # Container Apps Environment
