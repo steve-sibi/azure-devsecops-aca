@@ -169,11 +169,20 @@ tf_var_args=(
 if [[ "${TERRAFORM_OPERATION}" == "plan" ]]; then
   PLAN_FILE="${TF_PLAN_FILE:-infra.tfplan}"
   PLAN_TEXT_FILE="${TF_PLAN_TEXT_FILE:-infra-plan.txt}"
+  if [[ "${PLAN_TEXT_FILE}" = /* ]]; then
+    PLAN_TEXT_PATH="${PLAN_TEXT_FILE}"
+  else
+    PLAN_TEXT_PATH="${INFRA_DIR}/${PLAN_TEXT_FILE}"
+  fi
   echo "[deploy] Terraform plan (infra)..."
   terraform -chdir="${INFRA_DIR}" plan -input=false -no-color -lock-timeout=2m \
     -out "${PLAN_FILE}" \
     "${tf_var_args[@]}"
-  terraform -chdir="${INFRA_DIR}" show -no-color "${PLAN_FILE}" > "${PLAN_TEXT_FILE}"
+  # Best-effort textual plan for summary/artifact usage; binary plan is authoritative.
+  if ! terraform -chdir="${INFRA_DIR}" show -no-color "${PLAN_FILE}" > "${PLAN_TEXT_PATH}"; then
+    echo "[deploy] Warning: failed to render text plan. Continuing with saved binary plan." >&2
+    printf "Terraform plan text could not be rendered in this run.\n" > "${PLAN_TEXT_PATH}"
+  fi
   echo "[deploy] Infra plan complete."
 else
   if [[ -n "${TF_PLAN_FILE:-}" && -f "${INFRA_DIR}/${TF_PLAN_FILE}" ]]; then
