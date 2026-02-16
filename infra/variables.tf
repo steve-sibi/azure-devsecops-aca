@@ -96,12 +96,25 @@ variable "queue_name" {
   type        = string
   default     = "tasks"
   description = "Service Bus queue name."
+
+  validation {
+    condition     = can(regex("^[A-Za-z0-9]([A-Za-z0-9._~/-]{0,258}[A-Za-z0-9])?$", var.queue_name))
+    error_message = "queue_name must be 1-260 chars, start/end with a letter or number, and use only letters, numbers, periods, hyphens, tildes, forward slashes, or underscores."
+  }
 }
 
 variable "scan_queue_name" {
   type        = string
   default     = ""
   description = "Optional Service Bus scan queue name (defaults to <queue_name>-scan)."
+
+  validation {
+    condition = (
+      trimspace(var.scan_queue_name) == ""
+      || can(regex("^[A-Za-z0-9]([A-Za-z0-9._~/-]{0,258}[A-Za-z0-9])?$", var.scan_queue_name))
+    )
+    error_message = "scan_queue_name must be empty or match Service Bus entity naming rules: 1-260 chars, start/end with a letter or number, and use only letters, numbers, periods, hyphens, tildes, forward slashes, or underscores."
+  }
 }
 
 variable "tags" {

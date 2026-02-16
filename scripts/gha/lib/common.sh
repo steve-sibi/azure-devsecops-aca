@@ -188,12 +188,31 @@ resolve_scan_queue_name() {
   local queue_name="$1"
   local infra_dir="${2:-}"
   local resolved="${SCAN_QUEUE_NAME:-}"
+  local tf_candidate=""
+  local default_name="${queue_name}-scan"
 
   if [[ -z "${resolved}" && -n "${infra_dir}" ]] && command -v terraform >/dev/null 2>&1; then
-    resolved="$(terraform -chdir="${infra_dir}" output -raw scan_queue_name 2>/dev/null || true)"
+    # Only accept Terraform output when the command succeeds.
+    if tf_candidate="$(terraform -chdir="${infra_dir}" output -raw scan_queue_name 2>/dev/null)"; then
+      resolved="${tf_candidate}"
+    fi
   fi
+
+  # Normalize trailing newlines if present.
+  resolved="${resolved//$'\r'/}"
+  resolved="${resolved//$'\n'/}"
+
   if [[ -z "${resolved}" ]]; then
-    resolved="${queue_name}-scan"
+    resolved="${default_name}"
+  fi
+
+  # Service Bus queue/topic entity names: 1-260 chars, start/end with alnum.
+  if [[ ${#resolved} -gt 260 \
+    || ! "${resolved}" =~ ^[-[:alnum:]._~/]+$ \
+    || ! "${resolved}" =~ ^[[:alnum:]] \
+    || ! "${resolved}" =~ [[:alnum:]]$ ]]; then
+    echo "[deploy] Invalid scan_queue_name '${resolved}', falling back to '${default_name}'." >&2
+    resolved="${default_name}"
   fi
 
   echo "${resolved}"
