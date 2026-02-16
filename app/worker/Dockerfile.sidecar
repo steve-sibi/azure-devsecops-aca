@@ -13,6 +13,7 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get upgrade -y \
     && apt-get install -y --no-install-recommends \
+      build-essential \
       ca-certificates \
       tini \
     && rm -rf /var/lib/apt/lists/*
