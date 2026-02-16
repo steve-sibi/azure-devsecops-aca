@@ -14,6 +14,10 @@ on:
         description: Service Bus queue name
         required: true
         default: tasks
+      scan_queue_name:
+        description: Optional scan queue name override (defaults to <queue_name>-scan)
+        required: false
+        default: ""
       scan_url:
         description: Public HTTPS URL to scan (must be <= 1MB)
         required: true
@@ -66,6 +70,7 @@ jobs:
             --resource-group "${{ inputs.resource_group }}" \
             --prefix "${{ inputs.prefix }}" \
             --queue-name "${{ inputs.queue_name }}" \
+            --scan-queue-name "${{ inputs.scan_queue_name }}" \
             --message-count "${{ inputs.message_count }}" \
             --expected-min-replicas "${{ inputs.expected_min_replicas }}" \
             --scan-url "${{ inputs.scan_url }}" \
@@ -87,6 +92,7 @@ jobs:
             echo "|-----------|-------|"
             echo "| **Resource Group** | \`$(esc_cell \"${{ inputs.resource_group }}\")\` |"
             echo "| **Queue** | \`$(esc_cell \"${{ inputs.queue_name }}\")\` |"
+            echo "| **Scan Queue Override** | \`$(esc_cell \"${{ inputs.scan_queue_name }}\")\` |"
             echo "| **Messages Sent** | \`$(esc_cell \"${{ inputs.message_count }}\")\` |"
             echo "| **Expected Min Replicas** | \`$(esc_cell \"${{ inputs.expected_min_replicas }}\")\` |"
             echo "| **Scan URL** | \`$(esc_cell \"${{ inputs.scan_url }}\")\` |"

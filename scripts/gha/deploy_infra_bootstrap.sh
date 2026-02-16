@@ -15,8 +15,14 @@ require_env TFSTATE_KEY
 require_env QUEUE_NAME
 require_env AZURE_CLIENT_ID
 
-command -v az >/dev/null 2>&1 || { echo "az CLI not found" >&2; exit 1; }
-command -v terraform >/dev/null 2>&1 || { echo "terraform not found" >&2; exit 1; }
+TERRAFORM_OPERATION="${TERRAFORM_OPERATION:-apply}"
+if [[ "${TERRAFORM_OPERATION}" != "plan" && "${TERRAFORM_OPERATION}" != "apply" ]]; then
+  echo "Unsupported TERRAFORM_OPERATION='${TERRAFORM_OPERATION}'. Use 'plan' or 'apply'." >&2
+  exit 2
+fi
+
+require_command az
+require_command terraform
 
 KV="${PREFIX}-kv"
 ACR="${PREFIX}acr"
@@ -95,79 +101,32 @@ retry az storage container create \
 echo "[deploy] Ensuring CI principal can access Terraform state (data plane RBAC)..."
 
 SUB_ID="$(az account show --query id -o tsv)"
-SP_OBJ_ID="$(az ad sp show --id "${AZURE_CLIENT_ID}" --query id -o tsv)"
 SCOPE="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.Storage/storageAccounts/${TFSTATE_SA}"
 
-export ARM_SUBSCRIPTION_ID="${SUB_ID}"
-export TF_VAR_subscription_id="${SUB_ID}"
-export TF_VAR_terraform_principal_object_id="${SP_OBJ_ID}"
+set_terraform_subscription_env "${SUB_ID}"
+SP_OBJ_ID="$(set_terraform_principal_env_from_client_id "${AZURE_CLIENT_ID}")"
+apply_common_tf_var_overrides
 
-KV_SECRET_READERS_JSON="${KV_SECRET_READER_OBJECT_IDS_JSON:-${ACA_KV_SECRET_READER_OBJECT_IDS_JSON:-}}"
-if [[ -n "${KV_SECRET_READERS_JSON}" ]]; then
-  export TF_VAR_kv_secret_reader_object_ids="${KV_SECRET_READERS_JSON}"
-  echo "[deploy] Using kv_secret_reader_object_ids from workflow configuration."
-fi
+ensure_role_assignment "${SP_OBJ_ID}" "${SCOPE}" "Storage Blob Data Contributor" "ServicePrincipal"
 
-if [[ -n "${MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON:-}" ]]; then
-  export TF_VAR_monitor_action_group_email_receivers="${MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON}"
-  echo "[deploy] Using monitor_action_group_email_receivers from workflow configuration."
+if ! wait_for_storage_blob_access "${TFSTATE_SA}" "${TFSTATE_CONTAINER}" "12" "10" "[deploy]"; then
+  echo "[deploy] Failed to verify TF state RBAC in time." >&2
+  exit 1
 fi
-if [[ -n "${MONITOR_ALERTS_ENABLED:-}" ]]; then
-  export TF_VAR_monitor_alerts_enabled="${MONITOR_ALERTS_ENABLED}"
-fi
-if [[ -n "${MONITOR_WORKBOOK_ENABLED:-}" ]]; then
-  export TF_VAR_monitor_workbook_enabled="${MONITOR_WORKBOOK_ENABLED}"
-fi
-if [[ -n "${OTEL_TRACES_SAMPLER_RATIO:-}" ]]; then
-  export TF_VAR_otel_traces_sampler_ratio="${OTEL_TRACES_SAMPLER_RATIO}"
-  echo "[deploy] Using OTEL trace sampler ratio from workflow configuration."
-fi
-
-az role assignment list --assignee-object-id "${SP_OBJ_ID}" --scope "${SCOPE}" \
-  --role "Storage Blob Data Contributor" --query "[0].id" -o tsv | grep . >/dev/null || \
-  az role assignment create \
-    --assignee-object-id "${SP_OBJ_ID}" \
-    --assignee-principal-type ServicePrincipal \
-    --role "Storage Blob Data Contributor" \
-    --scope "${SCOPE}" >/dev/null
-
-for i in {1..12}; do
-  if az storage blob list --account-name "${TFSTATE_SA}" \
-    --container-name "${TFSTATE_CONTAINER}" --auth-mode login 1>/dev/null 2>&1; then
-    echo "[deploy] RBAC verified"
-    break
-  fi
-  echo "[deploy] Waiting for RBAC propagation... (${i}/12)"
-  sleep 10
-done
 
 echo "[deploy] Terraform init (remote backend)..."
-
-terraform -chdir="${INFRA_DIR}" init \
-  -backend-config="resource_group_name=${RG}" \
-  -backend-config="storage_account_name=${TFSTATE_SA}" \
-  -backend-config="container_name=${TFSTATE_CONTAINER}" \
-  -backend-config="key=${TFSTATE_KEY}" \
-  -backend-config="use_azuread_auth=true"
+terraform_init_azure_backend "${INFRA_DIR}"
 
 echo "[deploy] Breaking stale Terraform state lease (if any)..."
-
-if az storage blob show --account-name "${TFSTATE_SA}" -c "${TFSTATE_CONTAINER}" -n "${TFSTATE_KEY}" --auth-mode login >/dev/null 2>&1; then
-  ST="$(az storage blob show --account-name "${TFSTATE_SA}" -c "${TFSTATE_CONTAINER}" -n "${TFSTATE_KEY}" --auth-mode login --query "properties.lease.state" -o tsv || echo "")"
-  SS="$(az storage blob show --account-name "${TFSTATE_SA}" -c "${TFSTATE_CONTAINER}" -n "${TFSTATE_KEY}" --auth-mode login --query "properties.lease.status" -o tsv || echo "")"
-  if [[ "${ST}" == "leased" || "${SS}" == "locked" ]]; then
-    az storage blob lease break --account-name "${TFSTATE_SA}" -c "${TFSTATE_CONTAINER}" --blob-name "${TFSTATE_KEY}" --auth-mode login >/dev/null
-    sleep 5
-  fi
-fi
+break_terraform_state_lease_if_any "${TFSTATE_SA}" "${TFSTATE_CONTAINER}" "${TFSTATE_KEY}"
 
 echo "[deploy] Import existing core resources (safe if absent)..."
 
-SUB="$(az account show --query id -o tsv)"
-APPINSIGHTS_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.Insights/components/${PREFIX}-appi"
-SB_NS_ID="/subscriptions/${SUB}/resourceGroups/${RG}/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns"
+SCAN_QUEUE_NAME_RESOLVED="$(resolve_scan_queue_name "${QUEUE_NAME}" "${INFRA_DIR}")"
+APPINSIGHTS_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.Insights/components/${PREFIX}-appi"
+SB_NS_ID="/subscriptions/${SUB_ID}/resourceGroups/${RG}/providers/Microsoft.ServiceBus/namespaces/${PREFIX}-sbns"
 SB_QUEUE_ID="${SB_NS_ID}/queues/${QUEUE_NAME}"
-SB_SCAN_QUEUE_ID="${SB_NS_ID}/queues/${QUEUE_NAME}-scan"
+SB_SCAN_QUEUE_ID="${SB_NS_ID}/queues/${SCAN_QUEUE_NAME_RESOLVED}"
 Q_SEND_ID="${SB_QUEUE_ID}/authorizationRules/api-send"
 Q_LISTEN_ID="${SB_QUEUE_ID}/authorizationRules/worker-listen"
 Q_MANAGE_ID="${SB_QUEUE_ID}/authorizationRules/scale-manage"
@@ -175,41 +134,16 @@ Q_SCAN_SEND_ID="${SB_SCAN_QUEUE_ID}/authorizationRules/fetcher-send"
 Q_SCAN_LISTEN_ID="${SB_SCAN_QUEUE_ID}/authorizationRules/worker-scan-listen"
 Q_SCAN_MANAGE_ID="${SB_SCAN_QUEUE_ID}/authorizationRules/scale-manage-scan"
 
-exists() { az resource show --ids "$1" >/dev/null 2>&1; }
-instate() { terraform -chdir="${INFRA_DIR}" state show "$1" >/dev/null 2>&1; }
-
-if exists "${APPINSIGHTS_ID}" && ! instate azurerm_application_insights.appi; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_application_insights.appi "${APPINSIGHTS_ID}" || true
-fi
-if exists "${SB_NS_ID}" && ! instate azurerm_servicebus_namespace.sb; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_namespace.sb "${SB_NS_ID}" || true
-fi
-if exists "${SB_QUEUE_ID}" && ! instate azurerm_servicebus_queue.q; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue.q "${SB_QUEUE_ID}" || true
-fi
-if exists "${SB_SCAN_QUEUE_ID}" && ! instate azurerm_servicebus_queue.q_scan; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue.q_scan "${SB_SCAN_QUEUE_ID}" || true
-fi
-if exists "${Q_SEND_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_send; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_send "${Q_SEND_ID}" || true
-fi
-if exists "${Q_LISTEN_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_listen; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_listen "${Q_LISTEN_ID}" || true
-fi
-if exists "${Q_MANAGE_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_manage; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_manage "${Q_MANAGE_ID}" || true
-fi
-if exists "${Q_SCAN_SEND_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_scan_send; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_scan_send "${Q_SCAN_SEND_ID}" || true
-fi
-if exists "${Q_SCAN_LISTEN_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_scan_listen; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_scan_listen "${Q_SCAN_LISTEN_ID}" || true
-fi
-if exists "${Q_SCAN_MANAGE_ID}" && ! instate azurerm_servicebus_queue_authorization_rule.q_scan_manage; then
-  terraform -chdir="${INFRA_DIR}" import azurerm_servicebus_queue_authorization_rule.q_scan_manage "${Q_SCAN_MANAGE_ID}" || true
-fi
-
-echo "[deploy] Terraform apply (infra only, no apps)..."
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_application_insights.appi" "${APPINSIGHTS_ID}"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_namespace.sb" "${SB_NS_ID}"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_queue.q" "${SB_QUEUE_ID}"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_queue.q_scan" "${SB_SCAN_QUEUE_ID}"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_queue_authorization_rule.queue_rule[\"q_send\"]" "${Q_SEND_ID}" "azurerm_servicebus_queue_authorization_rule.q_send"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_queue_authorization_rule.queue_rule[\"q_listen\"]" "${Q_LISTEN_ID}" "azurerm_servicebus_queue_authorization_rule.q_listen"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_queue_authorization_rule.queue_rule[\"q_manage\"]" "${Q_MANAGE_ID}" "azurerm_servicebus_queue_authorization_rule.q_manage"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_queue_authorization_rule.queue_rule[\"q_scan_send\"]" "${Q_SCAN_SEND_ID}" "azurerm_servicebus_queue_authorization_rule.q_scan_send"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_queue_authorization_rule.queue_rule[\"q_scan_listen\"]" "${Q_SCAN_LISTEN_ID}" "azurerm_servicebus_queue_authorization_rule.q_scan_listen"
+terraform_import_if_exists "${INFRA_DIR}" "azurerm_servicebus_queue_authorization_rule.queue_rule[\"q_scan_manage\"]" "${Q_SCAN_MANAGE_ID}" "azurerm_servicebus_queue_authorization_rule.q_scan_manage"
 
 TF_CREATE_APPS="${CREATE_APPS:-auto}"
 if [[ "${TF_CREATE_APPS}" == "auto" ]]; then
@@ -217,17 +151,38 @@ if [[ "${TF_CREATE_APPS}" == "auto" ]]; then
     && az containerapp show -g "${RG}" -n "${PREFIX}-fetcher" >/dev/null 2>&1 \
     && az containerapp show -g "${RG}" -n "${PREFIX}-worker" >/dev/null 2>&1; then
     TF_CREATE_APPS="true"
-    echo "[deploy] Existing Container Apps detected; preserving apps during infra apply."
+    echo "[deploy] Existing Container Apps detected; preserving apps during infra ${TERRAFORM_OPERATION}."
   else
     TF_CREATE_APPS="false"
-    echo "[deploy] Container Apps not fully present; infra apply will skip app resources."
+    echo "[deploy] Container Apps not fully present; infra ${TERRAFORM_OPERATION} will skip app resources."
   fi
 fi
 
-terraform -chdir="${INFRA_DIR}" apply -auto-approve -input=false -no-color -lock-timeout=2m \
-  -var="prefix=${PREFIX}" \
-  -var="resource_group_name=${RG}" \
-  -var="queue_name=${QUEUE_NAME}" \
-  -var="create_apps=${TF_CREATE_APPS}"
+tf_var_args=(
+  "-var=prefix=${PREFIX}"
+  "-var=resource_group_name=${RG}"
+  "-var=queue_name=${QUEUE_NAME}"
+  "-var=scan_queue_name=${SCAN_QUEUE_NAME_RESOLVED}"
+  "-var=create_apps=${TF_CREATE_APPS}"
+)
 
-echo "[deploy] Infra bootstrap complete."
+if [[ "${TERRAFORM_OPERATION}" == "plan" ]]; then
+  PLAN_FILE="${TF_PLAN_FILE:-infra.tfplan}"
+  PLAN_TEXT_FILE="${TF_PLAN_TEXT_FILE:-infra-plan.txt}"
+  echo "[deploy] Terraform plan (infra)..."
+  terraform -chdir="${INFRA_DIR}" plan -input=false -no-color -lock-timeout=2m \
+    -out "${PLAN_FILE}" \
+    "${tf_var_args[@]}"
+  terraform -chdir="${INFRA_DIR}" show -no-color "${PLAN_FILE}" > "${PLAN_TEXT_FILE}"
+  echo "[deploy] Infra plan complete."
+else
+  if [[ -n "${TF_PLAN_FILE:-}" && -f "${INFRA_DIR}/${TF_PLAN_FILE}" ]]; then
+    echo "[deploy] Terraform apply (saved plan)..."
+    terraform -chdir="${INFRA_DIR}" apply -auto-approve -input=false -no-color -lock-timeout=2m "${TF_PLAN_FILE}"
+  else
+    echo "[deploy] Terraform apply (infra only, no apps)..."
+    terraform -chdir="${INFRA_DIR}" apply -auto-approve -input=false -no-color -lock-timeout=2m \
+      "${tf_var_args[@]}"
+  fi
+  echo "[deploy] Infra bootstrap complete."
+fi

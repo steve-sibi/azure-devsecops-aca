@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+INFRA_DIR="${ROOT_DIR}/infra"
+
 usage() {
   cat <<'EOF'
 KEDA scale test for the fetcher/worker Container Apps.
@@ -18,6 +21,7 @@ Usage:
     --resource-group rg-devsecops-aca \
     --prefix devsecopsaca \
     --queue-name tasks \
+    --scan-queue-name tasks-scan \
     --stage scan \
     --message-count 100 \
     --expected-min-replicas 1 \
@@ -32,6 +36,7 @@ EOF
 RG=""
 PREFIX=""
 QUEUE_NAME="tasks"
+SCAN_QUEUE_NAME=""
 STAGE="scan"
 MESSAGE_COUNT="100"
 EXPECTED_MIN_REPLICAS="1"
@@ -44,6 +49,7 @@ while [[ $# -gt 0 ]]; do
     --resource-group) RG="${2:-}"; shift 2 ;;
     --prefix) PREFIX="${2:-}"; shift 2 ;;
     --queue-name) QUEUE_NAME="${2:-}"; shift 2 ;;
+    --scan-queue-name) SCAN_QUEUE_NAME="${2:-}"; shift 2 ;;
     --stage) STAGE="${2:-}"; shift 2 ;;
     --message-count) MESSAGE_COUNT="${2:-}"; shift 2 ;;
     --expected-min-replicas) EXPECTED_MIN_REPLICAS="${2:-}"; shift 2 ;;
@@ -63,6 +69,17 @@ fi
 
 command -v az >/dev/null 2>&1 || { echo "az CLI not found" >&2; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "python3 not found" >&2; exit 1; }
+
+resolve_scan_queue_name_local() {
+  local resolved="${SCAN_QUEUE_NAME}"
+  if [[ -z "${resolved}" ]] && command -v terraform >/dev/null 2>&1; then
+    resolved="$(terraform -chdir="${INFRA_DIR}" output -raw scan_queue_name 2>/dev/null || true)"
+  fi
+  if [[ -z "${resolved}" ]]; then
+    resolved="${QUEUE_NAME}-scan"
+  fi
+  echo "${resolved}"
+}
 
 python3 -c "import azure.servicebus" >/dev/null 2>&1 || {
   echo "Missing Python dependency: azure-servicebus" >&2
@@ -93,7 +110,7 @@ if [[ "${STAGE}" == "fetch" ]]; then
   TARGET_APP="${FETCHER_APP}"
   KV_SECRET="ServiceBusSend"
 else
-  TARGET_QUEUE="${QUEUE_NAME}-scan"
+  TARGET_QUEUE="$(resolve_scan_queue_name_local)"
 fi
 
 if [[ -z "$SB_CONN" ]]; then

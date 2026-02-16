@@ -34,6 +34,14 @@ on:
         description: Service Bus queue name
         required: true
         default: tasks
+      scan_queue_name:
+        description: Optional scan queue name (defaults to <queue_name>-scan)
+        required: false
+        default: ""
+      apply_requires_approval:
+        description: Require GitHub Environment approval before infra apply (true/false)
+        required: false
+        default: "false"
 
 concurrency:
   # Prevent deploy/destroy/keda runs from overlapping for the same environment
@@ -42,7 +50,7 @@ concurrency:
   cancel-in-progress: true
 
 # NOTE: Keep shared inputs in sync with destroy.yml to avoid configuration drift.
-# (mode is deploy-only)
+# (mode/apply_requires_approval are deploy-only)
 env:
   MODE: ${{ inputs.mode }}
   REGION: ${{ inputs.region }}
@@ -52,6 +60,8 @@ env:
   TFSTATE_CONTAINER: ${{ inputs.tfstate_container }}
   TFSTATE_KEY: ${{ inputs.tfstate_key }}
   QUEUE_NAME: ${{ inputs.queue_name }}
+  SCAN_QUEUE_NAME: ${{ inputs.scan_queue_name }}
+  APPLY_REQUIRES_APPROVAL: ${{ inputs.apply_requires_approval }}
   KV_SECRET_READER_OBJECT_IDS_JSON: ${{ vars.ACA_KV_SECRET_READER_OBJECT_IDS_JSON || '' }}
   MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON: ${{ vars.ACA_MONITOR_ACTION_GROUP_EMAIL_RECEIVERS_JSON || '' }}
   MONITOR_ALERTS_ENABLED: ${{ vars.ACA_MONITOR_ALERTS_ENABLED || '' }}
@@ -64,7 +74,7 @@ env:
   OBS_VERIFY_REQUIRE_TRACE: ${{ vars.ACA_OBS_VERIFY_REQUIRE_TRACE || 'true' }}
 
 jobs:
-  infra-bootstrap:
+  infra-plan:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: { id-token: write, contents: read }
@@ -89,24 +99,164 @@ jobs:
           restore-keys: |
             terraform-${{ runner.os }}-
 
-      - name: Bootstrap infra (foundation + state + apply)
+      - name: Bootstrap + plan infra
         shell: bash
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/.terraform-plugin-cache
+          TERRAFORM_OPERATION: plan
+          TF_PLAN_FILE: infra.tfplan
+          TF_PLAN_TEXT_FILE: infra-plan.txt
         run: |
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
           bash scripts/gha/deploy_infra_bootstrap.sh
 
-      - name: Write infra-bootstrap summary
+      - name: Upload Terraform plan artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: infra-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            infra/infra.tfplan
+            infra/infra-plan.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Write infra-plan summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Infra plan"
+            echo ""
+            if [ -f "infra/infra-plan.txt" ]; then
+              echo "<details><summary>Terraform plan (first 200 lines)</summary>"
+              echo ""
+              echo '```text'
+              sed -n '1,200p' infra/infra-plan.txt
+              echo '```'
+              echo "</details>"
+            else
+              echo "- Plan output not found."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  infra-apply-auto:
+    needs: [infra-plan]
+    if: >-
+      ${{ !(inputs.apply_requires_approval == 'true'
+        || inputs.apply_requires_approval == '1'
+        || inputs.apply_requires_approval == 'yes'
+        || inputs.apply_requires_approval == 'TRUE'
+        || inputs.apply_requires_approval == 'YES') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: { id-token: write, contents: read }
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download Terraform plan artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: infra-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: infra
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
+        with:
+          path: ${{ runner.temp }}/.terraform-plugin-cache
+          key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-
+
+      - name: Apply infra plan
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/.terraform-plugin-cache
+          TERRAFORM_OPERATION: apply
+          TF_PLAN_FILE: infra.tfplan
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          bash scripts/gha/deploy_infra_bootstrap.sh
+
+      - name: Write infra-apply summary
+        if: always()
+        shell: bash
+        run: |
+          python3 .github/scripts/deploy_summary.py infra-bootstrap
+
+  infra-apply-approved:
+    needs: [infra-plan]
+    if: >-
+      ${{ inputs.apply_requires_approval == 'true'
+        || inputs.apply_requires_approval == '1'
+        || inputs.apply_requires_approval == 'yes'
+        || inputs.apply_requires_approval == 'TRUE'
+        || inputs.apply_requires_approval == 'YES' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions: { id-token: write, contents: read }
+    environment: aca-apply-approval
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download Terraform plan artifacts
+        uses: actions/download-artifact@v5
+        with:
+          name: infra-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: infra
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+
+      - name: Cache Terraform plugins
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
+        with:
+          path: ${{ runner.temp }}/.terraform-plugin-cache
+          key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
+          restore-keys: |
+            terraform-${{ runner.os }}-
+
+      - name: Apply infra plan (approved)
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          TF_PLUGIN_CACHE_DIR: ${{ runner.temp }}/.terraform-plugin-cache
+          TERRAFORM_OPERATION: apply
+          TF_PLAN_FILE: infra.tfplan
+        run: |
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          bash scripts/gha/deploy_infra_bootstrap.sh
+
+      - name: Write infra-apply summary
         if: always()
         shell: bash
         run: |
           python3 .github/scripts/deploy_summary.py infra-bootstrap
 
   build-and-push:
-    needs: [infra-bootstrap]
-    if: ${{ inputs.mode != 'infra-only' }}
+    needs: [infra-apply-auto, infra-apply-approved]
+    if: >-
+      ${{ always()
+        && inputs.mode != 'infra-only'
+        && (needs.infra-apply-auto.result == 'success' || needs.infra-apply-approved.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions: { id-token: write, contents: read }
