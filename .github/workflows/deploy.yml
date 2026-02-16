@@ -332,7 +332,7 @@ jobs:
 
   create-apps:
     needs: [build-and-push]
-    if: ${{ inputs.mode != 'infra-only' }}
+    if: ${{ always() && inputs.mode != 'infra-only' && needs.build-and-push.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: { id-token: write, contents: read }
