@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose a new capability or improvement.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please focus on the problem and expected outcome.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem statement
+      description: What problem are you trying to solve?
+      placeholder: A clear and concise description of the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe your preferred approach.
+      placeholder: Describe the desired behavior and why it helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other approaches did you consider?
+      placeholder: Include tradeoffs, if any.
+    validations:
+      required: false
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and impact
+      description: Which areas are affected? Any compatibility/security implications?
+      placeholder: |
+        - Affected paths/services:
+        - Backward compatibility notes:
+        - Security considerations:
+    validations:
+      required: true
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Nice to have
+        - Useful soon
+        - Important
+        - Urgent
+    validations:
+      required: true
