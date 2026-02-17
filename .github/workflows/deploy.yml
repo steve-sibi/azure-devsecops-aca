@@ -70,6 +70,7 @@ env:
   OBS_VERIFY_ATTEMPTS: ${{ vars.ACA_OBS_VERIFY_ATTEMPTS || '' }}
   OBS_VERIFY_SLEEP_SECONDS: ${{ vars.ACA_OBS_VERIFY_SLEEP_SECONDS || '' }}
   OBS_VERIFY_LOOKBACK_MINUTES: ${{ vars.ACA_OBS_VERIFY_LOOKBACK_MINUTES || '' }}
+  OBS_VERIFY_STARTUP_HINT_LOOKBACK_MINUTES: ${{ vars.ACA_OBS_VERIFY_STARTUP_HINT_LOOKBACK_MINUTES || '' }}
   OTEL_TRACES_SAMPLER_RATIO: ${{ vars.ACA_OTEL_TRACES_SAMPLER_RATIO || '1.0' }}
   OBS_VERIFY_REQUIRE_TRACE: ${{ vars.ACA_OBS_VERIFY_REQUIRE_TRACE || 'true' }}
 
@@ -264,6 +265,11 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Telemetry dependency contract (deploy guard)
+        shell: bash
+        run: |
+          python3 scripts/ci/check_otel_dependency_contract.py
+
       - name: Azure Login (OIDC)
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
@@ -382,6 +388,7 @@ jobs:
         shell: bash
         env:
           OBS_VERIFY_REQUIRE_TRACE: ${{ env.OBS_VERIFY_REQUIRE_TRACE }}
+          OBS_VERIFY_STARTUP_HINT_LOOKBACK_MINUTES: ${{ env.OBS_VERIFY_STARTUP_HINT_LOOKBACK_MINUTES }}
         run: |
           chmod +x scripts/gha/verify_observability.sh
           bash scripts/gha/verify_observability.sh

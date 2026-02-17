@@ -105,6 +105,58 @@ diagnose_e2e() {
   show_app "${PREFIX}-worker"
 }
 
+assert_container_image_tag() {
+  local app="$1"
+  local container="$2"
+  local expected_image="$3"
+  local actual_image
+
+  actual_image="$(az containerapp show \
+    -g "${RG}" \
+    -n "${app}" \
+    --query "properties.template.containers[?name=='${container}'].image | [0]" \
+    -o tsv 2>/dev/null || true)"
+  actual_image="${actual_image//$'\r'/}"
+  actual_image="${actual_image//$'\n'/}"
+
+  if [[ -z "${actual_image}" ]]; then
+    echo "[deploy] Failed to resolve image for ${app}/${container}." >&2
+    return 1
+  fi
+
+  if [[ "${actual_image}" != *":${IMAGE_TAG}" ]]; then
+    echo "[deploy] Image mismatch for ${app}/${container}: expected suffix ':${IMAGE_TAG}', actual='${actual_image}', expected='${expected_image}'." >&2
+    return 1
+  fi
+
+  echo "[deploy] Verified ${app}/${container} image: ${actual_image}"
+}
+
+ACR_LOGIN_SERVER="$(az acr show -g "${RG}" -n "${PREFIX}acr" --query loginServer -o tsv)"
+API_IMAGE="${ACR_LOGIN_SERVER}/${PREFIX}-api:${IMAGE_TAG}"
+WORKER_IMAGE="${ACR_LOGIN_SERVER}/${PREFIX}-worker:${IMAGE_TAG}"
+CLAMAV_IMAGE="${ACR_LOGIN_SERVER}/${PREFIX}-clamav:${IMAGE_TAG}"
+
+echo "[deploy] Rolling out freshly built images (explicit app rollout)..."
+SMOKE_TEST=false \
+DEPLOY_API=true \
+DEPLOY_WORKER=true \
+DEPLOY_CLAMAV=true \
+API_IMAGE="${API_IMAGE}" \
+WORKER_IMAGE="${WORKER_IMAGE}" \
+CLAMAV_IMAGE="${CLAMAV_IMAGE}" \
+bash "${ROOT_DIR}/scripts/gha/deploy_app_rollout.sh"
+
+echo "[deploy] Verifying active container image tags..."
+if ! assert_container_image_tag "${PREFIX}-api" "api" "${API_IMAGE}" \
+  || ! assert_container_image_tag "${PREFIX}-api" "clamav" "${CLAMAV_IMAGE}" \
+  || ! assert_container_image_tag "${PREFIX}-fetcher" "fetcher" "${WORKER_IMAGE}" \
+  || ! assert_container_image_tag "${PREFIX}-worker" "worker" "${WORKER_IMAGE}"; then
+  echo "[deploy] Container image rollout assertion failed." >&2
+  diagnose_e2e
+  exit 1
+fi
+
 echo "[deploy] Smoke test API (/healthz)..."
 for i in {1..30}; do
   # Use --fail-with-body for better error detection; network failures return 000

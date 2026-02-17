@@ -15,6 +15,7 @@ RUN_ID="${E2E_RUN_ID:-}"
 LOOKBACK_MINUTES="${OBS_VERIFY_LOOKBACK_MINUTES:-180}"
 MAX_ATTEMPTS="${OBS_VERIFY_ATTEMPTS:-12}"
 SLEEP_SECONDS="${OBS_VERIFY_SLEEP_SECONDS:-30}"
+STARTUP_HINT_LOOKBACK_MINUTES="${OBS_VERIFY_STARTUP_HINT_LOOKBACK_MINUTES:-30}"
 REQUIRE_TRACE="${OBS_VERIFY_REQUIRE_TRACE:-false}"
 
 if [[ -z "${JOB_ID}" ]]; then
@@ -78,6 +79,22 @@ query_appi_traces="union isfuzzy=true traces, requests, dependencies
    or request_id in~ ('${JOB_ID}', '${RUN_ID}')
    or run_id in~ ('${JOB_ID}', '${RUN_ID}')
 | summarize count()"
+
+query_startup_errors_source="union isfuzzy=true ContainerAppConsoleLogs_CL, ContainerAppConsoleLogs
+| where TimeGenerated > ago(${STARTUP_HINT_LOOKBACK_MINUTES}m)
+| extend raw_log = tostring(coalesce(column_ifexists('Log_s', ''), column_ifexists('Log', '')))
+| where raw_log has 'OpenTelemetry initialization failed'
+   or raw_log has 'OpenTelemetry dependencies unavailable'
+   or raw_log has 'OpenTelemetry requested but no trace exporter is configured'
+| extend container_app = tostring(coalesce(column_ifexists('ContainerAppName_s', ''), column_ifexists('ContainerAppName', '')))
+| project TimeGenerated, container_app, raw_log
+| order by TimeGenerated desc"
+
+query_startup_errors_count="${query_startup_errors_source}
+| summarize count()"
+
+query_startup_errors_sample="${query_startup_errors_source}
+| take 10"
 
 query_presence="${query_source}
 | take 1"
@@ -206,10 +223,83 @@ print(len(rows) if isinstance(rows,list) else 0)
 ' <<<"${out}"
 }
 
+run_la_rows_query() {
+  local query="$1"
+  local out
+  local err_file
+  err_file="$(mktemp)"
+  if ! out="$(az monitor log-analytics query \
+    --workspace "${workspace_id}" \
+    --analytics-query "${query}" \
+    -o json 2>"${err_file}")"; then
+    local err_text
+    err_text="$(cat "${err_file}" 2>/dev/null || true)"
+    rm -f "${err_file}"
+    echo "[observability] Row query failed: ${err_text}" >&2
+    return 1
+  fi
+  rm -f "${err_file}"
+  python3 -c 'import json,sys
+raw=sys.stdin.read().strip()
+if not raw:
+    raise SystemExit(0)
+try:
+    data=json.loads(raw)
+except Exception:
+    raise SystemExit(0)
+tables=data.get("tables") if isinstance(data,dict) else None
+if not isinstance(tables,list) or not tables:
+    raise SystemExit(0)
+table=tables[0] if isinstance(tables[0],dict) else {}
+rows=table.get("rows")
+if not isinstance(rows,list):
+    raise SystemExit(0)
+for row in rows:
+    if not isinstance(row,list):
+        continue
+    time_generated=str(row[0]) if len(row) > 0 else ""
+    app=str(row[1]) if len(row) > 1 else ""
+    raw_log=str(row[2]) if len(row) > 2 else ""
+    raw_log=" ".join(raw_log.split())
+    if len(raw_log) > 280:
+        raw_log=raw_log[:277] + "..."
+    if app:
+        print(f"{time_generated} app={app} {raw_log}")
+    else:
+        print(f"{time_generated} {raw_log}")
+' <<<"${out}"
+}
+
+emit_telemetry_startup_hint_from_la() {
+  local startup_error_count
+  local startup_rows
+
+  startup_error_count="$(run_la_count_query "${query_startup_errors_count}" || true)"
+  [[ "${startup_error_count}" =~ ^[0-9]+$ ]] || startup_error_count=0
+  if [[ "${startup_error_count}" -eq 0 ]]; then
+    return 1
+  fi
+
+  echo "[observability] Telemetry startup errors from Log Analytics (last ${STARTUP_HINT_LOOKBACK_MINUTES}m, count=${startup_error_count}):" >&2
+  startup_rows="$(run_la_rows_query "${query_startup_errors_sample}" || true)"
+  if [[ -n "${startup_rows}" ]]; then
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      echo "[observability]   ${line}" >&2
+    done <<< "${startup_rows}"
+  fi
+
+  return 0
+}
+
 emit_telemetry_startup_hint() {
   local patterns='OpenTelemetry initialization failed|OpenTelemetry dependencies unavailable|OpenTelemetry requested but no trace exporter is configured'
   local app
   local found=0
+
+  if emit_telemetry_startup_hint_from_la; then
+    found=1
+  fi
 
   echo "[observability] Telemetry startup health hint (recent console logs):" >&2
   for app in "${PREFIX}-api" "${PREFIX}-fetcher" "${PREFIX}-worker"; do
@@ -250,6 +340,17 @@ for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
     if ! is_truthy "${REQUIRE_TRACE}"; then
       break
     fi
+
+    if [[ -n "${appi_app_id}" && "${appi_trace_count}" -eq 0 ]]; then
+      startup_error_count="$(run_la_count_query "${query_startup_errors_count}" || true)"
+      [[ "${startup_error_count}" =~ ^[0-9]+$ ]] || startup_error_count=0
+      if [[ "${startup_error_count}" -gt 0 ]]; then
+        echo "[observability] Detected ${startup_error_count} telemetry startup error log(s) in Log Analytics; failing early because strict trace verification is enabled." >&2
+        emit_telemetry_startup_hint
+        exit 1
+      fi
+    fi
+
     if [[ -n "${appi_app_id}" && "${appi_trace_count}" -gt 0 ]]; then
       break
     fi
