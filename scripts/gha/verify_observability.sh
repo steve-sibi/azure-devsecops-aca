@@ -206,6 +206,39 @@ print(len(rows) if isinstance(rows,list) else 0)
 ' <<<"${out}"
 }
 
+emit_telemetry_startup_hint() {
+  local patterns='OpenTelemetry initialization failed|OpenTelemetry dependencies unavailable|OpenTelemetry requested but no trace exporter is configured'
+  local app
+  local found=0
+
+  echo "[observability] Telemetry startup health hint (recent console logs):" >&2
+  for app in "${PREFIX}-api" "${PREFIX}-fetcher" "${PREFIX}-worker"; do
+    local snippet
+    snippet="$(az containerapp logs show \
+      -g "${RG}" \
+      -n "${app}" \
+      --type console \
+      --tail 200 2>/dev/null \
+      | grep -E "${patterns}" \
+      | tail -n 5 || true)"
+
+    if [[ -z "${snippet}" ]]; then
+      continue
+    fi
+
+    found=1
+    echo "[observability] ${app}:" >&2
+    while IFS= read -r line; do
+      [[ -n "${line}" ]] || continue
+      echo "[observability]   ${line}" >&2
+    done <<< "${snippet}"
+  done
+
+  if [[ "${found}" -eq 0 ]]; then
+    echo "[observability] No telemetry startup errors detected in recent console logs (or logs unavailable)." >&2
+  fi
+}
+
 for ((attempt=1; attempt<=MAX_ATTEMPTS; attempt++)); do
   log_count="$(run_la_count_query "${query_logs}" || true)"
   trace_count="$(run_la_count_query "${query_trace}" || true)"
@@ -282,12 +315,14 @@ fi
 if [[ -z "${appi_app_id}" ]]; then
   if is_truthy "${REQUIRE_TRACE}"; then
     echo "[observability] Strict trace verification enabled but App Insights appId could not be resolved." >&2
+    emit_telemetry_startup_hint
     exit 1
   fi
   echo "[observability] App Insights appId unavailable; skipping App Insights trace count check." >&2
 elif [[ "${appi_trace_count}" -eq 0 ]]; then
   if is_truthy "${REQUIRE_TRACE}"; then
     echo "[observability] Logs found but no matching App Insights traces for E2E IDs (job_id=${JOB_ID}, run_id=${RUN_ID})." >&2
+    emit_telemetry_startup_hint
     exit 1
   fi
   echo "[observability] Logs found but no matching App Insights traces yet (sampling or delayed export). Continuing." >&2

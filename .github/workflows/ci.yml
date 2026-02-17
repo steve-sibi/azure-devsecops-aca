@@ -285,6 +285,14 @@ jobs:
           set -euo pipefail
           python scripts/ci/check_docs_consistency.py 2>&1 | tee "$LOG_DIR/docs-check.log"
 
+      - name: Telemetry dependency contract
+        id: otel_contract
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/ci/check_otel_dependency_contract.py 2>&1 | tee "$LOG_DIR/otel-contract.log"
+
       - name: Python compile check
         id: py_compile
         continue-on-error: true
@@ -312,6 +320,7 @@ jobs:
             echo "|---|---|"
             echo "| Ruff | ${{ steps.ruff.outcome }} |"
             echo "| Docs consistency | ${{ steps.docs_check.outcome }} |"
+            echo "| Telemetry dependency contract | ${{ steps.otel_contract.outcome }} |"
             echo "| Compile | ${{ steps.py_compile.outcome }} |"
             echo "| Pytest | ${{ steps.pytest.outcome }} |"
             echo ""
@@ -321,6 +330,7 @@ jobs:
             compile_outcome="${{ steps.py_compile.outcome }}"
             pytest_outcome="${{ steps.pytest.outcome }}"
             docs_outcome="${{ steps.docs_check.outcome }}"
+            otel_outcome="${{ steps.otel_contract.outcome }}"
 
             if [ "$ruff_outcome" != "success" ]; then
               echo "- Run \`ruff check . --fix\` for safe autofixes (then \`ruff format\` if enabled)."
@@ -328,18 +338,21 @@ jobs:
             if [ "$docs_outcome" != "success" ]; then
               echo "- Align docs/examples with implemented env vars and endpoints (see \`docs-check.log\`)."
             fi
+            if [ "$otel_outcome" != "success" ]; then
+              echo "- Align API/Worker telemetry pins with \`scripts/ci/check_otel_dependency_contract.py\` (see \`otel-contract.log\`)."
+            fi
             if [ "$compile_outcome" != "success" ]; then
               echo "- Fix Python syntax errors (see \`compile.log\`)."
             fi
             if [ "$pytest_outcome" != "success" ]; then
               echo "- Re-run \`pytest -q\` locally and fix failing tests."
             fi
-            if [ "$ruff_outcome$docs_outcome$compile_outcome$pytest_outcome" = "successsuccesssuccesssuccess" ]; then
+            if [ "$ruff_outcome$docs_outcome$otel_outcome$compile_outcome$pytest_outcome" = "successsuccesssuccesssuccesssuccess" ]; then
               echo "- No action needed."
             fi
             echo ""
 
-            for f in ruff.log docs-check.log compile.log pytest.log; do
+            for f in ruff.log docs-check.log otel-contract.log compile.log pytest.log; do
               p="$LOG_DIR/$f"
               if [ -f "$p" ]; then
                 echo "<details><summary>$f</summary>"
@@ -366,6 +379,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ steps.ruff.outcome }}" != "success" ] || \
+             [ "${{ steps.otel_contract.outcome }}" != "success" ] || \
              [ "${{ steps.py_compile.outcome }}" != "success" ] || \
              [ "${{ steps.pytest.outcome }}" != "success" ]; then
             exit 1
