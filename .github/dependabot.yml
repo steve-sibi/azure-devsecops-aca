@@ -29,6 +29,20 @@ updates:
       opentelemetry:
         patterns:
           - "opentelemetry-*"
+          - "azure-monitor-opentelemetry-exporter"
+    ignore:
+      - dependency-name: "opentelemetry-api"
+        versions:
+          - ">=1.38.1"
+      - dependency-name: "opentelemetry-sdk"
+        versions:
+          - ">=1.38.1"
+      - dependency-name: "opentelemetry-exporter-otlp-proto-http"
+        versions:
+          - ">=1.38.1"
+      - dependency-name: "azure-monitor-opentelemetry-exporter"
+        versions:
+          - ">=1.0.0b46"
     labels:
       - "dependencies"
       - "python"
@@ -47,6 +61,20 @@ updates:
       opentelemetry:
         patterns:
           - "opentelemetry-*"
+          - "azure-monitor-opentelemetry-exporter"
+    ignore:
+      - dependency-name: "opentelemetry-api"
+        versions:
+          - ">=1.38.1"
+      - dependency-name: "opentelemetry-sdk"
+        versions:
+          - ">=1.38.1"
+      - dependency-name: "opentelemetry-exporter-otlp-proto-http"
+        versions:
+          - ">=1.38.1"
+      - dependency-name: "azure-monitor-opentelemetry-exporter"
+        versions:
+          - ">=1.0.0b46"
     labels:
       - "dependencies"
       - "python"
