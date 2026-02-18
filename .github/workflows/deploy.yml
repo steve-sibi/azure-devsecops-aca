@@ -79,9 +79,27 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: { id-token: write, contents: read }
+    outputs:
+      requires_approval: ${{ steps.normalize_approval.outputs.requires_approval }}
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Normalize apply approval input
+        id: normalize_approval
+        shell: bash
+        env:
+          APPLY_REQUIRES_APPROVAL: ${{ env.APPLY_REQUIRES_APPROVAL }}
+        run: |
+          set -euo pipefail
+          normalized="${APPLY_REQUIRES_APPROVAL,,}"
+          requires_approval="false"
+          case "${normalized}" in
+            1|true|yes|y|on)
+              requires_approval="true"
+              ;;
+          esac
+          echo "requires_approval=${requires_approval}" >> "$GITHUB_OUTPUT"
 
       - name: Azure Login (OIDC)
         uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
@@ -143,12 +161,7 @@ jobs:
 
   infra-apply-auto:
     needs: [infra-plan]
-    if: >-
-      ${{ !(inputs.apply_requires_approval == 'true'
-        || inputs.apply_requires_approval == '1'
-        || inputs.apply_requires_approval == 'yes'
-        || inputs.apply_requires_approval == 'TRUE'
-        || inputs.apply_requires_approval == 'YES') }}
+    if: ${{ needs.infra-plan.outputs.requires_approval != 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: { id-token: write, contents: read }
@@ -157,7 +170,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Download Terraform plan artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: infra-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: infra
@@ -198,12 +211,7 @@ jobs:
 
   infra-apply-approved:
     needs: [infra-plan]
-    if: >-
-      ${{ inputs.apply_requires_approval == 'true'
-        || inputs.apply_requires_approval == '1'
-        || inputs.apply_requires_approval == 'yes'
-        || inputs.apply_requires_approval == 'TRUE'
-        || inputs.apply_requires_approval == 'YES' }}
+    if: ${{ needs.infra-plan.outputs.requires_approval == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions: { id-token: write, contents: read }
@@ -213,7 +221,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Download Terraform plan artifacts
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: infra-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: infra
