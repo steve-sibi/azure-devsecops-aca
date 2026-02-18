@@ -311,8 +311,18 @@ build_storage_backed_e2e_url() {
   echo "https://${storage_account}.blob.core.windows.net/${container_name}/${blob_name}?${sas}"
 }
 
+redact_url_for_log() {
+  local raw_url="$1"
+  if [[ "${raw_url}" == *"?"* ]]; then
+    printf '%s [query redacted]\n' "${raw_url%%\?*}"
+  else
+    printf '%s\n' "${raw_url}"
+  fi
+}
+
 submit_e2e_scan() {
   local target_url="$1"
+  local target_url_for_log
   local submit
   local job_id
   local run_id
@@ -320,7 +330,8 @@ submit_e2e_scan() {
   local resp
   local status
 
-  echo "[deploy] E2E scan target URL: ${target_url}"
+  target_url_for_log="$(redact_url_for_log "${target_url}")"
+  echo "[deploy] E2E scan target URL: ${target_url_for_log}"
 
   scan_payload="$(
     E2E_SCAN_URL="${target_url}" python3 -c 'import json, os
