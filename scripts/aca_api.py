@@ -22,9 +22,11 @@ import argparse
 import json
 import mimetypes
 import os
+import socket
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from datetime import datetime, timezone
@@ -231,6 +233,28 @@ def make_request(
         die(f"Connection failed to {url}: {e.reason}")
 
 
+def open_ndjson_stream(
+    config: Config, path: str, *, headers=None, timeout_seconds: int = 30
+):
+    if headers is None:
+        headers = {}
+
+    url = f"{config.base_url}{path}"
+    if "accept" not in headers:
+        headers["accept"] = "application/x-ndjson, application/json"
+    if config.api_key:
+        headers[config.api_key_header] = config.api_key
+
+    req = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        return urllib.request.urlopen(req, timeout=max(1, int(timeout_seconds or 1)))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8") if e.fp else ""
+        if body:
+            print(body, file=sys.stderr)
+        raise
+
+
 def emit_json(output, config: Config):
     """
     Print output as JSON, optionally pretty-printed based on config.
@@ -389,7 +413,7 @@ def cmd_wait(config: Config, args):
         if status == "completed":
             emit_json(data, config)
             return
-        if status == "error":
+        if status == "error" or status == "blocked":
             emit_json(data, config)
             sys.exit(1)
 
@@ -400,6 +424,113 @@ def cmd_wait(config: Config, args):
                 )
 
         time.sleep(args.interval)
+
+
+def cmd_watch(config: Config, args):
+    """Handler for 'watch' command (NDJSON live stream with polling fallback)."""
+    config.require_api_key()
+    start_time = time.time()
+
+    # Resolve run_id from the request-scoped job record.
+    status_path = f"/scan/{args.job_id}?view=summary"
+    _, _, body = make_request(config, "GET", status_path)
+    try:
+        status_doc = json.loads(body)
+    except json.JSONDecodeError:
+        die("status response is not JSON")
+
+    status_value = str(status_doc.get("status") or "").strip().lower()
+    run_id = str(status_doc.get("run_id") or "").strip() or str(args.job_id)
+
+    # If already terminal, return immediately with requested view.
+    if status_value in ("completed", "error", "blocked"):
+        _, _, final_body = make_request(
+            config, "GET", f"/scan/{args.job_id}?view={args.view}"
+        )
+        emit_json(final_body, config)
+        if status_value != "completed":
+            sys.exit(1)
+        return
+
+    cursor = str(args.cursor or "$").strip() or "$"
+    params = [("cursor", cursor), ("run_id", run_id)]
+    stream_path = "/events/stream?" + urllib.parse.urlencode(params)
+
+    if config.verbose:
+        log(f"watching run_id={run_id} via {stream_path}")
+
+    try:
+        with open_ndjson_stream(
+            config,
+            stream_path,
+            timeout_seconds=max(1, int(args.read_timeout or 30)),
+        ) as stream:
+            while True:
+                if args.timeout > 0 and (time.time() - start_time) >= args.timeout:
+                    raise TimeoutError(
+                        f"Timed out after {args.timeout}s waiting for job {args.job_id}"
+                    )
+                try:
+                    raw = stream.readline()
+                except socket.timeout:
+                    continue
+
+                if not raw:
+                    raise ConnectionError("live stream closed")
+
+                line = raw.decode("utf-8", "replace").strip()
+                if not line:
+                    continue
+
+                try:
+                    packet = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(packet, dict):
+                    continue
+
+                packet_id = str(packet.get("id") or "").strip()
+                if packet_id:
+                    cursor = packet_id
+                event = packet.get("event")
+                if not isinstance(event, dict):
+                    continue
+
+                event_status = str(event.get("status") or "").strip().lower()
+                if config.verbose and event_status:
+                    log(f"status={event_status}")
+
+                if event_status in ("completed", "error", "blocked"):
+                    _, _, final_body = make_request(
+                        config, "GET", f"/scan/{args.job_id}?view={args.view}"
+                    )
+                    emit_json(final_body, config)
+                    if event_status != "completed":
+                        sys.exit(1)
+                    return
+    except urllib.error.HTTPError as e:
+        if not args.fallback_poll:
+            die(f"Live stream failed with HTTP {e.code}")
+    except Exception as e:
+        if not args.fallback_poll:
+            die(str(e))
+
+    if not args.fallback_poll:
+        return
+
+    if config.verbose:
+        log("falling back to polling")
+    remaining_timeout = int(args.timeout)
+    if remaining_timeout > 0:
+        elapsed = int(time.time() - start_time)
+        remaining_timeout = max(1, remaining_timeout - elapsed)
+    wait_args = argparse.Namespace(
+        job_id=args.job_id,
+        interval=args.interval,
+        timeout=remaining_timeout,
+        view=args.view,
+    )
+    cmd_wait(config, wait_args)
 
 
 def cmd_jobs(config: Config, args):
@@ -713,6 +844,7 @@ def main():
     epilog = """\
 Examples:
   ./scripts/aca_api.py scan-url https://example.com --wait
+  ./scripts/aca_api.py watch <job_id>
   ./scripts/aca_api.py jobs --limit 50
   ./scripts/aca_api.py history --limit 10
   ./scripts/aca_api.py scan-file ./readme.md
@@ -733,7 +865,7 @@ Configuration precedence (highest first):
   History:    --history,   ACA_API_HISTORY, <repo>/.aca_api_history
 
 Scan status lifecycle:
-  pending, queued, fetching, queued_scan, retrying, completed, error
+  pending, queued, fetching, queued_scan, retrying, blocked, completed, error
 """
 
     parser = argparse.ArgumentParser(
@@ -841,6 +973,49 @@ Scan status lifecycle:
         "--timeout", type=int, default=120, help="Timeout (s); 0 = no timeout"
     )
     p_wait.add_argument(
+        "--view",
+        default="summary",
+        choices=list(RESULT_VIEW_CHOICES),
+        help="Result view (summary is smaller; full includes details)",
+    )
+
+    # Watch (live stream with polling fallback)
+    p_watch = subparsers.add_parser(
+        "watch", help="Watch a job via live stream (with optional polling fallback)"
+    )
+    cmd_parsers["watch"] = p_watch
+    p_watch.add_argument("job_id", help="Job ID")
+    p_watch.add_argument(
+        "--cursor",
+        default="$",
+        help="Stream cursor ('$' for latest, or '<ms>-<seq>' for resume)",
+    )
+    p_watch.add_argument(
+        "--read-timeout",
+        type=int,
+        default=30,
+        help="Socket read timeout in seconds for the live stream (default: 30)",
+    )
+    p_watch.add_argument(
+        "--fallback-poll",
+        dest="fallback_poll",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Fallback to polling when live stream is unavailable (default: true)",
+    )
+    p_watch.add_argument(
+        "--interval",
+        type=int,
+        default=2,
+        help="Polling interval in seconds when fallback is used (default: 2)",
+    )
+    p_watch.add_argument(
+        "--timeout",
+        type=int,
+        default=120,
+        help="Overall timeout in seconds (0 = no timeout; default: 120)",
+    )
+    p_watch.add_argument(
         "--view",
         default="summary",
         choices=list(RESULT_VIEW_CHOICES),
@@ -1002,6 +1177,7 @@ Scan status lifecycle:
         "scan-url": cmd_scan_url,
         "status": cmd_status,
         "wait": cmd_wait,
+        "watch": cmd_watch,
         "jobs": cmd_jobs,
         "history": cmd_history,
         "clear-history": cmd_clear_history,

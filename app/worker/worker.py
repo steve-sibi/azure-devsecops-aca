@@ -26,6 +26,11 @@ from common.config import (
     init_table_client,
 )
 from common.errors import classify_exception
+from common.live_updates import (
+    RedisStreamsConfig,
+    create_live_updates_publisher,
+    resolve_live_updates_backend,
+)
 from common.limits import (
     ScreenshotLimits,
     get_web_analysis_limits,
@@ -46,7 +51,7 @@ from common.screenshot_store import (
     store_screenshot_redis_sync,
 )
 from common.telemetry import extract_trace_context, get_tracer, setup_telemetry
-from common.webpubsub import WebPubSubConfig, WebPubSubPublisher
+from common.webpubsub import WebPubSubConfig
 from common.url_canonicalization import canonicalize_url
 from common.web_analysis import (
     analyze_html,
@@ -686,7 +691,17 @@ def main():
         )
 
     pubsub_cfg = WebPubSubConfig.from_env()
-    publisher = WebPubSubPublisher(pubsub_cfg, logger_obj=logger) if pubsub_cfg else None
+    live_backend = resolve_live_updates_backend(
+        webpubsub_cfg=pubsub_cfg,
+        redis_available=redis_client is not None,
+    )
+    publisher = create_live_updates_publisher(
+        backend=live_backend,
+        redis_client=redis_client,
+        webpubsub_cfg=pubsub_cfg,
+        redis_cfg=RedisStreamsConfig.from_env(),
+        logger_obj=logger,
+    )
 
     result_persister = ResultPersister(
         backend=str(RESULT_BACKEND),

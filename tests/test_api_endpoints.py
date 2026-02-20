@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
+import pytest
+from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
@@ -20,6 +23,7 @@ if str(API_ROOT) not in sys.path:
     sys.path.insert(0, str(API_ROOT))
 
 import main as api  # noqa: E402
+from common.live_updates import RedisStreamsConfig  # noqa: E402
 from common.url_dedupe import UrlDedupeConfig  # noqa: E402
 
 
@@ -44,6 +48,34 @@ def _request(path: str, method: str, *, request_id: str = "req-corr-1") -> Reque
     req = Request(scope)
     req.state.request_id = request_id
     return req
+
+
+class _StreamRequest:
+    async def is_disconnected(self) -> bool:
+        return False
+
+
+class _FakeAsyncRedisStream:
+    def __init__(self, responses: list):
+        self._responses = list(responses)
+        self.calls: list[dict] = []
+
+    async def xread(self, streams, *, count: int, block: int):
+        self.calls.append({"streams": streams, "count": count, "block": block})
+        if self._responses:
+            return self._responses.pop(0)
+        raise asyncio.CancelledError()
+
+
+async def _read_first_stream_line(response) -> str:
+    iterator = response.body_iterator
+    try:
+        chunk = await anext(iterator)
+    finally:
+        await iterator.aclose()
+    if isinstance(chunk, bytes):
+        return chunk.decode("utf-8", "replace")
+    return str(chunk)
 
 
 def test_enqueue_scan_persists_and_enqueues(monkeypatch):
@@ -449,3 +481,167 @@ def test_otel_request_spans_extracts_inbound_trace_context(monkeypatch):
     )
     assert extracted["tracestate"] == "congo=t61rcWkgMzE"
     assert fake_tracer.calls[0]["context"] is sentinel_ctx
+
+
+def test_healthz_includes_live_updates_backend(monkeypatch):
+    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
+    out = _run(api.healthz())
+    assert out["live_updates_backend"] == "redis_streams"
+
+
+def test_events_stream_returns_501_when_backend_not_redis_streams(monkeypatch):
+    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "none")
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            api.stream_job_updates(
+                _request("/events/stream", "GET"),
+                cursor="$",
+                run_id=None,
+                api_key_hash="a" * 64,
+            )
+        )
+    assert exc.value.status_code == 501
+
+
+def test_events_stream_requires_api_key_even_if_auth_toggle_disabled(monkeypatch):
+    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
+    monkeypatch.setattr(api, "redis_client", object())
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            api.stream_job_updates(
+                _request("/events/stream", "GET"),
+                cursor="$",
+                run_id=None,
+                api_key_hash=None,
+            )
+        )
+    assert exc.value.status_code == 401
+
+
+def test_events_stream_returns_503_when_redis_not_initialized(monkeypatch):
+    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
+    monkeypatch.setattr(api, "redis_client", None)
+    with pytest.raises(HTTPException) as exc:
+        _run(
+            api.stream_job_updates(
+                _request("/events/stream", "GET"),
+                cursor="$",
+                run_id=None,
+                api_key_hash="a" * 64,
+            )
+        )
+    assert exc.value.status_code == 503
+
+
+def test_events_stream_emits_ndjson_for_valid_redis_entries(monkeypatch):
+    api_key_hash = "a" * 64
+    stream_key = f"events:apikey:{api_key_hash}"
+    payload = {
+        "type": "job.update",
+        "run_id": "run-1",
+        "status": "queued_scan",
+        "stage": "fetcher",
+    }
+    fake_redis = _FakeAsyncRedisStream(
+        [
+            [
+                (
+                    stream_key,
+                    [("1700000000000-0", {"event": json.dumps(payload)})],
+                )
+            ]
+        ]
+    )
+    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
+    monkeypatch.setattr(
+        api,
+        "LIVE_UPDATES_REDIS_CFG",
+        RedisStreamsConfig(
+            stream_prefix="events:apikey:",
+            maxlen=10000,
+            block_ms=30000,
+        ),
+    )
+    monkeypatch.setattr(api, "redis_client", fake_redis)
+
+    response = _run(
+        api.stream_job_updates(
+            _StreamRequest(),
+            cursor="$",
+            run_id=None,
+            api_key_hash=api_key_hash,
+        )
+    )
+    first = _run(_read_first_stream_line(response))
+    msg = json.loads(first.strip())
+
+    assert msg["id"] == "1700000000000-0"
+    assert msg["event"]["run_id"] == "run-1"
+    assert msg["event"]["status"] == "queued_scan"
+    assert fake_redis.calls[0]["streams"] == {stream_key: "$"}
+    assert fake_redis.calls[0]["count"] == 100
+
+
+def test_events_stream_applies_run_id_filter(monkeypatch):
+    api_key_hash = "b" * 64
+    stream_key = f"events:apikey:{api_key_hash}"
+    fake_redis = _FakeAsyncRedisStream(
+        [
+            [
+                (
+                    stream_key,
+                    [
+                        (
+                            "1700000000000-0",
+                            {
+                                "event": json.dumps(
+                                    {
+                                        "type": "job.update",
+                                        "run_id": "run-other",
+                                        "status": "queued",
+                                    }
+                                )
+                            },
+                        ),
+                        (
+                            "1700000000000-1",
+                            {
+                                "event": json.dumps(
+                                    {
+                                        "type": "job.update",
+                                        "run_id": "run-target",
+                                        "status": "completed",
+                                    }
+                                )
+                            },
+                        ),
+                    ],
+                )
+            ]
+        ]
+    )
+    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
+    monkeypatch.setattr(
+        api,
+        "LIVE_UPDATES_REDIS_CFG",
+        RedisStreamsConfig(
+            stream_prefix="events:apikey:",
+            maxlen=10000,
+            block_ms=30000,
+        ),
+    )
+    monkeypatch.setattr(api, "redis_client", fake_redis)
+
+    response = _run(
+        api.stream_job_updates(
+            _StreamRequest(),
+            cursor="$",
+            run_id="run-target",
+            api_key_hash=api_key_hash,
+        )
+    )
+    first = _run(_read_first_stream_line(response))
+    msg = json.loads(first.strip())
+
+    assert msg["id"] == "1700000000000-1"
+    assert msg["event"]["run_id"] == "run-target"
