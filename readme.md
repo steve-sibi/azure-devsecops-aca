@@ -18,7 +18,7 @@ What this project demonstrates:
 - **URL dedupe/cache**: Shared URL scan cache with configurable TTLs to avoid redundant work (based on canonical URLs)
 - **Results + audit trail**: scan results stored in **Azure Table Storage** (`scanresults`) (or Redis locally); optional screenshots served at `GET /scan/{job_id}/screenshot`
 - **Per-user job history**: API key-based job isolation with `GET /jobs` for viewing your submission history
-- **Realtime status updates**: optional **Azure Web PubSub** integration for dashboard live updates (with polling fallback)
+- **Realtime status updates**: optional **Azure Web PubSub** (Azure) or **Redis Streams over NDJSON** (Docker/local), with polling fallback
 - **File scanning**: `/file/scan` scans an uploaded file/payload via **ClamAV** (sidecar in ACA; service in Docker Compose)
 - **Web content analysis**: HTML parsing, resource classification, tracking detection (adblock filters), security headers, cookies, YARA rules, WHOIS/RDAP lookups
 - **Structured logging**: JSON logs with correlation IDs for distributed tracing (Azure Monitor/App Insights compatible)
@@ -193,13 +193,15 @@ sequenceDiagram
 - Results are written to **Table Storage** (`scanresults`) and can be fetched via `GET /scan/{job_id}`
 - Logs land in **Log Analytics**; optional traces in **App Insights**
 
-*Realtime update path (optional, Web PubSub)*
+*Realtime update path (optional, backend-selectable)*
 - API issues request-scoped IDs (`job_id`) and underlying scan-run IDs (`run_id`).
-- Worker/fetcher publish status changes to Web PubSub groups:
-  - `run:<run_id>` for run-level updates
-  - `apikey:<api_key_hash>` for user-scoped updates
-- Dashboard negotiates a user-scoped WebSocket (`POST /pubsub/negotiate-user`) and updates all visible jobs for that API key without per-row polling.
-- If Web PubSub is unavailable, the dashboard automatically falls back to polling `GET /scan/{job_id}`.
+- Azure mode (`LIVE_UPDATES_BACKEND=webpubsub` or `auto` with Web PubSub configured):
+  - Worker/fetcher publish status changes to Web PubSub groups (`run:<run_id>`, `apikey:<api_key_hash>`).
+  - Dashboard negotiates a user-scoped WebSocket (`POST /pubsub/negotiate-user`) and updates all visible jobs for that API key without per-row polling.
+- Docker/local mode (`LIVE_UPDATES_BACKEND=redis_streams` or `auto` without Web PubSub):
+  - Worker/fetcher publish one event per status update to Redis Streams (`events:apikey:<api_key_hash>` by default).
+  - Dashboard and CLI consume authenticated NDJSON from `GET /events/stream`.
+- If live updates are unavailable, the dashboard and CLI can fall back to polling `GET /scan/{job_id}`.
 
 
 ## 2) What Terraform Deploys
@@ -278,7 +280,9 @@ sequenceDiagram
 - KEDA scale rule auth uses KV secrets **(manage)**: `sb-manage` (fetch queue) + `sb-scan-manage` (scan queue) (not injected into container)
     
 - API/worker env `RESULT_STORE_CONN` and `RESULT_TABLE` for scan status storage (from Storage Table)
-- API/fetcher/worker env `WEBPUBSUB_CONNECTION_STRING` + `WEBPUBSUB_HUB` for realtime update publish/subscribe token negotiation
+- API/fetcher/worker env `LIVE_UPDATES_BACKEND` selects realtime backend (`auto|webpubsub|redis_streams|none`)
+- API/fetcher/worker env `WEBPUBSUB_CONNECTION_STRING` + `WEBPUBSUB_HUB` for Azure Web PubSub realtime path
+- API/fetcher/worker env `REDIS_LIVE_UPDATES_*` for Redis Streams realtime path
 
 > The apps use connection strings for Service Bus auth in both Azure and local workflows.
 
@@ -570,13 +574,24 @@ terraform apply \
 - **SSRF protection**: only `https://` targets on port **443**; blocks targets that resolve to non-public IP ranges.
 - **Rate limiting** (per API key, configurable):
   - write endpoints (e.g. `POST /scan`): `RATE_LIMIT_WRITE_RPM` (defaults to `RATE_LIMIT_RPM`, `60`)
-  - read endpoints (e.g. `GET /scan/{job_id}`, `GET /jobs`, `POST /pubsub/negotiate-user`): `RATE_LIMIT_READ_RPM` (defaults to `5x` write limit)
+  - read endpoints (e.g. `GET /scan/{job_id}`, `GET /jobs`, `GET /events/stream`, `POST /pubsub/negotiate-user`): `RATE_LIMIT_READ_RPM` (defaults to `5x` write limit)
   - shared window: `RATE_LIMIT_WINDOW_SECONDS` (default `60`)
 - **Defense in depth**: the worker re-validates targets and validates every redirect hop.
 
-### Live updates (Web PubSub, optional)
+### Live updates (auto backend selection, optional)
 
-Enable real-time scan status updates (no polling) by setting:
+Live update backend is controlled by:
+
+- `LIVE_UPDATES_BACKEND`: `auto` (default), `webpubsub`, `redis_streams`, or `none`
+
+Selection behavior:
+
+- `auto`: use Web PubSub when configured, else Redis Streams when Redis is available, else disable streaming
+- `webpubsub`: require `WEBPUBSUB_CONNECTION_STRING`; otherwise runtime backend becomes `none`
+- `redis_streams`: require Redis client availability; otherwise runtime backend becomes `none`
+- `none`: disable live streaming
+
+Web PubSub settings (Azure path):
 
 - `WEBPUBSUB_CONNECTION_STRING`: Web PubSub connection string
 - `WEBPUBSUB_HUB`: hub name (default `scans`)
@@ -584,15 +599,20 @@ Enable real-time scan status updates (no polling) by setting:
 - `WEBPUBSUB_GROUP_PREFIX`: group prefix for run IDs (default `run`)
 - `WEBPUBSUB_USER_GROUP_PREFIX`: group prefix for API-key-hash user groups (default `apikey`)
 
-If `WEBPUBSUB_CONNECTION_STRING` is unset, the dashboard falls back to polling.
+Redis Streams settings (Docker/local path):
+
+- `REDIS_LIVE_UPDATES_STREAM_PREFIX`: stream key prefix (default `events:apikey:`)
+- `REDIS_LIVE_UPDATES_MAXLEN`: per-stream approximate max length (default `10000`)
+- `REDIS_LIVE_UPDATES_BLOCK_MS`: stream read block timeout in ms for `/events/stream` (default `30000`)
 
 Realtime model notes:
 
 - The API returns both:
   - `job_id`: request ID shown in history
   - `run_id`: underlying scan run ID (shared across deduped requests)
-- Dashboard subscribes once per API key via `POST /pubsub/negotiate-user`.
-- Worker/fetcher publish events to both `run:<run_id>` and `apikey:<api_key_hash>` groups so one socket can update all of a user’s jobs.
+- Dashboard uses Web PubSub (`POST /pubsub/negotiate-user`) when backend is `webpubsub`.
+- Dashboard uses authenticated NDJSON streaming (`GET /events/stream`) when backend is `redis_streams`.
+- Worker/fetcher publish events via the selected backend; polling remains a fallback path.
 
 ### URL dedupe / cache (optional)
 
@@ -643,14 +663,15 @@ Default API key: `local-dev-key` (change via `.env` using `ACA_API_KEY`).
 
 > Note: URL scanning runs built-in web analysis only. The dashboard provides external links to URLScan.io and VirusTotal for optional follow-up checks.
 
-To verify realtime mode locally:
+To verify selected live update backend locally:
 
 ```bash
-curl -s http://localhost:8000/ | rg WEBPUBSUB_ENABLED
+curl -s http://localhost:8000/healthz | python3 -c 'import json,sys; print(json.load(sys.stdin)["live_updates_backend"])'
 ```
 
-- `true`: dashboard will use Web PubSub (if it can negotiate).
-- `false`: dashboard will use polling only.
+- `webpubsub`: dashboard uses Azure Web PubSub.
+- `redis_streams`: dashboard uses Redis Streams + NDJSON (`/events/stream`).
+- `none`: live streaming disabled (dashboard polls).
 
 #### Local traces (no Azure) with Jaeger + sampler validation
 
@@ -737,6 +758,7 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `GET /jobs?limit=N&status=csv` (requires API key; lists your recent jobs)
 - `GET /scan/{job_id}?view=summary|full` (requires API key; `summary` is default)
 - `GET /scan/{job_id}/screenshot` (requires API key; only if a screenshot was captured)
+- `GET /events/stream?cursor=$&run_id=<optional>` (requires API key; NDJSON live updates for Redis Streams backend)
 - `POST /pubsub/negotiate-user` (requires API key; dashboard live updates)
 - `POST /pubsub/negotiate` (requires API key; run-scoped negotiation; mostly for direct/testing use)
 - `POST /file/scan` (requires API key; ClamAV scan)
@@ -753,17 +775,19 @@ API_KEY="$(az keyvault secret show --vault-name devsecopsaca-kv --name ApiKey --
 - `fetching`: fetcher is downloading (SSRF-protected) and preparing an artifact
 - `queued_scan`: artifact is ready and the scan stage has been queued
 - `retrying`: transient failure; will retry automatically (up to `MAX_RETRIES`)
+- `blocked`: permanently blocked input (for example non-retryable policy/network rejection)
 - `completed`: finished; check `summary` (and `details` if `view=full`)
 - `error`: failed; check `error` + `details`
 
 ### Try it (Option A: CLI Wrapper)
 
-The included helper script (`scripts/aca_api.py`) wraps API calls and handles JSON parsing, headers, and polling. It works locally or on Azure.
+The included helper script (`scripts/aca_api.py`) wraps API calls and handles JSON parsing, headers, live stream watch, and polling fallback. It works locally or on Azure.
 
 ```bash
 # Local default: http://localhost:8000 (reads ACA_API_KEY or API_KEY from .env if present)
 ./scripts/aca_api.py scan-url https://example.com --wait
 ./scripts/aca_api.py jobs --limit 50
+./scripts/aca_api.py watch <job_id>
 ./scripts/aca_api.py scan-file ./readme.md
 ./scripts/aca_api.py screenshot <job_id> --out-dir ./screenshots/
 ./scripts/aca_api.py admin-mint-key --label analyst-a --read-rpm 600 --write-rpm 120
@@ -775,6 +799,14 @@ The included helper script (`scripts/aca_api.py`) wraps API calls and handles JS
 # Azure: set API_URL + API_KEY (see "Azure quickstart" above)
 API_URL="https://<api-fqdn>" API_KEY="..." ./scripts/aca_api.py scan-url https://example.com --wait
 ```
+
+For live terminal updates without manual polling:
+
+```bash
+./scripts/aca_api.py watch <job_id>
+```
+
+`watch` uses `/events/stream` first and falls back to polling by default if streaming is unavailable.
 
 The script also keeps a local job history (default `./.aca_api_history`) so you can list the most recent jobs you submitted from your machine:
 
@@ -1060,6 +1092,8 @@ To restart later, just re-run the **Deploy** workflow.
 
 - `POST /pubsub/negotiate-user` -> creates a user-scoped Web PubSub client token for the dashboard (`apikey:<api_key_hash>` group).
 
+- `GET /events/stream` -> authenticated NDJSON stream for live updates when `LIVE_UPDATES_BACKEND` resolves to `redis_streams`.
+
 - `POST /file/scan` -> requires `X-API-Key`, scans an uploaded file or pasted payload with ClamAV, and returns an immediate verdict (UI at `/file`).
 
 - `GET/POST /admin/api-keys*` -> admin-only API key lifecycle management (mint/list/revoke) with persisted key hashes and optional per-key quotas.
@@ -1070,13 +1104,13 @@ To restart later, just re-run the **Deploy** workflow.
 **Fetcher (`app/worker/fetcher.py`)**
 - Receives `scan-v1` jobs from the **fetch queue** (`tasks` by default).
 - Downloads bytes with SSRF protections, writes an artifact into `ARTIFACT_DIR` (Azure Files on ACA; a Docker volume locally), updates status (`fetching` → `queued_scan`), and forwards a `scan-artifact-v1` message to the **scan queue** (`<queue>-scan`).
-- Publishes status updates to Web PubSub when configured.
+- Publishes status updates via the selected live backend (Web PubSub or Redis Streams).
 
 **Analyzer/Worker (`app/worker/worker.py`)**
 - Receives `scan-artifact-v1` jobs from the **scan queue** and reads the artifact bytes.
 - Runs lightweight web analysis (HTML/resources/cookies/security headers/tracking/YARA rules) and writes the final `completed/error` result to the configured result backend; optionally captures a Playwright screenshot and stores it for `/scan/{job_id}/screenshot`.
 - Web analysis rules live in `app/common/tracking_filters.txt` and `app/common/web_yara_rules.yar` (override via `WEB_TRACKING_FILTERS_PATH` / `WEB_YARA_RULES_PATH`).
-- Publishes terminal and intermediate status updates to Web PubSub when configured.
+- Publishes terminal and intermediate status updates via the selected live backend (Web PubSub or Redis Streams).
 
 ## 14) Extending this project (future work)
 

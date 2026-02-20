@@ -28,6 +28,11 @@ from common.config import (
     init_table_client,
 )
 from common.errors import classify_exception
+from common.live_updates import (
+    RedisStreamsConfig,
+    create_live_updates_publisher,
+    resolve_live_updates_backend,
+)
 from common.logging_config import (
     clear_correlation_id,
     get_logger,
@@ -43,7 +48,7 @@ from common.telemetry import (
     inject_trace_context,
     setup_telemetry,
 )
-from common.webpubsub import WebPubSubConfig, WebPubSubPublisher
+from common.webpubsub import WebPubSubConfig
 from web_fetch import download_url
 
 # ---- Config via env ----
@@ -344,7 +349,17 @@ def main() -> None:
         )
 
     pubsub_cfg = WebPubSubConfig.from_env()
-    publisher = WebPubSubPublisher(pubsub_cfg, logger_obj=logger) if pubsub_cfg else None
+    live_backend = resolve_live_updates_backend(
+        webpubsub_cfg=pubsub_cfg,
+        redis_available=redis_client is not None,
+    )
+    publisher = create_live_updates_publisher(
+        backend=live_backend,
+        redis_client=redis_client,
+        webpubsub_cfg=pubsub_cfg,
+        redis_cfg=RedisStreamsConfig.from_env(),
+        logger_obj=logger,
+    )
 
     result_persister = ResultPersister(
         backend=RESULT_BACKEND,

@@ -50,6 +50,8 @@ from common.job_index import api_key_hash as hash_api_key
 from common.job_index import build_job_index_record as build_job_record
 from common.job_index import (job_index_partition_key, list_jobs_async,
                               upsert_job_index_record_async)
+from common.live_updates import (RedisStreamsConfig,
+                                 resolve_live_updates_backend, redis_stream_key)
 from common.limits import get_api_limits, get_file_scan_limits
 from common.logging_config import (clear_correlation_id, get_logger,
                                    log_with_context, set_correlation_id,
@@ -81,7 +83,7 @@ from common.telemetry import (
 from fastapi import (FastAPI, File, Form, HTTPException, Query, Request,
                      Security, UploadFile)
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
 from pydantic import BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -118,6 +120,12 @@ SCREENSHOT_FORMAT = os.getenv("SCREENSHOT_FORMAT", "jpeg")
 # Web PubSub (optional)
 WEBPUBSUB_CFG = WebPubSubConfig.from_env()
 _webpubsub_client = None
+LIVE_UPDATES_REDIS_CFG = RedisStreamsConfig.from_env()
+_LIVE_UPDATES_STATE = resolve_live_updates_backend(
+    webpubsub_cfg=WEBPUBSUB_CFG,
+    redis_available=False,
+)
+LIVE_UPDATES_BACKEND = _LIVE_UPDATES_STATE.selected
 
 logger = get_logger(__name__)
 TELEMETRY_ACTIVE = False
@@ -193,6 +201,15 @@ def _get_webpubsub_client():
     if _webpubsub_client is None:
         _webpubsub_client = create_service_client(WEBPUBSUB_CFG)
     return _webpubsub_client
+
+
+def _refresh_live_updates_backend(*, redis_available: bool) -> None:
+    global _LIVE_UPDATES_STATE, LIVE_UPDATES_BACKEND
+    _LIVE_UPDATES_STATE = resolve_live_updates_backend(
+        webpubsub_cfg=WEBPUBSUB_CFG,
+        redis_available=redis_available,
+    )
+    LIVE_UPDATES_BACKEND = _LIVE_UPDATES_STATE.selected
 
 # Simple in-memory rate limiter (per API key hash); good enough for demos.
 _rate_lock = asyncio.Lock()
@@ -854,6 +871,8 @@ async def lifespan(app: FastAPI):
             blob_service = None
             logger.warning("Blob client not initialized (screenshots disabled): %s", e)
 
+    _refresh_live_updates_backend(redis_available=bool(redis_client))
+
     yield  # ---- App runs ----
 
     # ---- Cleanup on shutdown ----
@@ -1183,6 +1202,7 @@ async def healthz():
         "ok": True,
         "queue_backend": QUEUE_BACKEND,
         "result_backend": RESULT_BACKEND,
+        "live_updates_backend": LIVE_UPDATES_BACKEND,
         "url_dedupe": {
             "enabled": bool(_URL_DEDUPE.enabled),
             "ttl_seconds": int(_URL_DEDUPE.ttl_seconds or 0),
@@ -1203,11 +1223,11 @@ async def dashboard():
     template = DASHBOARD_TEMPLATE
     api_key_header_html = html.escape(API_KEY_HEADER or "")
     api_key_header_json = json.dumps(API_KEY_HEADER or "X-API-Key")
-    webpubsub_enabled = "true" if WEBPUBSUB_CFG else "false"
+    live_updates_backend_json = json.dumps(LIVE_UPDATES_BACKEND or "none")
     return (
         template.replace("__API_KEY_HEADER__", api_key_header_html)
         .replace("__API_KEY_HEADER_JSON__", api_key_header_json)
-        .replace("__WEBPUBSUB_ENABLED__", webpubsub_enabled)
+        .replace("__LIVE_UPDATES_BACKEND_JSON__", live_updates_backend_json)
         .replace(
             "__MAX_DASHBOARD_POLL_SECONDS__", str(int(MAX_DASHBOARD_POLL_SECONDS or 0))
         )
@@ -1385,6 +1405,107 @@ async def admin_revoke_api_key(
         "revoked_at": datetime.now(timezone.utc).isoformat(),
         "active": False,
     }
+
+
+def _normalize_stream_cursor(value: Optional[str]) -> str:
+    raw = str(value or "$").strip() or "$"
+    if raw == "$":
+        return "$"
+    parts = raw.split("-", 1)
+    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+        return raw
+    raise HTTPException(
+        status_code=400,
+        detail="cursor must be '$' or a stream id like '<ms>-<seq>'",
+    )
+
+
+@app.get(
+    "/events/stream",
+    tags=["Realtime"],
+    summary="Stream live job updates (NDJSON)",
+)
+async def stream_job_updates(
+    request: Request,
+    cursor: str = Query(
+        "$",
+        description="Redis stream cursor ('$' for latest, or '<ms>-<seq>' for resume)",
+    ),
+    run_id: Optional[str] = Query(
+        None, description="Optional run_id filter for targeted streams"
+    ),
+    api_key_hash: Optional[str] = Security(require_api_key),
+):
+    if LIVE_UPDATES_BACKEND != "redis_streams":
+        raise HTTPException(status_code=501, detail="Redis stream live updates not enabled")
+    if not redis_client:
+        raise HTTPException(status_code=503, detail="Live updates store not initialized")
+    if not api_key_hash:
+        raise HTTPException(status_code=401, detail="Missing API key")
+
+    cursor_norm = _normalize_stream_cursor(cursor)
+    run_id_norm = str(run_id or "").strip() or None
+    stream_key = redis_stream_key(
+        LIVE_UPDATES_REDIS_CFG.stream_prefix, str(api_key_hash or "").strip().lower()
+    )
+    block_ms = max(1000, int(LIVE_UPDATES_REDIS_CFG.block_ms or 30000))
+
+    async def _iter_updates():
+        current = cursor_norm
+        while True:
+            if await request.is_disconnected():
+                break
+
+            try:
+                records = await redis_client.xread(
+                    {stream_key: current},
+                    count=100,
+                    block=block_ms,
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                logger.warning("Live stream read failed (key=%s): %s", stream_key, exc)
+                break
+
+            if not records:
+                continue
+
+            for _stream, entries in records:
+                for entry_id, fields in entries:
+                    entry_id_s = str(entry_id or "").strip()
+                    if not entry_id_s:
+                        continue
+                    current = entry_id_s
+                    if not isinstance(fields, dict):
+                        continue
+
+                    raw = fields.get("event")
+                    if isinstance(raw, (bytes, bytearray)):
+                        raw = bytes(raw).decode("utf-8", "replace")
+                    if not isinstance(raw, str) or not raw.strip():
+                        continue
+                    try:
+                        event = json.loads(raw)
+                    except Exception:
+                        continue
+                    if not isinstance(event, dict):
+                        continue
+
+                    if run_id_norm and str(event.get("run_id") or "").strip() != run_id_norm:
+                        continue
+
+                    payload = {"id": entry_id_s, "event": event}
+                    yield json.dumps(payload, separators=(",", ":")) + "\n"
+
+    return StreamingResponse(
+        _iter_updates(),
+        media_type="application/x-ndjson",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/pubsub/negotiate", tags=["Realtime"], summary="Negotiate Web PubSub access")

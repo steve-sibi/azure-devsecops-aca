@@ -2253,7 +2253,9 @@
     (function () {
       const API_KEY_HEADER = __API_KEY_HEADER_JSON__;
       const MAX_POLL_SECONDS = __MAX_DASHBOARD_POLL_SECONDS__;
-      const WEBPUBSUB_ENABLED = __WEBPUBSUB_ENABLED__;
+      const LIVE_UPDATES_BACKEND = (__LIVE_UPDATES_BACKEND_JSON__ || 'none').toLowerCase();
+      const WEBPUBSUB_ENABLED = LIVE_UPDATES_BACKEND === 'webpubsub';
+      const REDIS_STREAMS_ENABLED = LIVE_UPDATES_BACKEND === 'redis_streams';
       const WEBPUBSUB_SUBPROTOCOL = 'json.webpubsub.azure.v1';
 
       const LS = {
@@ -2365,6 +2367,10 @@
       let pubsubReconnectTimer = null;
       let pubsubReconnectMs = 0;
       let pubsubDesired = false;
+      let redisStreamAbortController = null;
+      let redisStreamRunning = false;
+      let redisStreamCursor = '$';
+      let redisStreamReadTask = null;
       let liveConnectTimer = null;
       let liveFallbackPollTimer = null;
       const intentionalSocketCloses = new WeakSet();
@@ -3940,17 +3946,34 @@
           try { pubsubSocket.close(); } catch (_) { }
         }
         pubsubSocket = null;
+        if (redisStreamAbortController) {
+          try { redisStreamAbortController.abort(); } catch (_) { }
+        }
+        redisStreamAbortController = null;
+        redisStreamRunning = false;
+        redisStreamReadTask = null;
         pubsubReconnectMs = 0;
-        if (!keepDesired) pubsubDesired = false;
+        if (!keepDesired) {
+          pubsubDesired = false;
+          redisStreamCursor = '$';
+        }
       }
 
       function isLiveConnected() {
-        return Boolean(pubsubSocket && pubsubSocket.readyState === WebSocket.OPEN);
+        if (WEBPUBSUB_ENABLED) {
+          return Boolean(pubsubSocket && pubsubSocket.readyState === WebSocket.OPEN);
+        }
+        if (REDIS_STREAMS_ENABLED) return Boolean(redisStreamRunning);
+        return false;
       }
 
       function isLiveActive() {
-        if (!pubsubSocket) return false;
-        return pubsubSocket.readyState === WebSocket.OPEN || pubsubSocket.readyState === WebSocket.CONNECTING;
+        if (WEBPUBSUB_ENABLED) {
+          if (!pubsubSocket) return false;
+          return pubsubSocket.readyState === WebSocket.OPEN || pubsubSocket.readyState === WebSocket.CONNECTING;
+        }
+        if (REDIS_STREAMS_ENABLED) return Boolean(redisStreamRunning || redisStreamAbortController);
+        return false;
       }
 
       function patchHistoryByRunId(runId, patch) {
@@ -4077,6 +4100,100 @@
         });
       }
 
+      async function connectRedisStreamUpdates() {
+        const key = apiKeyEl.value.trim();
+        if (!key) return false;
+        if (redisStreamAbortController) {
+          try { redisStreamAbortController.abort(); } catch (_) { }
+        }
+
+        const params = new URLSearchParams();
+        params.set('cursor', redisStreamCursor || '$');
+        const path = '/events/stream?' + params.toString();
+        const headers = { 'accept': 'application/x-ndjson, application/json' };
+        headers[API_KEY_HEADER] = key;
+        const controller = new AbortController();
+
+        let response = null;
+        try {
+          response = await fetch(path, {
+            method: 'GET',
+            headers,
+            cache: 'no-store',
+            signal: controller.signal
+          });
+        } catch (_) {
+          return false;
+        }
+
+        if (!response.ok || !response.body) {
+          return false;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        redisStreamAbortController = controller;
+        redisStreamRunning = true;
+        pubsubReconnectMs = 0;
+        if (liveFallbackPollTimer) {
+          clearTimeout(liveFallbackPollTimer);
+          liveFallbackPollTimer = null;
+        }
+        cancelPolling();
+
+        redisStreamReadTask = (async () => {
+          try {
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              while (true) {
+                const newline = buffer.indexOf('\n');
+                if (newline < 0) break;
+                const line = buffer.slice(0, newline).trim();
+                buffer = buffer.slice(newline + 1);
+                if (!line) continue;
+                let msg;
+                try { msg = JSON.parse(line); } catch (_) { continue; }
+                if (!msg || typeof msg !== 'object') continue;
+                const id = msg.id != null ? String(msg.id).trim() : '';
+                if (id) redisStreamCursor = id;
+                if (msg.event && typeof msg.event === 'object') {
+                  handleLiveMessage(msg.event);
+                }
+              }
+            }
+          } catch (err) {
+            if (!(err && err.name === 'AbortError')) {
+              // Best-effort reconnect/poll fallback handles transient stream failures.
+            }
+          } finally {
+            try { reader.releaseLock(); } catch (_) { }
+            redisStreamRunning = false;
+            redisStreamReadTask = null;
+            const wasAborted = Boolean(
+              redisStreamAbortController &&
+              redisStreamAbortController.signal &&
+              redisStreamAbortController.signal.aborted
+            );
+            redisStreamAbortController = null;
+            if (wasAborted) return;
+            if (!pubsubDesired) return;
+            if (liveFallbackPollTimer) clearTimeout(liveFallbackPollTimer);
+            liveFallbackPollTimer = setTimeout(() => {
+              liveFallbackPollTimer = null;
+              if (!isLiveConnected() && currentJobId) startPoll(currentJobId);
+            }, 4000);
+            scheduleHistoryRefresh(800);
+            scheduleLiveReconnect();
+          }
+        })();
+
+        return true;
+      }
+
       function maybeShowTerminalToast(jobId, status) {
         const id = String(jobId || '').trim();
         const s = String(status || '').toLowerCase();
@@ -4095,7 +4212,7 @@
       function maybeStartPollingFallback(jobId) {
         const id = String(jobId || '').trim();
         if (!id) return;
-        if (!WEBPUBSUB_ENABLED) {
+        if (!WEBPUBSUB_ENABLED && !REDIS_STREAMS_ENABLED) {
           startPoll(id);
           return;
         }
@@ -4121,7 +4238,7 @@
       }
 
       function scheduleLiveReconnect(ms) {
-        if (!WEBPUBSUB_ENABLED) return;
+        if (!WEBPUBSUB_ENABLED && !REDIS_STREAMS_ENABLED) return;
         if (!pubsubDesired) return;
         if (!apiKeyEl.value.trim()) return;
         if (isLiveActive()) return;
@@ -4151,7 +4268,7 @@
       }
 
       async function startLiveUpdates(opts) {
-        if (!WEBPUBSUB_ENABLED) return false;
+        if (!WEBPUBSUB_ENABLED && !REDIS_STREAMS_ENABLED) return false;
         const silent = opts && opts.silent;
         const key = apiKeyEl.value.trim();
         if (!key) return false;
@@ -4159,12 +4276,19 @@
         if (!shouldReconnectLive(opts)) return true;
         stopLiveUpdates({ keepDesired: true });
         try {
-          const res = await api('/pubsub/negotiate-user', 'POST', {});
-          const url = res && res.url ? String(res.url) : '';
-          if (!url) throw new Error('No Web PubSub URL');
           if (!silent) setStatus('info', 'Connecting live updates...');
-          const connected = await connectLiveUpdates(url);
-          if (!connected) throw new Error('Web PubSub socket unavailable');
+          if (WEBPUBSUB_ENABLED) {
+            const res = await api('/pubsub/negotiate-user', 'POST', {});
+            const url = res && res.url ? String(res.url) : '';
+            if (!url) throw new Error('No Web PubSub URL');
+            const connected = await connectLiveUpdates(url);
+            if (!connected) throw new Error('Web PubSub socket unavailable');
+          } else if (REDIS_STREAMS_ENABLED) {
+            const connected = await connectRedisStreamUpdates();
+            if (!connected) throw new Error('Redis stream unavailable');
+          } else {
+            return false;
+          }
           return true;
         } catch (_) {
           stopLiveUpdates({ keepDesired: true });
