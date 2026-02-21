@@ -12,7 +12,7 @@ Only the latest version on the `main` branch is actively maintained.
 
 If you believe you've found a security vulnerability, please do not open a public issue.
 
-**Preferred**: Open a private [GitHub Security Advisory](https://github.com/YOUR_USERNAME/azure-devsecops-aca/security/advisories/new) for this repository.
+**Preferred**: Open a private [GitHub Security Advisory](https://github.com/steve-sibi/azure-devsecops-aca/security/advisories/new) for this repository.
 
 If that's not available, contact the maintainer directly.
 
@@ -25,7 +25,7 @@ If that's not available, contact the maintainer directly.
 
 ### Response timeline
 
-- **Acknowledgment**: Within 48 hours (I'll try)
+- **Acknowledgment**: Within 48 hours
 - **Initial assessment**: Within 7 days
 - **Resolution target**: Depends on severity; critical issues within 30 days
 
@@ -43,4 +43,3 @@ This project implements several security controls:
 ## Safe Use Disclaimer
 
 This project downloads and scans remote content. Only scan URLs you own or are authorized to test. The author(s) are not responsible for misuse.
-
