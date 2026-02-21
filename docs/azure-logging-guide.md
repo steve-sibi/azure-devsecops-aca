@@ -70,7 +70,7 @@ Depending on operation, events can include:
 
 ## OpenTelemetry Configuration
 
-Implemented in `app/common/telemetry.py`.
+Implemented in [`app/common/telemetry.py`](../app/common/telemetry.py).
 
 Runtime environment variables:
 
@@ -90,15 +90,15 @@ Runtime environment variables:
 
 Container logs are queryable in `ContainerAppConsoleLogs_CL`.
 
-Use the query pack in `docs/observability/kql/`:
+Use the query pack in [`docs/observability/kql/`](observability/kql/):
 
-- `api_5xx.kql`
-- `pipeline_errors.kql`
-- `queue_backlog.kql`
-- `deadletter_growth.kql`
-- `stalled_pipeline.kql`
-- `correlation_flow.kql`
-- `scan_latency.kql`
+- [`api_5xx.kql`](observability/kql/api_5xx.kql)
+- [`pipeline_errors.kql`](observability/kql/pipeline_errors.kql)
+- [`queue_backlog.kql`](observability/kql/queue_backlog.kql)
+- [`deadletter_growth.kql`](observability/kql/deadletter_growth.kql)
+- [`stalled_pipeline.kql`](observability/kql/stalled_pipeline.kql)
+- [`correlation_flow.kql`](observability/kql/correlation_flow.kql)
+- [`scan_latency.kql`](observability/kql/scan_latency.kql)
 
 ### Application Insights
 
@@ -163,14 +163,14 @@ If this returns `PASS`, observed sampled traces are within tolerance for the con
 
 ## Implementation Map
 
-- Logging format/config: `app/common/logging_config.py`
-- Telemetry setup and trace helpers: `app/common/telemetry.py`
-- API request + queue propagation: `app/api/main.py`
-- Fetcher propagation + forwarding: `app/worker/fetcher.py`
-- Worker trace extraction and child spans: `app/worker/worker.py`
+- Logging format/config: [`app/common/logging_config.py`](../app/common/logging_config.py)
+- Telemetry setup and trace helpers: [`app/common/telemetry.py`](../app/common/telemetry.py)
+- API request + queue propagation: [`app/api/main.py`](../app/api/main.py)
+- Fetcher propagation + forwarding: [`app/worker/fetcher.py`](../app/worker/fetcher.py)
+- Worker trace extraction and child spans: [`app/worker/worker.py`](../app/worker/worker.py)
 
 ## Operations References
 
-- Query pack: `docs/observability/kql/`
-- Incident guide: `docs/observability/runbook.md`
-- Terraform monitoring resources: `infra/monitoring.tf`
+- Query pack: [`docs/observability/kql/`](observability/kql/)
+- Incident guide: [`docs/observability/runbook.md`](observability/runbook.md)
+- Terraform monitoring resources: [`infra/monitoring.tf`](../infra/monitoring.tf)

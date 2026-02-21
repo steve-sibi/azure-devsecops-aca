@@ -2,7 +2,7 @@
 
 Put README/presentation visuals in this folder.
 
-Used by the root `readme.md`:
+Used by the root [`readme.md`](../../readme.md):
 
 - **Preview section (recommended to add first):** `07-dashboard.png`, `08-ui-scan-flow.gif`, `10-file-scan.gif` (or `10-file-scan.png`)
 - **Optional details blocks:** everything else in the list below

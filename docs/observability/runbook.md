@@ -15,9 +15,9 @@ Symptoms:
 - Dashboard/API requests failing.
 
 Steps:
-1. Run `docs/observability/kql/api_5xx.kql` in Log Analytics.
+1. Run [`api_5xx.kql`](kql/api_5xx.kql) in Log Analytics.
 2. Group by `http_route` and `correlation_id`.
-3. Pivot to full flow with `docs/observability/kql/correlation_flow.kql`.
+3. Pivot to full flow with [`correlation_flow.kql`](kql/correlation_flow.kql).
 4. Check latest API revision and recent app rollout logs.
 
 Likely causes:
@@ -31,8 +31,8 @@ Symptoms:
 - Alert: `${prefix}-stalled-pipeline-alert`.
 
 Steps:
-1. Run `docs/observability/kql/queue_backlog.kql`.
-2. Run `docs/observability/kql/pipeline_errors.kql`.
+1. Run [`queue_backlog.kql`](kql/queue_backlog.kql).
+2. Run [`pipeline_errors.kql`](kql/pipeline_errors.kql).
 3. Check `fetcher` and `worker` logs for the same `job_id` / `correlation_id`.
 4. Check Service Bus active/dead-letter counts.
 
@@ -48,7 +48,7 @@ Symptoms:
 - Increasing dead-letter message count.
 
 Steps:
-1. Run `docs/observability/kql/deadletter_growth.kql`.
+1. Run [`deadletter_growth.kql`](kql/deadletter_growth.kql).
 2. Inspect `DLQ'd message` events in `worker`/`fetcher` logs.
 3. Identify top `error_code` and `job_id` values.
 4. Confirm if issue is transient (retryable) or terminal input (blocked).
@@ -63,9 +63,9 @@ Symptoms:
 - Increased end-to-end duration (`duration_ms`) for `completed` scans.
 
 Steps:
-1. Run `docs/observability/kql/scan_latency.kql`.
+1. Run [`scan_latency.kql`](kql/scan_latency.kql).
 2. Compare P50/P95 over recent windows.
-3. Correlate with queue depth from `queue_backlog.kql`.
+3. Correlate with queue depth from [`queue_backlog.kql`](kql/queue_backlog.kql).
 4. Inspect App Insights traces by `trace_id` for slow segments.
 
 Likely causes:
@@ -76,7 +76,7 @@ Likely causes:
 ## 5) Correlation/Trace Walkthrough
 
 Given a `job_id` or `correlation_id`:
-1. Run `correlation_flow.kql`.
+1. Run [`correlation_flow.kql`](kql/correlation_flow.kql).
 2. Copy `trace_id` from log row.
 3. Query App Insights traces by `operation_Id`/trace context.
 4. Validate route from API to fetcher to worker.

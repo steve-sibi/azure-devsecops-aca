@@ -141,6 +141,6 @@ curl -sS -X POST "${API_URL}/file/scan" \
 
 ## Related docs
 
-- Runtime/env configuration: `docs/configuration-reference.md`
-- Observability and runbook: `docs/observability/README.md`
-- Root onboarding and architecture snapshot: `readme.md`
+- Runtime/env configuration: [`docs/configuration-reference.md`](configuration-reference.md)
+- Observability and runbook: [`docs/observability/README.md`](observability/README.md)
+- Root onboarding and architecture snapshot: [`readme.md`](../readme.md)
