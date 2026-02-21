@@ -66,6 +66,6 @@ To manage persistent Key Vault secret-reader access in CI/CD, set GitHub variabl
 
 ## Related docs
 
-- CI/CD behavior and deploy modes: `docs/cicd-workflows.md`
-- Runtime/env settings: `docs/configuration-reference.md`
-- Root README quickstart: `readme.md`
+- CI/CD behavior and deploy modes: [`docs/cicd-workflows.md`](cicd-workflows.md)
+- Runtime/env settings: [`docs/configuration-reference.md`](configuration-reference.md)
+- Root README quickstart: [`readme.md`](../readme.md)

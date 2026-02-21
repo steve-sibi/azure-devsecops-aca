@@ -96,8 +96,8 @@ Client
 
 For deeper design rationale and threat boundaries:
 
-- `docs/adr/0001-design-decisions.md`
-- `docs/threat-model.md`
+- [`docs/adr/0001-design-decisions.md`](docs/adr/0001-design-decisions.md)
+- [`docs/threat-model.md`](docs/threat-model.md)
 
 ## 2) What Terraform Deploys
 
@@ -110,7 +110,7 @@ Core resources (names use `<prefix>`):
 - ACA environment + `api`, `fetcher`, `worker` apps
 - Monitoring assets (saved queries, alerts, optional workbook)
 
-Full workflow and deployment behavior details are documented in `docs/cicd-workflows.md`.
+Full workflow and deployment behavior details are documented in [`docs/cicd-workflows.md`](docs/cicd-workflows.md).
 
 ## 3) Prerequisites
 
@@ -159,11 +159,11 @@ azure-devsecops-aca/
 
 ## 5) CI/CD workflow
 
-Detailed CI/CD docs moved to `docs/cicd-workflows.md`.
+Detailed CI/CD docs moved to [`docs/cicd-workflows.md`](docs/cicd-workflows.md).
 
 ## 6) First-run values (env)
 
-Environment and key-management reference moved to `docs/configuration-reference.md`.
+Environment and key-management reference moved to [`docs/configuration-reference.md`](docs/configuration-reference.md).
 
 ## 7) Running it
 
@@ -205,19 +205,19 @@ API_KEY="$(az keyvault secret show --vault-name <prefix>-kv --name ApiKey --quer
 
 ## 8) Using the API
 
-Endpoint reference and examples moved to `docs/api-usage.md`.
+Endpoint reference and examples moved to [`docs/api-usage.md`](docs/api-usage.md).
 
 ## 9) Observability & troubleshooting
 
 Observability docs moved to:
 
-- `docs/observability/README.md`
-- `docs/observability/runbook.md`
-- `docs/azure-logging-guide.md`
+- [`docs/observability/README.md`](docs/observability/README.md)
+- [`docs/observability/runbook.md`](docs/observability/runbook.md)
+- [`docs/azure-logging-guide.md`](docs/azure-logging-guide.md)
 
 ## 10) Working with Terraform locally
 
-Local Terraform workflow moved to `docs/terraform-local.md`.
+Local Terraform workflow moved to [`docs/terraform-local.md`](docs/terraform-local.md).
 
 ## 11) Costs & clean-up
 
@@ -238,8 +238,8 @@ Cleanup options:
 
 Security policy and reporting:
 
-- `SECURITY.md`
-- `docs/threat-model.md`
+- [`SECURITY.md`](SECURITY.md)
+- [`docs/threat-model.md`](docs/threat-model.md)
 
 ## 13) How the app code works (quick tour)
 
@@ -275,13 +275,13 @@ Read Key Vault secret `ApiKey` in your deployment, or ask the deployment owner.
 
 **Where do I troubleshoot stuck jobs?**
 
-Use `docs/observability/runbook.md` and the queries under `docs/observability/kql/`.
+Use [`docs/observability/runbook.md`](docs/observability/runbook.md) and the queries under [`docs/observability/kql/`](docs/observability/kql/).
 
 ## License
 
-MIT - see `LICENSE`.
+MIT - see [`LICENSE`](LICENSE).
 
 ## Contributing & security
 
-- Contributing guide: `CONTRIBUTING.md`
-- Security policy: `SECURITY.md`
+- Contributing guide: [`CONTRIBUTING.md`](CONTRIBUTING.md)
+- Security policy: [`SECURITY.md`](SECURITY.md)

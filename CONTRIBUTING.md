@@ -73,7 +73,7 @@ Note: CI now triggers for docs-only and markdown-only changes as well, so docs P
 
 1. **Keep changes focused** — One feature or fix per PR
 2. **Add tests** — If you're adding functionality, include tests
-3. **Update documentation** — If you change the API or config, update `readme.md`
+3. **Update documentation** — If you change the API or config, update [`readme.md`](readme.md)
 4. **Security-first** — Prefer secure defaults; don't disable protections without good reason
 5. **Run checks locally** — Ensure relevant checks are clean before opening a PR
 

@@ -28,7 +28,7 @@ Use this narrative (it maps to the README sections):
 - Talk track: “URL + file scanner pipeline on Azure (ACA) with security gates and reproducible infra.”
 
 ### Slide 2 — Architecture (static screenshot)
-- Capture: the architecture diagram from `readme.md` (high-level) or render the Mermaid sequence diagram.
+- Capture: the architecture diagram from [`readme.md`](../readme.md) (high-level) or render the Mermaid sequence diagram.
 - Filename: `screenshots/01-architecture.png`
 - Talk track: two-stage pipeline, queues, scale-to-zero, results store, optional screenshots.
 
@@ -138,10 +138,10 @@ gifsicle -O3 output.gif -o output.gif
 ## 7) How to show GIFs (README vs slides)
 
 ### In the GitHub README
-- Store assets under `docs/screenshots/` in the repo.
-- In root `readme.md`, reference assets with repo-root paths such as `docs/screenshots/...`.
+- Store assets under [`docs/screenshots/`](screenshots/) in the repo.
+- In root [`readme.md`](../readme.md), reference assets with repo-root paths such as `docs/screenshots/...`.
 - In files under `docs/`, use doc-local paths such as `screenshots/...`.
-- Example image embed in root `readme.md`:
+- Example image embed in root [`readme.md`](../readme.md):
 
 ```html
 <img src="docs/screenshots/08-ui-scan-flow.gif" alt="UI scan flow" />

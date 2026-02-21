@@ -142,6 +142,6 @@ Manual teardown workflow.
 
 ## Related docs
 
-- Root onboarding: `readme.md`
-- Configuration/env reference: `docs/configuration-reference.md`
-- Local Terraform workflow: `docs/terraform-local.md`
+- Root onboarding: [`readme.md`](../readme.md)
+- Configuration/env reference: [`docs/configuration-reference.md`](configuration-reference.md)
+- Local Terraform workflow: [`docs/terraform-local.md`](terraform-local.md)

@@ -4,9 +4,9 @@ This page centralizes runtime configuration for local Docker Compose and Azure C
 
 ## Source of truth
 
-- Local defaults: `.env.example`
-- Local wiring: `docker-compose.yml`
-- Azure runtime wiring: Terraform (`infra/*.tf`) and workflow scripts (`scripts/gha/*`)
+- Local defaults: [`.env.example`](../.env.example)
+- Local wiring: [`docker-compose.yml`](../docker-compose.yml)
+- Azure runtime wiring: Terraform ([`infra/`](../infra/)) and workflow scripts ([`scripts/gha/`](../scripts/gha/))
 
 ## API key bootstrap and admin workflows
 
@@ -147,6 +147,6 @@ terraform apply \
 
 ## Related docs
 
-- CI/CD behavior and workflow gates: `docs/cicd-workflows.md`
-- API examples and endpoint reference: `docs/api-usage.md`
-- Local Terraform usage and state notes: `docs/terraform-local.md`
+- CI/CD behavior and workflow gates: [`docs/cicd-workflows.md`](cicd-workflows.md)
+- API examples and endpoint reference: [`docs/api-usage.md`](api-usage.md)
+- Local Terraform usage and state notes: [`docs/terraform-local.md`](terraform-local.md)
