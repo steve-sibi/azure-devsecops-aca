@@ -49,5 +49,5 @@ This is a demo project, but it intentionally implements a few “real-world” c
 ## Non-goals (v1)
 
 - Private networking / Private Link / WAF
-- Strong multi-tenant auth and per-user API keys
+- Full identity-based multi-tenant auth (beyond API key ownership and per-key controls)
 - Sandbox detonation of payloads
