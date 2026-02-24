@@ -8,6 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -119,7 +120,7 @@ def test_build_multipart_body_formats_rfc2046_parts(aca_cli):
 
 
 def test_scan_url_follow_watch_dispatches_to_watch(monkeypatch, aca_cli):
-    calls: dict[str, object] = {}
+    calls: dict[str, Any] = {}
 
     class _FakeConfig:
         verbose = False
@@ -175,7 +176,7 @@ def test_scan_url_follow_watch_dispatches_to_watch(monkeypatch, aca_cli):
 
 
 def test_scan_file_follow_watch_dispatches_to_watch(monkeypatch, tmp_path, aca_cli):
-    calls: dict[str, object] = {}
+    calls: dict[str, Any] = {}
     f = tmp_path / "sample.bin"
     f.write_bytes(b"abc")
 
@@ -220,7 +221,7 @@ def test_scan_file_follow_watch_dispatches_to_watch(monkeypatch, tmp_path, aca_c
 
 
 def test_scan_payload_follow_wait_dispatches_to_wait(monkeypatch, aca_cli):
-    calls: dict[str, object] = {}
+    calls: dict[str, Any] = {}
 
     class _FakeConfig:
         verbose = False
