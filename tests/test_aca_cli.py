@@ -31,7 +31,7 @@ def aca_cli():
 
 
 def test_build_parser_accepts_prompt_flags_and_follow(aca_cli):
-    parser = aca_cli.build_parser()
+    parser, _ = aca_cli.parser.build_parser()
 
     args = parser.parse_args(
         ["--prompt", "--json", "scan-url", "https://example.com", "--follow", "watch"]
@@ -68,9 +68,10 @@ def test_build_parser_accepts_prompt_flags_and_follow(aca_cli):
     assert args.limit == 5
 
 
-def test_emit_json_defaults_to_human_friendly_output(capsys, aca_cli):
+def test_emit_output_defaults_to_human_friendly_output(capsys, aca_cli):
     config = SimpleNamespace(raw=False, json_output=False)
-    aca_cli.emit_json(
+    output_mod = importlib.import_module("aca_cli.output")
+    output_mod.emit_output(
         {
             "job_id": "job-1",
             "status": "completed",
@@ -86,11 +87,35 @@ def test_emit_json_defaults_to_human_friendly_output(capsys, aca_cli):
     assert '"job_id"' not in out
 
 
-def test_emit_json_with_json_flag_outputs_json(capsys, aca_cli):
+def test_emit_output_with_json_flag_outputs_json(capsys, aca_cli):
     config = SimpleNamespace(raw=False, json_output=True)
-    aca_cli.emit_json({"job_id": "job-1", "status": "queued"}, config)
+    output_mod = importlib.import_module("aca_cli.output")
+    output_mod.emit_output({"job_id": "job-1", "status": "queued"}, config)
     out = capsys.readouterr().out
     assert '"job_id": "job-1"' in out
+
+
+def test_build_multipart_body_formats_rfc2046_parts(aca_cli):
+    http_mod = importlib.import_module("aca_cli.http")
+    body, content_type = http_mod._build_multipart_body(
+        [
+            ("file", b"abc", "test.bin", "application/octet-stream"),
+            ("payload", "hello", None, None),
+        ],
+        boundary="testboundary",
+    )
+
+    assert content_type == "multipart/form-data; boundary=testboundary"
+    assert b'Content-Disposition: form-data; name="file"; filename="test.bin"\r\n' in body
+    assert b"Content-Type: application/octet-stream\r\n" in body
+    assert b'Content-Disposition: form-data; name="payload"\r\n' in body
+    assert body.count(b"\r\n\r\n") >= 2
+    assert (
+        b'Content-Disposition: form-data; name="file"; filename="test.bin"\r\n'
+        b"Content-Type: application/octet-stream\r\n\r\nabc\r\n"
+    ) in body
+    assert b'Content-Disposition: form-data; name="payload"\r\n\r\nhello\r\n' in body
+    assert body.endswith(b"--testboundary--\r\n")
 
 
 def test_scan_url_follow_watch_dispatches_to_watch(monkeypatch, aca_cli):
@@ -124,10 +149,10 @@ def test_scan_url_follow_watch_dispatches_to_watch(monkeypatch, aca_cli):
     def fake_cmd_wait(config, args):
         calls["wait"] = True
 
-    monkeypatch.setattr(aca_cli, "make_request", fake_make_request)
-    monkeypatch.setattr(aca_cli, "append_history", fake_append_history)
-    monkeypatch.setattr(aca_cli, "cmd_watch", fake_cmd_watch)
-    monkeypatch.setattr(aca_cli, "cmd_wait", fake_cmd_wait)
+    monkeypatch.setattr(aca_cli.commands, "make_request", fake_make_request)
+    monkeypatch.setattr(aca_cli.commands, "append_history", fake_append_history)
+    monkeypatch.setattr(aca_cli.commands, "cmd_watch", fake_cmd_watch)
+    monkeypatch.setattr(aca_cli.commands, "cmd_wait", fake_cmd_wait)
 
     args = argparse.Namespace(
         url="https://example.com",
@@ -141,7 +166,7 @@ def test_scan_url_follow_watch_dispatches_to_watch(monkeypatch, aca_cli):
         timeout=45,
         view="summary",
     )
-    aca_cli.cmd_scan_url(_FakeConfig(), args)
+    aca_cli.commands.cmd_scan_url(_FakeConfig(), args)
 
     assert calls["request"]["method"] == "POST"
     assert calls["history"] == {"job_id": "job-1", "url": "https://example.com"}
@@ -173,9 +198,9 @@ def test_scan_file_follow_watch_dispatches_to_watch(monkeypatch, tmp_path, aca_c
     def fake_cmd_watch(config, args):
         calls["watch"] = {"job_id": args.job_id, "view": args.view, "timeout": args.timeout}
 
-    monkeypatch.setattr(aca_cli, "make_request", fake_make_request)
-    monkeypatch.setattr(aca_cli, "append_history", fake_append_history)
-    monkeypatch.setattr(aca_cli, "cmd_watch", fake_cmd_watch)
+    monkeypatch.setattr(aca_cli.commands, "make_request", fake_make_request)
+    monkeypatch.setattr(aca_cli.commands, "append_history", fake_append_history)
+    monkeypatch.setattr(aca_cli.commands, "cmd_watch", fake_cmd_watch)
 
     args = argparse.Namespace(
         command="scan-file",
@@ -186,7 +211,7 @@ def test_scan_file_follow_watch_dispatches_to_watch(monkeypatch, tmp_path, aca_c
         timeout=15,
         view="summary",
     )
-    aca_cli.cmd_scan_file(_FakeConfig(), args)
+    aca_cli.commands.cmd_scan_file(_FakeConfig(), args)
 
     assert calls["request"]["method"] == "POST"
     assert calls["request"]["path"] == "/file/scan"
@@ -216,9 +241,9 @@ def test_scan_payload_follow_wait_dispatches_to_wait(monkeypatch, aca_cli):
     def fake_cmd_wait(config, args):
         calls["wait"] = {"job_id": args.job_id, "view": args.view, "timeout": args.timeout}
 
-    monkeypatch.setattr(aca_cli, "make_request", fake_make_request)
-    monkeypatch.setattr(aca_cli, "append_history", fake_append_history)
-    monkeypatch.setattr(aca_cli, "cmd_wait", fake_cmd_wait)
+    monkeypatch.setattr(aca_cli.commands, "make_request", fake_make_request)
+    monkeypatch.setattr(aca_cli.commands, "append_history", fake_append_history)
+    monkeypatch.setattr(aca_cli.commands, "cmd_wait", fake_cmd_wait)
 
     args = argparse.Namespace(
         command="scan-payload",
@@ -230,7 +255,7 @@ def test_scan_payload_follow_wait_dispatches_to_wait(monkeypatch, aca_cli):
         timeout=20,
         view="full",
     )
-    aca_cli.cmd_scan_payload(_FakeConfig(), args)
+    aca_cli.commands.cmd_scan_payload(_FakeConfig(), args)
 
     assert calls["request"]["path"] == "/file/scan"
     assert calls["history"]["target"] == "payload://5-chars"
@@ -244,9 +269,9 @@ def test_resolve_azure_env_and_emit_shell_exports(monkeypatch, aca_cli):
     def fake_run(cmd, check, capture_output, text):
         return SimpleNamespace(stdout=next(outputs), stderr="")
 
-    monkeypatch.setattr(aca_cli.subprocess, "run", fake_run)
+    monkeypatch.setattr(aca_cli.config.subprocess, "run", fake_run)
 
-    resolved = aca_cli.resolve_azure_env(
+    resolved = aca_cli.config.resolve_azure_env(
         {
             "ACA_RG": "rg-test",
             "ACA_API_APP": "app-test",
@@ -259,33 +284,33 @@ def test_resolve_azure_env_and_emit_shell_exports(monkeypatch, aca_cli):
     assert resolved.base_url == "https://my-api.example.com"
     assert resolved.api_key == "sekret'value"
 
-    exports = aca_cli.emit_shell_exports(resolved)
+    exports = aca_cli.config.emit_shell_exports(resolved)
     assert "export API_FQDN='my-api.example.com'" in exports
     assert "export API_KEY='sekret'\"'\"'value'" in exports
 
 
 def test_config_skips_azure_resolution_for_env_unset(monkeypatch, aca_cli):
-    parser = aca_cli.build_parser()
+    parser, _ = aca_cli.parser.build_parser()
     args = parser.parse_args(["--context", "az", "env", "--unset"])
 
     def boom(*_args, **_kwargs):
         raise AssertionError("resolve_context should not be called for env --unset")
 
-    monkeypatch.setattr(aca_cli, "resolve_context", boom)
-    cfg = aca_cli.Config(args)
+    monkeypatch.setattr(aca_cli.config, "resolve_context", boom)
+    cfg = aca_cli.config.Config(args)
     assert cfg.context == "az"
     assert cfg.resolved_context.context == "az"
 
 
 def test_config_honors_no_color_by_default(monkeypatch, aca_cli):
-    parser = aca_cli.build_parser()
+    parser, _ = aca_cli.parser.build_parser()
     args = parser.parse_args(["health"])
     monkeypatch.setenv("NO_COLOR", "1")
-    cfg = aca_cli.Config(args)
+    cfg = aca_cli.config.Config(args)
     assert cfg.color == "never"
 
     args = parser.parse_args(["--color", "always", "health"])
-    cfg = aca_cli.Config(args)
+    cfg = aca_cli.config.Config(args)
     assert cfg.color == "always"
 
 
@@ -317,11 +342,11 @@ def test_prompt_status_uses_history_selection(monkeypatch, tmp_path, aca_cli):
         captured["path"] = path
         return 200, {}, json.dumps({"job_id": "job-aaa", "status": "completed"})
 
-    def fake_emit_json(output, config, **_kwargs):
+    def fake_emit_output(output, config, **_kwargs):
         captured["output"] = output if isinstance(output, str) else json.dumps(output)
 
-    monkeypatch.setattr(aca_cli, "make_request", fake_make_request)
-    monkeypatch.setattr(aca_cli, "emit_json", fake_emit_json)
+    monkeypatch.setattr(aca_cli.commands, "make_request", fake_make_request)
+    monkeypatch.setattr(aca_cli.commands, "emit_output", fake_emit_output)
 
     aca_cli.main(["--prompt", "--history", str(history_file), "status"])
 
@@ -353,3 +378,18 @@ def test_python_module_entrypoint_help():
     )
     assert proc.returncode == 0, proc.stderr
     assert "CLI helper for the FastAPI scanner service" in proc.stdout
+
+
+def test_python_module_entrypoint_version(aca_cli):
+    env = dict(os.environ)
+    src_path = str(REPO_ROOT / "src")
+    env["PYTHONPATH"] = src_path + (f":{env['PYTHONPATH']}" if env.get("PYTHONPATH") else "")
+    proc = subprocess.run(
+        [sys.executable, "-m", "aca_cli", "--version"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert aca_cli.parser.__version__ in proc.stdout
