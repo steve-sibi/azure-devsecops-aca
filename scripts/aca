@@ -1,0 +1,78 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+
+die() {
+  echo "aca: $*" 1>&2
+  exit 1
+}
+
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+resolve_python() {
+  if have_cmd python3; then
+    echo "python3"
+    return 0
+  fi
+  if have_cmd python; then
+    echo "python"
+    return 0
+  fi
+  return 1
+}
+
+print_usage() {
+  cat <<'EOF'
+Usage:
+  aca [args...]              Run the Python CLI (local context by default).
+  aca az [args...]           Run the Python CLI with Azure context resolution.
+  aca env [--unset]          Print shell exports/unsets for Azure context.
+  aca doctor                 Show CLI diagnostics.
+  aca config show            Show resolved CLI config.
+
+Examples:
+  eval "$(aca env)"
+  aca scan-url https://example.com --follow watch
+  aca scan-file ./readme.md --follow watch
+  aca history --format table --limit 10
+  aca --color never jobs --limit 10
+  aca --prompt scan-url
+  aca az scan-url https://example.com --wait
+  aca help
+  aca az help
+
+Azure overrides:
+  ACA_RG, ACA_API_APP, ACA_KV, ACA_API_KEY_SECRET_NAME
+EOF
+}
+
+main() {
+  PY="$(resolve_python)" || die "python not found (need python3 or python in PATH)"
+
+  cmd="${1:-}"
+  case "$cmd" in
+    -h|--help)
+      exec "$PY" "$SCRIPT_DIR/aca_api.py" help
+      ;;
+    help)
+      shift || true
+      exec "$PY" "$SCRIPT_DIR/aca_api.py" help "$@"
+      ;;
+    az)
+      shift || true
+      exec "$PY" "$SCRIPT_DIR/aca_api.py" --context az "$@"
+      ;;
+    env)
+      shift || true
+      exec "$PY" "$SCRIPT_DIR/aca_api.py" --context az env "$@"
+      ;;
+    *)
+      exec "$PY" "$SCRIPT_DIR/aca_api.py" "$@"
+      ;;
+  esac
+}
+
+main "$@"
