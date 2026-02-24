@@ -305,6 +305,7 @@ def test_prompt_status_uses_history_selection(monkeypatch, tmp_path, aca_cli):
         encoding="utf-8",
     )
 
+    monkeypatch.setenv("API_KEY", "test-api-key")
     monkeypatch.setattr(aca_cli.sys.stdin, "isatty", lambda: True)
     monkeypatch.setattr(aca_cli.sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr("builtins.input", lambda _prompt="": "1")
