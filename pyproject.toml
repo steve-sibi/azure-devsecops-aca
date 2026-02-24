@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aca-cli"
-version = "1.0.0"
+dynamic = ["version"]
 description = "CLI for the Azure DevSecOps ACA scanner API"
 readme = "readme.md"
 requires-python = ">=3.11"
@@ -19,3 +19,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "aca_cli._version.__version__"}

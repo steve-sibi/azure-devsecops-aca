@@ -126,11 +126,6 @@ class RichLiveReporter:
     def done(self, message: str | None = None) -> None:
         if not self.enabled or self.console is None:
             return
-        had_spinner = bool(self._status_obj)
         self._stop_spinner()
         if message:
-            if had_spinner:
-                self.console.print(message)
-            else:
-                self.console.print(message)
-
+            self.console.print(message)

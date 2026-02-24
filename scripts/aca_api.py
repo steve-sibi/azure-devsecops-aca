@@ -19,7 +19,6 @@ if SRC_DIR.exists():
     if src_str not in sys.path:
         sys.path.insert(0, src_str)
 
-from aca_cli.cli import *  # noqa: E402,F401,F403
 from aca_cli.cli import main  # noqa: E402
 
 
