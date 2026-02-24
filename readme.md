@@ -50,18 +50,10 @@ docker compose up --build
 In another terminal:
 
 ```bash
-API_KEY=local-dev-key
-
-curl -sS http://localhost:8000/healthz
-
-SUBMIT="$(curl -sS -X POST http://localhost:8000/scan \
-  -H "content-type: application/json" \
-  -H "X-API-Key: ${API_KEY}" \
-  -d '{"url":"https://example.com","type":"url"}')"
-echo "${SUBMIT}"
-
-JOB_ID="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get("job_id") or "")' <<<"${SUBMIT}")"
-curl -sS "http://localhost:8000/scan/${JOB_ID}" -H "X-API-Key: ${API_KEY}"
+./scripts/aca health
+./scripts/aca scan-url https://example.com --follow watch
+# or guided mode:
+./scripts/aca --prompt scan-url
 ```
 
 SSRF protection check (expected `400`):
@@ -180,6 +172,41 @@ docker compose up --build
 
 Default key: `local-dev-key` (change `ACA_API_KEY` in `.env`).
 
+CLI helper examples:
+
+```bash
+./scripts/aca doctor
+./scripts/aca config show
+./scripts/aca jobs --limit 10
+./scripts/aca scan-url https://example.com --follow watch
+./scripts/aca scan-file ./readme.md --follow watch
+./scripts/aca history --format table --limit 10
+./scripts/aca --color never jobs --limit 10
+```
+
+First-run CLI flow (recommended):
+
+```bash
+./scripts/aca doctor
+./scripts/aca config show
+./scripts/aca scan-url https://example.com --follow watch
+```
+
+Optional: install the CLI locally (instead of using `./scripts/aca` from the repo):
+
+```bash
+# user install (recommended)
+pipx install .
+
+# or for contributors (editable)
+python3 -m pip install -e .
+
+aca --help
+aca az help
+aca scan-file ./readme.md --follow watch
+aca history --format table
+```
+
 Local realtime note:
 
 - Docker defaults to Redis live updates (`redis_streams`) with authenticated NDJSON streaming (`GET /events/stream`).
@@ -202,6 +229,14 @@ API_KEY="$(az keyvault secret show --vault-name <prefix>-kv --name ApiKey --quer
 ```
 
 4. Open `https://<api-fqdn>/`, paste API key, submit a scan.
+
+CLI shortcut (resolves URL + key via `az` + Key Vault):
+
+```bash
+./scripts/aca env              # prints shell exports
+eval "$(./scripts/aca env)"    # optional
+./scripts/aca az scan-url https://example.com --wait
+```
 
 ## 8) Using the API
 

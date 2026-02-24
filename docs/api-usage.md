@@ -63,29 +63,56 @@ Status writes are monotonic to prevent stale updates from moving state backward.
 
 ## Quick usage examples
 
-### Option A: helper CLI (`scripts/aca_api.py`)
+### Option A: helper CLI (`scripts/aca` wrapper; recommended)
+
+Optional install (so you can run `aca` from anywhere):
+
+```bash
+pipx install .
+# or: python3 -m pip install -e .
+```
 
 ```bash
 # Local default: http://localhost:8000
-./scripts/aca_api.py scan-url https://example.com --wait
-./scripts/aca_api.py jobs --limit 20
-./scripts/aca_api.py scan-file ./readme.md
-./scripts/aca_api.py screenshot <job_id> --out-dir ./screenshots/
+./scripts/aca scan-url https://example.com --follow watch
+./scripts/aca scan-file ./readme.md --follow watch
+./scripts/aca jobs --limit 20
+./scripts/aca screenshot <job_id> --out-dir ./screenshots/
+./scripts/aca --prompt scan-url
+./scripts/aca doctor
+./scripts/aca config show
+./scripts/aca history --format table --limit 10
+./scripts/aca --color never jobs --limit 20
 
 # Admin key management
-./scripts/aca_api.py admin-mint-key --label analyst-a --read-rpm 600 --write-rpm 120
-./scripts/aca_api.py admin-list-keys --include-inactive
-./scripts/aca_api.py admin-revoke-key <key_hash>
+./scripts/aca admin-mint-key --label analyst-a --read-rpm 600 --write-rpm 120
+./scripts/aca admin-list-keys --include-inactive
+./scripts/aca admin-revoke-key <key_hash>
 
 # Local client-side history
-./scripts/aca_api.py history --limit 10
-./scripts/aca_api.py clear-server-history
+./scripts/aca history --format table --limit 10
+./scripts/aca clear-server-history --yes
+```
+
+First-run CLI flow:
+
+```bash
+./scripts/aca doctor
+./scripts/aca config show
+./scripts/aca scan-url https://example.com --follow watch
 ```
 
 Azure example:
 
 ```bash
-API_URL="https://<api-fqdn>" API_KEY="..." ./scripts/aca_api.py scan-url https://example.com --wait
+./scripts/aca env   # or: eval "$(./scripts/aca env)"
+./scripts/aca az scan-url https://example.com --wait
+```
+
+Direct Python entrypoint (compatibility):
+
+```bash
+./scripts/aca_api.py scan-url https://example.com --wait
 ```
 
 ### Option B: curl
