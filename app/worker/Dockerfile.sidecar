@@ -18,10 +18,11 @@ RUN apt-get update \
       tini \
     && rm -rf /var/lib/apt/lists/*
 
-COPY worker/requirements.txt ./requirements.txt
+COPY requirements-common.txt ./requirements-common.txt
+COPY worker/requirements.txt ./worker/requirements.txt
 # hadolint ignore=DL3013,DL3042
 RUN python -m pip install --upgrade pip setuptools "wheel>=0.46.2" \
-    && pip install --no-cache-dir --prefer-binary -r requirements.txt \
+    && pip install --no-cache-dir --prefer-binary -r worker/requirements.txt \
     && python -m playwright install --with-deps chromium
 
 COPY common/ ./common/

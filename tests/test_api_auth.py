@@ -1,23 +1,15 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-# The application code is built/run from within ./app in Docker; add it to sys.path for tests.
-REPO_ROOT = Path(__file__).resolve().parents[1]
-APP_ROOT = REPO_ROOT / "app"
-if str(APP_ROOT) not in sys.path:
-    sys.path.insert(0, str(APP_ROOT))
-API_ROOT = APP_ROOT / "api"
-if str(API_ROOT) not in sys.path:
-    sys.path.insert(0, str(API_ROOT))
-
 import main as api  # noqa: E402
+import settings as api_settings  # noqa: E402
+from deps import auth as auth_deps  # noqa: E402
+from routes import scan as scan_routes  # noqa: E402
 
 
 def _run(coro):
@@ -37,21 +29,22 @@ def _request(path: str, method: str) -> Request:
         "server": ("testserver", 80),
         "client": ("testclient", 50000),
         "root_path": "",
+        "app": api.app,
     }
     return Request(scope)
 
 
 @pytest.mark.parametrize("require_api_key", [False, True])
 def test_admin_auth_required_for_admin_scope_in_all_modes(monkeypatch, require_api_key):
-    monkeypatch.setattr(api, "REQUIRE_API_KEY", require_api_key)
-    monkeypatch.setattr(api, "API_KEY", "user-key")
-    monkeypatch.setattr(api, "API_KEYS", "")
-    monkeypatch.setattr(api, "API_ADMIN_KEY", "admin-key")
-    monkeypatch.setattr(api, "API_ADMIN_KEYS", "")
-    monkeypatch.setattr(api, "API_KEY_STORE_ENABLED", False)
-    monkeypatch.setattr(api, "table_client", None)
-    monkeypatch.setattr(api, "redis_client", None)
-    api._rate_buckets.clear()
+    monkeypatch.setattr(api_settings, "REQUIRE_API_KEY", require_api_key)
+    monkeypatch.setattr(api_settings, "API_KEY", "user-key")
+    monkeypatch.setattr(api_settings, "API_KEYS", "")
+    monkeypatch.setattr(api_settings, "API_ADMIN_KEY", "admin-key")
+    monkeypatch.setattr(api_settings, "API_ADMIN_KEYS", "")
+    monkeypatch.setattr(api_settings, "API_KEY_STORE_ENABLED", False)
+    monkeypatch.setattr(api.app.state, "table_client", None)
+    monkeypatch.setattr(api.app.state, "redis_client", None)
+    auth_deps._rate_buckets.clear()
 
     req = _request("/admin/api-keys", "GET")
 
@@ -69,17 +62,17 @@ def test_admin_auth_required_for_admin_scope_in_all_modes(monkeypatch, require_a
 
 
 def test_non_admin_auth_can_still_be_disabled(monkeypatch):
-    monkeypatch.setattr(api, "REQUIRE_API_KEY", False)
-    api._rate_buckets.clear()
+    monkeypatch.setattr(api_settings, "REQUIRE_API_KEY", False)
+    auth_deps._rate_buckets.clear()
     req = _request("/scan", "POST")
     assert _run(api.require_api_key(req, None)) is None
 
 
 def test_list_jobs_still_requires_key_when_auth_toggle_disabled(monkeypatch):
-    monkeypatch.setattr(api, "REQUIRE_API_KEY", False)
-    monkeypatch.setattr(api, "RESULT_BACKEND", "redis")
-    monkeypatch.setattr(api, "redis_client", object())
-    monkeypatch.setattr(api, "table_client", None)
+    monkeypatch.setattr(api_settings, "REQUIRE_API_KEY", False)
+    monkeypatch.setattr(scan_routes, "RESULT_BACKEND", "redis")
+    monkeypatch.setattr(api.app.state, "redis_client", object())
+    monkeypatch.setattr(api.app.state, "table_client", None)
 
     with pytest.raises(HTTPException) as exc:
         _run(
@@ -96,12 +89,12 @@ def test_list_jobs_still_requires_key_when_auth_toggle_disabled(monkeypatch):
 
 
 def test_clear_jobs_still_requires_key_when_auth_toggle_disabled(monkeypatch):
-    monkeypatch.setattr(api, "REQUIRE_API_KEY", False)
-    monkeypatch.setattr(api, "RESULT_BACKEND", "redis")
-    monkeypatch.setattr(api, "redis_client", object())
-    monkeypatch.setattr(api, "table_client", None)
+    monkeypatch.setattr(api_settings, "REQUIRE_API_KEY", False)
+    monkeypatch.setattr(scan_routes, "RESULT_BACKEND", "redis")
+    monkeypatch.setattr(api.app.state, "redis_client", object())
+    monkeypatch.setattr(api.app.state, "table_client", None)
 
     with pytest.raises(HTTPException) as exc:
-        _run(api.clear_jobs(scan_type=None, api_key_hash=None))
+        _run(api.clear_jobs(_request("/jobs", "DELETE"), scan_type=None, api_key_hash=None))
     assert exc.value.status_code == 401
     assert "Missing API key" in str(exc.value.detail)

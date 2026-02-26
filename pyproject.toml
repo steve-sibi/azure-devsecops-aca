@@ -22,3 +22,7 @@ where = ["src"]
 
 [tool.setuptools.dynamic]
 version = {attr = "aca_cli._version.__version__"}
+
+[tool.pytest.ini_options]
+pythonpath = ["app", "app/api", "app/worker", "src"]
+testpaths = ["tests"]
