@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from unittest import mock
 
 from common.url_dedupe import (  # noqa: E402

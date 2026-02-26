@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import fetcher as fetcher  # noqa: E402
 from common.logging_config import get_correlation_id  # noqa: E402

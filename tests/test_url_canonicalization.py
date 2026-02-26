@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 
 from common.url_canonicalization import canonicalize_url  # noqa: E402
 

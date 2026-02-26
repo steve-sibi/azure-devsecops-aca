@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 
 from common.errors import ErrorInfo  # noqa: E402
 from common.message_consumer import (  # noqa: E402

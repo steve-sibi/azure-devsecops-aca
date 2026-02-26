@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import worker as worker_mod  # noqa: E402
 from common.logging_config import get_correlation_id  # noqa: E402
