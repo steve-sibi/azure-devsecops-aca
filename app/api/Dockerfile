@@ -14,10 +14,11 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY api/requirements.txt ./requirements.txt
+COPY requirements-common.txt ./requirements-common.txt
+COPY api/requirements.txt ./api/requirements.txt
 # hadolint ignore=DL3013,DL3042
 RUN python -m pip install --upgrade pip setuptools "wheel>=0.46.2" \
-    && pip install --no-cache-dir --prefer-binary -r requirements.txt
+    && pip install --no-cache-dir --prefer-binary -r api/requirements.txt
 
 COPY common/ ./common/
 COPY api/ .

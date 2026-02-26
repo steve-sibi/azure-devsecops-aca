@@ -4,7 +4,6 @@ import asyncio
 import json
 import sys
 import types
-from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID
 
@@ -13,18 +12,13 @@ from fastapi import HTTPException
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-# The application code is built/run from within ./app in Docker; add it to sys.path for tests.
-REPO_ROOT = Path(__file__).resolve().parents[1]
-APP_ROOT = REPO_ROOT / "app"
-if str(APP_ROOT) not in sys.path:
-    sys.path.insert(0, str(APP_ROOT))
-API_ROOT = APP_ROOT / "api"
-if str(API_ROOT) not in sys.path:
-    sys.path.insert(0, str(API_ROOT))
-
 import main as api  # noqa: E402
+import settings as api_settings  # noqa: E402
 from common.live_updates import RedisStreamsConfig  # noqa: E402
 from common.url_dedupe import UrlDedupeConfig  # noqa: E402
+from routes import admin as admin_routes  # noqa: E402
+from routes import file_scan as file_scan_routes  # noqa: E402
+from routes import scan as scan_routes  # noqa: E402
 
 
 def _run(coro):
@@ -44,6 +38,7 @@ def _request(path: str, method: str, *, request_id: str = "req-corr-1") -> Reque
         "server": ("testserver", 80),
         "client": ("testclient", 50000),
         "root_path": "",
+        "app": api.app,
     }
     req = Request(scope)
     req.state.request_id = request_id
@@ -51,6 +46,9 @@ def _request(path: str, method: str, *, request_id: str = "req-corr-1") -> Reque
 
 
 class _StreamRequest:
+    def __init__(self) -> None:
+        self.state = api.app.state
+
     async def is_disconnected(self) -> bool:
         return False
 
@@ -88,11 +86,11 @@ def test_enqueue_scan_persists_and_enqueues(monkeypatch):
         ]
     )
 
-    monkeypatch.setattr(api, "RESULT_BACKEND", "redis")
-    monkeypatch.setattr(api, "redis_client", object())
-    monkeypatch.setattr(api, "table_client", None)
+    monkeypatch.setattr(scan_routes, "RESULT_BACKEND", "redis")
+    monkeypatch.setattr(api.app.state, "redis_client", object())
+    monkeypatch.setattr(api.app.state, "table_client", None)
     monkeypatch.setattr(
-        api,
+        scan_routes,
         "_URL_DEDUPE",
         UrlDedupeConfig(
             ttl_seconds=0,
@@ -102,9 +100,9 @@ def test_enqueue_scan_persists_and_enqueues(monkeypatch):
             redis_prefix="urlidx:",
         ),
     )
-    monkeypatch.setattr(api, "uuid4", lambda: next(ids))
+    monkeypatch.setattr(scan_routes, "uuid4", lambda: next(ids))
     monkeypatch.setattr(
-        api,
+        scan_routes,
         "inject_trace_context",
         lambda carrier: carrier.update(
             {
@@ -123,6 +121,7 @@ def test_enqueue_scan_persists_and_enqueues(monkeypatch):
         schema: str,
         message_id: str,
         application_properties: dict[str, str] | None = None,
+        request=None,
     ) -> None:
         captured["payload"] = payload
         captured["schema"] = schema
@@ -136,6 +135,7 @@ def test_enqueue_scan_persists_and_enqueues(monkeypatch):
         verdict: str | None = None,
         error: str | None = None,
         extra: dict | None = None,
+        request=None,
     ) -> None:
         upserts.append(
             {
@@ -151,11 +151,11 @@ def test_enqueue_scan_persists_and_enqueues(monkeypatch):
     async def fake_upsert_job_index_record_async(**_kwargs):
         return True
 
-    monkeypatch.setattr(api, "_validate_scan_url", fake_validate_scan_url)
-    monkeypatch.setattr(api, "_enqueue_json", fake_enqueue_json)
-    monkeypatch.setattr(api, "_upsert_result", fake_upsert_result)
+    monkeypatch.setattr(scan_routes, "_validate_scan_url", fake_validate_scan_url)
+    monkeypatch.setattr(scan_routes, "_enqueue_json", fake_enqueue_json)
+    monkeypatch.setattr(scan_routes, "_upsert_result", fake_upsert_result)
     monkeypatch.setattr(
-        api, "upsert_job_index_record_async", fake_upsert_job_index_record_async
+        scan_routes, "upsert_job_index_record_async", fake_upsert_job_index_record_async
     )
 
     req = api.ScanRequest(url="https://example.com", type="url", metadata={"a": "b"})
@@ -173,10 +173,10 @@ def test_enqueue_scan_persists_and_enqueues(monkeypatch):
 
 
 def test_get_scan_status_returns_pending_for_missing_job(monkeypatch):
-    async def fake_get_result_entity(_job_id: str):
+    async def fake_get_result_entity(_job_id: str, *, request=None):
         return None
 
-    monkeypatch.setattr(api, "_get_result_entity", fake_get_result_entity)
+    monkeypatch.setattr(scan_routes, "_get_result_entity", fake_get_result_entity)
     out = _run(
         api.get_scan_status(
             "missing-job",
@@ -217,7 +217,7 @@ def test_list_jobs_accepts_blocked_status_filter(monkeypatch):
             }
         ]
 
-    async def fake_get_result_entity(job_id: str):
+    async def fake_get_result_entity(job_id: str, *, request=None):
         if job_id == "run-1":
             return {
                 "status": "blocked",
@@ -227,11 +227,11 @@ def test_list_jobs_accepts_blocked_status_filter(monkeypatch):
             }
         return None
 
-    monkeypatch.setattr(api, "RESULT_BACKEND", "redis")
-    monkeypatch.setattr(api, "redis_client", object())
-    monkeypatch.setattr(api, "table_client", None)
-    monkeypatch.setattr(api, "list_jobs_async", fake_list_jobs_async)
-    monkeypatch.setattr(api, "_get_result_entity", fake_get_result_entity)
+    monkeypatch.setattr(scan_routes, "RESULT_BACKEND", "redis")
+    monkeypatch.setattr(api.app.state, "redis_client", object())
+    monkeypatch.setattr(api.app.state, "table_client", None)
+    monkeypatch.setattr(scan_routes, "list_jobs_async", fake_list_jobs_async)
+    monkeypatch.setattr(scan_routes, "_get_result_entity", fake_get_result_entity)
 
     out = _run(
         api.list_jobs(
@@ -252,13 +252,13 @@ def test_list_jobs_accepts_blocked_status_filter(monkeypatch):
 def test_scan_file_payload_path(monkeypatch):
     persisted: dict = {}
 
-    monkeypatch.setattr(api, "RESULT_BACKEND", "redis")
-    monkeypatch.setattr(api, "redis_client", object())
-    monkeypatch.setattr(api, "table_client", None)
-    monkeypatch.setattr(api, "FILE_SCAN_INCLUDE_VERSION", False)
-    monkeypatch.setattr(api, "clamd_ping", lambda **_kwargs: True)
+    monkeypatch.setattr(api_settings, "RESULT_BACKEND", "redis")
+    monkeypatch.setattr(api.app.state, "redis_client", object())
+    monkeypatch.setattr(api.app.state, "table_client", None)
+    monkeypatch.setattr(api_settings, "FILE_SCAN_INCLUDE_VERSION", False)
+    monkeypatch.setattr(file_scan_routes, "clamd_ping", lambda **_kwargs: True)
     monkeypatch.setattr(
-        api,
+        file_scan_routes,
         "clamd_scan_bytes",
         lambda *_args, **_kwargs: SimpleNamespace(
             verdict="clean", signature=None, raw="stream: OK", error=None
@@ -272,6 +272,7 @@ def test_scan_file_payload_path(monkeypatch):
         verdict: str | None = None,
         error: str | None = None,
         extra: dict | None = None,
+        request=None,
     ) -> None:
         persisted["job_id"] = job_id
         persisted["status"] = status
@@ -283,9 +284,9 @@ def test_scan_file_payload_path(monkeypatch):
     async def fake_upsert_job_index_record_async(**_kwargs):
         return True
 
-    monkeypatch.setattr(api, "_upsert_result", fake_upsert_result)
+    monkeypatch.setattr(file_scan_routes, "_upsert_result", fake_upsert_result)
     monkeypatch.setattr(
-        api, "upsert_job_index_record_async", fake_upsert_job_index_record_async
+        file_scan_routes, "upsert_job_index_record_async", fake_upsert_job_index_record_async
     )
 
     out = _run(
@@ -309,11 +310,13 @@ def test_scan_file_payload_path(monkeypatch):
 def test_admin_key_mint_and_revoke_lifecycle(monkeypatch):
     store: dict[str, dict] = {}
 
-    monkeypatch.setattr(api, "API_KEY_STORE_ENABLED", True)
-    monkeypatch.setattr(api, "RESULT_BACKEND", "redis")
-    monkeypatch.setattr(api, "redis_client", object())
-    monkeypatch.setattr(api, "table_client", None)
-    monkeypatch.setattr(api, "_mint_api_key_plaintext", lambda: "aca-fixed-test-key")
+    monkeypatch.setattr(api_settings, "API_KEY_STORE_ENABLED", True)
+    monkeypatch.setattr(api_settings, "RESULT_BACKEND", "redis")
+    monkeypatch.setattr(api.app.state, "redis_client", object())
+    monkeypatch.setattr(api.app.state, "table_client", None)
+    monkeypatch.setattr(
+        admin_routes, "_mint_api_key_plaintext", lambda: "aca-fixed-test-key"
+    )
 
     async def fake_get_api_key_record_async(
         *,
@@ -355,30 +358,34 @@ def test_admin_key_mint_and_revoke_lifecycle(monkeypatch):
         store[key_hash] = rec
         return True
 
-    monkeypatch.setattr(api, "get_api_key_record_async", fake_get_api_key_record_async)
+    monkeypatch.setattr(admin_routes, "get_api_key_record_async", fake_get_api_key_record_async)
     monkeypatch.setattr(
-        api, "upsert_api_key_record_async", fake_upsert_api_key_record_async
+        admin_routes, "upsert_api_key_record_async", fake_upsert_api_key_record_async
     )
-    monkeypatch.setattr(api, "revoke_api_key_async", fake_revoke_api_key_async)
+    monkeypatch.setattr(admin_routes, "revoke_api_key_async", fake_revoke_api_key_async)
 
     mint_req = api.ApiKeyMintRequest(
         label="team-a", read_rpm=120, write_rpm=60, ttl_days=7, is_admin=False
     )
-    minted = _run(api.admin_mint_api_key(mint_req, admin_api_key_hash="f" * 64))
+    minted = _run(
+        api.admin_mint_api_key(_request("/admin/api-keys", "POST"), mint_req, admin_api_key_hash="f" * 64)
+    )
     minted_hash = minted["key_hash"]
 
     assert minted["api_key"] == "aca-fixed-test-key"
     assert minted_hash in store
     assert store[minted_hash]["label"] == "team-a"
 
-    revoked = _run(api.admin_revoke_api_key(minted_hash, _="f" * 64))
+    revoked = _run(
+        api.admin_revoke_api_key(_request(f"/admin/api-keys/{minted_hash}/revoke", "POST"), minted_hash, _="f" * 64)
+    )
     assert revoked["revoked"] is True
 
 
 def test_otel_request_spans_extracts_inbound_trace_context(monkeypatch):
     extracted: dict = {}
     sentinel_ctx = object()
-    monkeypatch.setattr(api, "TELEMETRY_ACTIVE", True)
+    monkeypatch.setattr(api.app.state, "telemetry_active", True)
     monkeypatch.setattr(
         api,
         "extract_trace_context",
@@ -468,6 +475,7 @@ def test_otel_request_spans_extracts_inbound_trace_context(monkeypatch):
         "server": ("testserver", 80),
         "client": ("testclient", 50000),
         "root_path": "",
+        "app": api.app,
     }
     request = Request(scope)
 
@@ -484,13 +492,13 @@ def test_otel_request_spans_extracts_inbound_trace_context(monkeypatch):
 
 
 def test_healthz_includes_live_updates_backend(monkeypatch):
-    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
+    monkeypatch.setattr(api.app.state, "live_updates_backend", "redis_streams")
     out = _run(api.healthz())
     assert out["live_updates_backend"] == "redis_streams"
 
 
 def test_events_stream_returns_501_when_backend_not_redis_streams(monkeypatch):
-    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "none")
+    monkeypatch.setattr(api.app.state, "live_updates_backend", "none")
     with pytest.raises(HTTPException) as exc:
         _run(
             api.stream_job_updates(
@@ -504,8 +512,8 @@ def test_events_stream_returns_501_when_backend_not_redis_streams(monkeypatch):
 
 
 def test_events_stream_requires_api_key_even_if_auth_toggle_disabled(monkeypatch):
-    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
-    monkeypatch.setattr(api, "redis_client", object())
+    monkeypatch.setattr(api.app.state, "live_updates_backend", "redis_streams")
+    monkeypatch.setattr(api.app.state, "redis_client", object())
     with pytest.raises(HTTPException) as exc:
         _run(
             api.stream_job_updates(
@@ -519,8 +527,8 @@ def test_events_stream_requires_api_key_even_if_auth_toggle_disabled(monkeypatch
 
 
 def test_events_stream_returns_503_when_redis_not_initialized(monkeypatch):
-    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
-    monkeypatch.setattr(api, "redis_client", None)
+    monkeypatch.setattr(api.app.state, "live_updates_backend", "redis_streams")
+    monkeypatch.setattr(api.app.state, "redis_client", None)
     with pytest.raises(HTTPException) as exc:
         _run(
             api.stream_job_updates(
@@ -552,9 +560,9 @@ def test_events_stream_emits_ndjson_for_valid_redis_entries(monkeypatch):
             ]
         ]
     )
-    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
+    monkeypatch.setattr(api.app.state, "live_updates_backend", "redis_streams")
     monkeypatch.setattr(
-        api,
+        api_settings,
         "LIVE_UPDATES_REDIS_CFG",
         RedisStreamsConfig(
             stream_prefix="events:apikey:",
@@ -562,7 +570,7 @@ def test_events_stream_emits_ndjson_for_valid_redis_entries(monkeypatch):
             block_ms=30000,
         ),
     )
-    monkeypatch.setattr(api, "redis_client", fake_redis)
+    monkeypatch.setattr(api.app.state, "redis_client", fake_redis)
 
     response = _run(
         api.stream_job_updates(
@@ -620,9 +628,9 @@ def test_events_stream_applies_run_id_filter(monkeypatch):
             ]
         ]
     )
-    monkeypatch.setattr(api, "LIVE_UPDATES_BACKEND", "redis_streams")
+    monkeypatch.setattr(api.app.state, "live_updates_backend", "redis_streams")
     monkeypatch.setattr(
-        api,
+        api_settings,
         "LIVE_UPDATES_REDIS_CFG",
         RedisStreamsConfig(
             stream_prefix="events:apikey:",
@@ -630,7 +638,7 @@ def test_events_stream_applies_run_id_filter(monkeypatch):
             block_ms=30000,
         ),
     )
-    monkeypatch.setattr(api, "redis_client", fake_redis)
+    monkeypatch.setattr(api.app.state, "redis_client", fake_redis)
 
     response = _run(
         api.stream_job_updates(

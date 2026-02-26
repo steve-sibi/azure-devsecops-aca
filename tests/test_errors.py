@@ -3,16 +3,9 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
-
-# The application code is built/run from within ./app in Docker; add it to sys.path for tests.
-REPO_ROOT = Path(__file__).resolve().parents[1]
-APP_ROOT = REPO_ROOT / "app"
-if str(APP_ROOT) not in sys.path:
-    sys.path.insert(0, str(APP_ROOT))
 
 from common.errors import ErrorInfo, classify_exception  # noqa: E402
 from common.scan_messages import ScanMessageValidationError  # noqa: E402

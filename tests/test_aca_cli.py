@@ -19,9 +19,6 @@ SRC_DIR = REPO_ROOT / "src"
 
 
 def _load_cli_module():
-    src_str = str(SRC_DIR)
-    if src_str not in sys.path:
-        sys.path.insert(0, src_str)
     module = importlib.import_module("aca_cli.cli")
     return importlib.reload(module)
 
