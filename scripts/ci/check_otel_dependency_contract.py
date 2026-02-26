@@ -17,10 +17,12 @@ EXPECTED_PINS: dict[str, str] = {
 }
 
 LINE_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)\s*([<>=!~]{1,2})\s*([^\s;]+)")
+INCLUDE_RE = re.compile(r"^(?:-r|--requirement)\s+(.+)$")
 
 
 @dataclass(frozen=True)
 class ReqEntry:
+    path: Path
     name: str
     op: str
     version: str
@@ -28,13 +30,61 @@ class ReqEntry:
     raw: str
 
 
-def parse_target_entries(path: Path) -> tuple[dict[str, ReqEntry], list[str]]:
+def _merge_entry(
+    entries: dict[str, ReqEntry],
+    entry: ReqEntry,
+    *,
+    errors: list[str],
+) -> None:
+    if entry.name in entries:
+        prev = entries[entry.name]
+        errors.append(
+            f"{entry.path}:{entry.line_no} duplicate entry for '{entry.name}' "
+            f"(already defined at {prev.path}:{prev.line_no})."
+        )
+        return
+    entries[entry.name] = entry
+
+
+def _parse_entries_recursive(
+    path: Path,
+    *,
+    stack: tuple[Path, ...],
+) -> tuple[dict[str, ReqEntry], list[str]]:
     entries: dict[str, ReqEntry] = {}
     errors: list[str] = []
 
-    for idx, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+    try:
+        raw_lines = path.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return entries, [f"{path} requirements file not found."]
+
+    if path in stack:
+        cycle = " -> ".join(str(p) for p in (*stack, path))
+        return entries, [f"requirements include cycle detected: {cycle}"]
+
+    for idx, raw in enumerate(raw_lines, start=1):
         line = raw.split("#", 1)[0].strip()
-        if not line or line.startswith(("-", "--")):
+        if not line:
+            continue
+
+        include_match = INCLUDE_RE.match(line)
+        if include_match:
+            include_value = include_match.group(1).strip()
+            if not include_value:
+                errors.append(f"{path}:{idx} empty include path in '{raw.strip()}'.")
+                continue
+            include_path = (path.parent / include_value).resolve()
+            child_entries, child_errors = _parse_entries_recursive(
+                include_path,
+                stack=(*stack, path),
+            )
+            errors.extend(child_errors)
+            for child_entry in child_entries.values():
+                _merge_entry(entries, child_entry, errors=errors)
+            continue
+
+        if line.startswith(("-", "--")):
             continue
 
         match = LINE_RE.match(line)
@@ -46,6 +96,7 @@ def parse_target_entries(path: Path) -> tuple[dict[str, ReqEntry], list[str]]:
             continue
 
         entry = ReqEntry(
+            path=path,
             name=name,
             op=match.group(2),
             version=match.group(3),
@@ -53,15 +104,13 @@ def parse_target_entries(path: Path) -> tuple[dict[str, ReqEntry], list[str]]:
             raw=line,
         )
 
-        if name in entries:
-            prev = entries[name]
-            errors.append(
-                f"{path}:{idx} duplicate entry for '{name}' "
-                f"(already defined at line {prev.line_no})."
-            )
-            continue
+        _merge_entry(entries, entry, errors=errors)
 
-        entries[name] = entry
+    return entries, errors
+
+
+def parse_target_entries(path: Path) -> tuple[dict[str, ReqEntry], list[str]]:
+    entries, errors = _parse_entries_recursive(path.resolve(), stack=())
 
     for name, expected in EXPECTED_PINS.items():
         if name not in entries:
@@ -73,14 +122,14 @@ def parse_target_entries(path: Path) -> tuple[dict[str, ReqEntry], list[str]]:
         entry = entries[name]
         if entry.op != "==":
             errors.append(
-                f"{path}:{entry.line_no} '{name}' must use exact pin '=={expected}', "
+                f"{entry.path}:{entry.line_no} '{name}' must use exact pin '=={expected}', "
                 f"found '{entry.raw}'."
             )
             continue
 
         if entry.version != expected:
             errors.append(
-                f"{path}:{entry.line_no} '{name}' must be '{expected}', "
+                f"{entry.path}:{entry.line_no} '{name}' must be '{expected}', "
                 f"found '{entry.version}'."
             )
 
