@@ -7,10 +7,10 @@ azure-messaging-webpubsubservice>=1.3.0,<2.0.0
 # OpenTelemetry exporters (Azure Monitor + OTLP HTTP)
 # Compatibility lock: azure-monitor-opentelemetry-exporter 1.0.0b45 depends on
 # LogData in opentelemetry.sdk._logs, which is not present in 1.39+.
-opentelemetry-api==1.38.0
-opentelemetry-sdk==1.38.0
-opentelemetry-exporter-otlp-proto-http==1.38.0
-azure-monitor-opentelemetry-exporter==1.0.0b45
+opentelemetry-api==1.39.1
+opentelemetry-sdk==1.39.1
+opentelemetry-exporter-otlp-proto-http==1.39.1
+azure-monitor-opentelemetry-exporter==1.0.0b48
 
 # Table storage for scan results
 azure-data-tables>=12.7,<13.0.0
