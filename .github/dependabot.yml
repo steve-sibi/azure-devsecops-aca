@@ -19,17 +19,32 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: "pip"
-    directory: "/app/api"
+    directory: "/app"
     schedule:
       interval: "weekly"
       day: "monday"
-      time: "06:10"
+      time: "06:05"
       timezone: "UTC"
     groups:
       opentelemetry:
         patterns:
           - "opentelemetry-*"
           - "azure-monitor-opentelemetry-exporter"
+      azure-sdk:
+        patterns:
+          - "azure-*"
+        exclude-patterns:
+          - "azure-monitor-opentelemetry-exporter"
+    allow:
+      - dependency-name: "azure-servicebus"
+      - dependency-name: "azure-messaging-webpubsubservice"
+      - dependency-name: "opentelemetry-api"
+      - dependency-name: "opentelemetry-sdk"
+      - dependency-name: "opentelemetry-exporter-otlp-proto-http"
+      - dependency-name: "azure-monitor-opentelemetry-exporter"
+      - dependency-name: "azure-data-tables"
+      - dependency-name: "azure-storage-blob"
+      - dependency-name: "redis"
     ignore:
       - dependency-name: "opentelemetry-api"
         versions:
@@ -51,30 +66,78 @@ updates:
     open-pull-requests-limit: 5
 
   - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:08"
+      timezone: "UTC"
+    groups:
+      cli-packaging:
+        patterns:
+          - "*"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(pip)"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "pip"
+    directory: "/app/api"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:12"
+      timezone: "UTC"
+    groups:
+      api-framework:
+        patterns:
+          - "fastapi"
+          - "starlette"
+          - "uvicorn"
+          - "python-multipart"
+      api-runtime:
+        patterns:
+          - "aiohttp"
+    allow:
+      - dependency-name: "fastapi"
+      - dependency-name: "starlette"
+      - dependency-name: "uvicorn"
+      - dependency-name: "python-multipart"
+      - dependency-name: "aiohttp"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(pip)"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "pip"
     directory: "/app/worker"
     schedule:
       interval: "weekly"
       day: "monday"
-      time: "06:20"
+      time: "06:18"
       timezone: "UTC"
     groups:
-      opentelemetry:
+      worker-runtime:
         patterns:
-          - "opentelemetry-*"
-          - "azure-monitor-opentelemetry-exporter"
-    ignore:
-      - dependency-name: "opentelemetry-api"
-        versions:
-          - ">=1.38.1"
-      - dependency-name: "opentelemetry-sdk"
-        versions:
-          - ">=1.38.1"
-      - dependency-name: "opentelemetry-exporter-otlp-proto-http"
-        versions:
-          - ">=1.38.1"
-      - dependency-name: "azure-monitor-opentelemetry-exporter"
-        versions:
-          - ">=1.0.0b46"
+          - "requests"
+          - "beautifulsoup4"
+          - "adblockparser"
+          - "tldextract"
+          - "yara-python"
+      worker-browser:
+        patterns:
+          - "playwright"
+    allow:
+      - dependency-name: "requests"
+      - dependency-name: "beautifulsoup4"
+      - dependency-name: "adblockparser"
+      - dependency-name: "tldextract"
+      - dependency-name: "yara-python"
+      - dependency-name: "playwright"
     labels:
       - "dependencies"
       - "python"
@@ -124,6 +187,8 @@ updates:
       prefix: "deps(docker)"
     open-pull-requests-limit: 5
 
+  # Monitors pinned external image tags in docker-compose.yml (e.g., redis/jaeger).
+  # This is intentionally for Compose image references, not a root Dockerfile.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
