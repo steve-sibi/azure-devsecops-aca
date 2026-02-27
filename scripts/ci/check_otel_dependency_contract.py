@@ -9,12 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-EXPECTED_PINS: dict[str, str] = {
-    "opentelemetry-api": "1.38.0",
-    "opentelemetry-sdk": "1.38.0",
-    "opentelemetry-exporter-otlp-proto-http": "1.38.0",
-    "azure-monitor-opentelemetry-exporter": "1.0.0b45",
-}
+REQUIRED_PACKAGES: frozenset[str] = frozenset({
+    "opentelemetry-api",
+    "opentelemetry-sdk",
+    "opentelemetry-exporter-otlp-proto-http",
+    "azure-monitor-opentelemetry-exporter",
+})
 
 LINE_RE = re.compile(r"^([A-Za-z0-9][A-Za-z0-9_.-]*)\s*([<>=!~]{1,2})\s*([^\s;]+)")
 INCLUDE_RE = re.compile(r"^(?:-r|--requirement)\s+(.+)$")
@@ -92,7 +92,7 @@ def _parse_entries_recursive(
             continue
 
         name = match.group(1).lower()
-        if name not in EXPECTED_PINS:
+        if name not in REQUIRED_PACKAGES:
             continue
 
         entry = ReqEntry(
@@ -109,10 +109,13 @@ def _parse_entries_recursive(
     return entries, errors
 
 
-def parse_target_entries(path: Path) -> tuple[dict[str, ReqEntry], list[str]]:
+def parse_target_entries(
+    path: Path,
+    expected_pins: dict[str, str],
+) -> tuple[dict[str, ReqEntry], list[str]]:
     entries, errors = _parse_entries_recursive(path.resolve(), stack=())
 
-    for name, expected in EXPECTED_PINS.items():
+    for name, expected in expected_pins.items():
         if name not in entries:
             errors.append(
                 f"{path} missing required pin '{name}=={expected}'."
@@ -136,13 +139,40 @@ def parse_target_entries(path: Path) -> tuple[dict[str, ReqEntry], list[str]]:
     return entries, errors
 
 
+def _read_canonical_pins(path: Path) -> tuple[dict[str, str], list[str]]:
+    """Read exact OTel pins from the canonical requirements-common file."""
+    entries, errors = _parse_entries_recursive(path.resolve(), stack=())
+    pins: dict[str, str] = {}
+    for name in REQUIRED_PACKAGES:
+        if name not in entries:
+            errors.append(f"{path} missing required pin for '{name}'.")
+            continue
+        entry = entries[name]
+        if entry.op != "==":
+            errors.append(
+                f"{entry.path}:{entry.line_no} '{name}' must use exact pin (==), "
+                f"found '{entry.raw}'."
+            )
+            continue
+        pins[name] = entry.version
+    return pins, errors
+
+
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[2]
+    common_requirements = repo_root / "app" / "requirements-common.txt"
     api_requirements = repo_root / "app" / "api" / "requirements.txt"
     worker_requirements = repo_root / "app" / "worker" / "requirements.txt"
 
-    api_entries, api_errors = parse_target_entries(api_requirements)
-    worker_entries, worker_errors = parse_target_entries(worker_requirements)
+    expected_pins, canonical_errors = _read_canonical_pins(common_requirements)
+    if canonical_errors:
+        print("[otel-contract] FAIL")
+        for err in canonical_errors:
+            print(f"- {err}")
+        return 1
+
+    api_entries, api_errors = parse_target_entries(api_requirements, expected_pins)
+    worker_entries, worker_errors = parse_target_entries(worker_requirements, expected_pins)
 
     errors = [*api_errors, *worker_errors]
     if not errors:
@@ -163,8 +193,8 @@ def main() -> int:
         return 1
 
     print("[otel-contract] PASS")
-    for name in sorted(EXPECTED_PINS):
-        print(f"- {name}=={EXPECTED_PINS[name]}")
+    for name in sorted(expected_pins):
+        print(f"- {name}=={expected_pins[name]}")
     return 0
 
 
