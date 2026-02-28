@@ -258,11 +258,37 @@ Local Terraform workflow moved to [`docs/terraform-local.md`](docs/terraform-loc
 
 Persistent costs may come from Service Bus, monitoring resources, and stored images/artifacts.
 
-Cleanup options:
+### Azure cleanup
 
 1. Scale workloads down where appropriate.
 2. Run `Destroy` workflow (preferred for full teardown).
 3. Delete the resource group as last resort.
+
+### Local Docker cleanup
+
+Remove all project containers, volumes, networks, and images (including the observability profile):
+
+```bash
+scripts/docker_cleanup.sh
+```
+
+Keep built images for faster restarts:
+
+```bash
+scripts/docker_cleanup.sh --keep-images
+```
+
+Also prune the Docker build cache:
+
+```bash
+PRUNE_BUILD_CACHE=1 scripts/docker_cleanup.sh
+```
+
+Remove dangling project-scoped volumes left by previous runs (does not touch other projects):
+
+```bash
+scripts/docker_cleanup.sh --prune-volumes
+```
 
 ## 12) Security notes
 

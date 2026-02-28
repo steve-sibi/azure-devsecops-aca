@@ -68,6 +68,14 @@ def main() -> int:
         errors.append(
             f"{readme}: references `PRUNE_BUILD_CACHE`, but {docker_cleanup} does not support it"
         )
+    if "--keep-images" in readme_text and "--keep-images" not in docker_cleanup_text:
+        errors.append(
+            f"{readme}: references `--keep-images`, but {docker_cleanup} does not support it"
+        )
+    if "--profile observability" not in docker_cleanup_text:
+        errors.append(
+            f"{docker_cleanup}: missing `--profile observability` flag (jaeger cleanup)"
+        )
 
     if errors:
         print("[docs-check] FAIL")

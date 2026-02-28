@@ -85,6 +85,24 @@ Note: CI now triggers for docs-only and markdown-only changes as well, so docs P
 - Performance optimizations (with benchmarks)
 - New scan analysis features (with tests)
 
+## Local Docker Cleanup
+
+A helper script removes all project Docker resources (containers, volumes, networks, images):
+
+```bash
+# Full cleanup (removes images too — next build will be from scratch)
+scripts/docker_cleanup.sh
+
+# Keep images for faster restarts
+scripts/docker_cleanup.sh --keep-images
+
+# Also prune Docker build cache
+PRUNE_BUILD_CACHE=1 scripts/docker_cleanup.sh
+
+# Remove dangling project-scoped volumes (safe — won't touch other projects)
+scripts/docker_cleanup.sh --prune-volumes
+```
+
 ## Reporting Issues
 
 - **Bugs**: Open an issue with reproduction steps
