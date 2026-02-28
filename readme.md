@@ -248,7 +248,7 @@ Observability docs moved to:
 
 - [`docs/observability/README.md`](docs/observability/README.md)
 - [`docs/observability/runbook.md`](docs/observability/runbook.md)
-- [`docs/azure-logging-guide.md`](docs/azure-logging-guide.md)
+- [`docs/structured-logging-and-tracing.md`](docs/structured-logging-and-tracing.md)
 
 ## 10) Working with Terraform locally
 
@@ -304,16 +304,27 @@ Security policy and reporting:
 
 ## 13) How the app code works (quick tour)
 
-- `app/api/main.py`
-  - validates request + auth
-  - enqueues scan jobs
-  - serves dashboard/API responses
-- `app/worker/fetcher.py`
-  - fetch stage with SSRF-aware controls
-  - artifact handoff to scan queue
-- `app/worker/worker.py`
-  - analysis stage + result persistence
-  - optional screenshot capture and publish
+### Two-stage pipeline
+
+The scan pipeline uses a two-stage queue design with independent scaling:
+
+1. **Fetcher** (`WORKER_MODE=fetcher`) — downloads the target URL with SSRF-aware controls, writes the artifact to a shared volume, and enqueues a scan message.
+2. **Worker/Analyzer** (`WORKER_MODE=analyzer`) — reads the artifact, runs web analysis (HTML parsing, YARA rule matching, TLD/WHOIS checks), optionally captures a screenshot, and persists results.
+
+Both stages share the same Docker image (`app/worker/Dockerfile.sidecar`), selected at runtime by the `WORKER_MODE` environment variable. In Docker Compose they run as separate services with a shared `artifacts` volume. In Azure Container Apps, they are separate container apps connected via an Azure Files share.
+
+### ClamAV integration
+
+ClamAV runs as a standalone container in Docker Compose and as a sidecar container in the API container app on Azure (see `infra/apps.tf`). The API's `/file/scan` endpoint streams uploaded files to ClamAV over a TCP socket.
+
+### Key source files
+
+- `app/api/main.py` — validates requests, auth, enqueues scan jobs, serves dashboard
+- `app/worker/fetcher.py` — fetch stage with SSRF-aware controls and artifact handoff
+- `app/worker/worker.py` — analysis stage, result persistence, optional screenshot capture
+- `app/common/web_analysis.py` — HTML analysis, YARA rule matching, resource extraction
+- `app/common/telemetry.py` — OpenTelemetry setup and trace helpers
+- `app/common/live_updates.py` — realtime backend resolution and Redis Streams publisher
 
 ## 14) Extending this project (future work)
 
