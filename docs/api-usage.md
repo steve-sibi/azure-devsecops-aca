@@ -34,6 +34,10 @@ This page is the API/operator reference for submitting scans, checking status, a
 - `POST /pubsub/negotiate-user` (requires API key; dashboard path)
 - `POST /pubsub/negotiate` (requires API key; run-scoped/testing)
 
+### Realtime streaming endpoints
+
+- `GET /events/stream` (requires API key; returns NDJSON when `LIVE_UPDATES_BACKEND` resolves to `redis_streams`). Accepts optional `run_id` query parameter to filter events. Returns `501` when the active backend is not `redis_streams`.
+
 ### File scan endpoint
 
 - `POST /file/scan` (requires API key; multipart file or payload)

@@ -46,6 +46,24 @@ This is a demo project, but it intentionally implements a few “real-world” c
 - CI runs Checkov (IaC) and Trivy (container images) and uploads SARIF to GitHub Security.
 - Dockerfiles run as non-root where possible.
 
+## YARA-based web content analysis
+
+The web analysis pipeline applies YARA rules to inline script content extracted from fetched HTML pages. This provides lightweight heuristic detection without requiring a full malware sandbox.
+
+### Bundled rules (`app/common/web_yara_rules.yar`)
+
+| Rule | Severity | Detects |
+|------|----------|--------|
+| `Web_Suspicious_JS_MEDIUM` | Medium | ActiveX, WScript, PowerShell references, obfuscation patterns (eval + fromCharCode combos) |
+| `Web_Fingerprinting_INFO` | Info | FingerprintJS, AudioContext/WebGL/Canvas fingerprinting APIs |
+| `Web_Eval_Usage_INFO` | Info | `eval()` and `new Function()` usage |
+| `Web_InnerHTML_Usage_INFO` | Info | `innerHTML`/`outerHTML` usage |
+| `Web_Tracking_Inline_INFO` | Info | Inline tracking calls (`gtag`, `ga`, `fbq`, `dataLayer`) |
+
+### Customization
+
+Set `WEB_YARA_RULES_PATH` to point to a custom `.yar` file to replace the bundled rules. The rules file is compiled once at startup and cached.
+
 ## Non-goals (v1)
 
 - Private networking / Private Link / WAF

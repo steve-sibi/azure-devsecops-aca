@@ -19,7 +19,7 @@ def main() -> int:
     if not readme.exists():
         readme = repo_root / "README.md"
     runbook = repo_root / "docs" / "observability" / "runbook.md"
-    logging_guide = repo_root / "docs" / "azure-logging-guide.md"
+    logging_guide = repo_root / "docs" / "structured-logging-and-tracing.md"
     deploy_summary = repo_root / ".github" / "scripts" / "deploy_summary.py"
     obs_verify = repo_root / "scripts" / "gha" / "verify_observability.sh"
     docker_cleanup = repo_root / "scripts" / "docker_cleanup.sh"
