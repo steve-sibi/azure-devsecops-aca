@@ -19,6 +19,7 @@ jobs:
       api_changed: ${{ steps.filter.outputs.api }}
       worker_changed: ${{ steps.filter.outputs.worker }}
       clamav_changed: ${{ steps.filter.outputs.clamav }}
+      ci_changed: ${{ steps.filter.outputs.ci }}
       infra_changed: ${{ steps.filter.outputs.infra }}
       python_changed: ${{ steps.filter.outputs.python }}
       run_pr_scans: ${{ steps.flags.outputs.run_pr_scans }}
@@ -34,6 +35,9 @@ jobs:
         uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
         with:
           filters: |
+            ci:
+              - ".github/workflows/**"
+              - ".github/actions/**"
             api:
               - "app/api/**"
               - "app/common/**"
@@ -115,6 +119,12 @@ jobs:
           PY
 
   actionlint:
+    needs: [changes]
+    if: >-
+      ${{ needs.changes.outputs.ci_changed == 'true'
+        || needs.changes.outputs.app_changed == 'true'
+        || needs.changes.outputs.infra_changed == 'true'
+        || needs.changes.outputs.python_changed == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -416,6 +426,7 @@ jobs:
         shell: bash
         run: |
           if [ "${{ steps.ruff.outcome }}" != "success" ] || \
+             [ "${{ steps.docs_check.outcome }}" != "success" ] || \
              [ "${{ steps.status_constants.outcome }}" != "success" ] || \
              [ "${{ steps.otel_contract.outcome }}" != "success" ] || \
              [ "${{ steps.py_compile.outcome }}" != "success" ] || \
@@ -724,11 +735,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
+      - name: Week number for cache rotation
+        id: week
+        shell: bash
+        run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Trivy DB
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
         with:
           path: ~/.cache/trivy
-          key: trivy-db-ubuntu
+          key: trivy-db-ubuntu-${{ steps.week.outputs.week }}
           restore-keys: |
             trivy-db-ubuntu-
 
@@ -855,11 +871,16 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
+      - name: Week number for cache rotation
+        id: week
+        shell: bash
+        run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Trivy DB
         uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
         with:
           path: ~/.cache/trivy
-          key: trivy-db-ubuntu
+          key: trivy-db-ubuntu-${{ steps.week.outputs.week }}
           restore-keys: |
             trivy-db-ubuntu-
 
