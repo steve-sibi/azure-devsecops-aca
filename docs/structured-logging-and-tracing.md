@@ -1,4 +1,4 @@
-# Azure Structured Logging and Tracing Guide
+# Structured Logging and Tracing Guide
 
 ## Overview
 
@@ -9,6 +9,8 @@ This project emits structured JSON logs for all services (`api`, `fetcher`, `wor
   - Azure: OpenTelemetry -> Azure Monitor exporter -> Application Insights
   - Local/dev: OpenTelemetry -> OTLP HTTP exporter -> Jaeger (or another OTLP backend)
 - Correlation: `correlation_id` (app-level) + `trace_id`/`span_id` (trace-level)
+
+> **Local dev note:** In Docker Compose, `OTEL_ENABLED` defaults to `false`. Set it to `true` to export traces to Jaeger. See [`docs/observability/README.md`](observability/README.md) for the quick-start command.
 
 ## Log Format
 

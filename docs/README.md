@@ -17,7 +17,7 @@ This directory contains deep-dive documentation that complements the root [`read
 
 - [`docs/observability/README.md`](observability/README.md) - observability asset index (KQL + runbook)
 - [`docs/observability/runbook.md`](observability/runbook.md) - incident triage playbook
-- [`docs/azure-logging-guide.md`](azure-logging-guide.md) - structured logging and tracing model
+- [`docs/structured-logging-and-tracing.md`](structured-logging-and-tracing.md) - structured logging and tracing model
 
 ## Security
 
