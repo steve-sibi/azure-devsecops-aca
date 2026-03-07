@@ -41,9 +41,11 @@ jobs:
             api:
               - "app/api/**"
               - "app/common/**"
+              - "app/requirements-common.txt"
             worker:
               - "app/worker/**"
               - "app/common/**"
+              - "app/requirements-common.txt"
             clamav:
               - "app/clamav/**"
             app:

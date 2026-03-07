@@ -22,10 +22,10 @@ services:
     build:
       context: ./app
       dockerfile: clamav/Dockerfile
-    command:
-      - sh
-      - -c
-      - freshclam --config-file=/etc/clamav/freshclam.conf && exec /usr/sbin/clamd --config-file=/etc/clamav/clamd.compose.conf
+    environment:
+      CLAMD_CONFIG_FILE: /etc/clamav/clamd.compose.conf
+    volumes:
+      - clamav-db:/var/lib/clamav
     healthcheck:
       test: ["CMD", "/usr/local/bin/clamav-healthcheck"]
       interval: 10s
@@ -232,4 +232,5 @@ services:
 
 volumes:
   artifacts:
+  clamav-db:
   redis-data:
