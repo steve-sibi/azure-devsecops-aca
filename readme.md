@@ -19,6 +19,14 @@ End-to-end, cloud-native URL and file scanning pipeline on Azure Container Apps,
 - DevSecOps workflow: CI quality/security gates, reusable app deploy flow, terraform-managed infra
 - Runtime secrets posture: Key Vault secret references resolved with managed identity
 
+## Start here
+
+- Want a fast local evaluation? Run the quick demo in [0) Quick demo](#0-quick-demo-local-2-minutes), then use the local CLI flow in [7) Running it](#7-running-it).
+- Want to deploy to Azure? Review [3) Prerequisites](#3-prerequisites), then use [`docs/cicd-workflows.md`](docs/cicd-workflows.md) and the Azure quickstart in [7) Running it](#7-running-it).
+- Want to change code? Use [`CONTRIBUTING.md`](CONTRIBUTING.md) for local checks and [`docs/terraform-local.md`](docs/terraform-local.md) for infra inspection.
+- Want to operate or troubleshoot? Start with [`docs/observability/README.md`](docs/observability/README.md) and [`docs/observability/runbook.md`](docs/observability/runbook.md).
+- Want to clean up local or cloud resources? Jump to [11) Costs & clean-up](#11-costs--clean-up).
+
 ## Contents
 
 - [0) Quick demo](#0-quick-demo-local-2-minutes)
@@ -50,6 +58,8 @@ docker compose up --build
 In another terminal:
 
 ```bash
+./scripts/aca doctor
+./scripts/aca config show
 ./scripts/aca health
 ./scripts/aca scan-url https://example.com --follow watch
 # or guided mode:
@@ -180,6 +190,8 @@ CLI helper examples:
 ./scripts/aca jobs --limit 10
 ./scripts/aca scan-url https://example.com --follow watch
 ./scripts/aca scan-file ./readme.md --follow watch
+./scripts/aca scan-payload "hello world" --follow poll
+./scripts/aca watch <job_id>
 ./scripts/aca history --format table --limit 10
 ./scripts/aca --color never jobs --limit 10
 ```
@@ -190,6 +202,15 @@ First-run CLI flow (recommended):
 ./scripts/aca doctor
 ./scripts/aca config show
 ./scripts/aca scan-url https://example.com --follow watch
+```
+
+Common follow-up commands:
+
+```bash
+./scripts/aca status <job_id>
+./scripts/aca wait <job_id>
+./scripts/aca watch <job_id>
+./scripts/aca clear-history --yes
 ```
 
 Optional: install the CLI locally (instead of using `./scripts/aca` from the repo):
@@ -238,6 +259,14 @@ eval "$(./scripts/aca env)"    # optional
 ./scripts/aca az scan-url https://example.com --wait
 ```
 
+### Contributor workflow
+
+If you plan to modify the repo:
+
+1. Start locally with the Docker Compose flow above.
+2. Use [`CONTRIBUTING.md`](CONTRIBUTING.md) for local checks, branching, and PR expectations.
+3. Use [`docs/terraform-local.md`](docs/terraform-local.md) for Terraform init/plan/state troubleshooting.
+
 ## 8) Using the API
 
 Endpoint reference and examples moved to [`docs/api-usage.md`](docs/api-usage.md).
@@ -249,6 +278,11 @@ Observability docs moved to:
 - [`docs/observability/README.md`](docs/observability/README.md)
 - [`docs/observability/runbook.md`](docs/observability/runbook.md)
 - [`docs/structured-logging-and-tracing.md`](docs/structured-logging-and-tracing.md)
+
+Recommended path:
+
+- Use [`docs/observability/README.md`](docs/observability/README.md) for the local Jaeger flow and Azure KQL query pack.
+- Use [`docs/observability/runbook.md`](docs/observability/runbook.md) when a scan is stuck, error rates spike, or queue backlog grows.
 
 ## 10) Working with Terraform locally
 
