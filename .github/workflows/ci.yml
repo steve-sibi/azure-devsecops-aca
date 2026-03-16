@@ -32,7 +32,7 @@ jobs:
 
       - name: Detect app changes
         id: filter
-        uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d # v4.0.1
         with:
           filters: |
             ci:
@@ -565,7 +565,7 @@ jobs:
           ${{ always()
             && steps.checkov_sarif.outputs.found == 'true'
             && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
-        uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4
+        uses: github/codeql-action/upload-sarif@0d579ffd059c29b07949a3cce3983f0780820c98 # v4
         with:
           sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
           category: checkov-terraform
@@ -735,7 +735,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Week number for cache rotation
         id: week
@@ -871,7 +871,7 @@ jobs:
           az acr login --name "${PREFIX}acr"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Week number for cache rotation
         id: week
