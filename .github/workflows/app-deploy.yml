@@ -135,7 +135,7 @@ jobs:
 
       - name: Azure Login (OIDC)
         if: ${{ env.BUILD_IMAGES == 'true' }}
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -159,11 +159,11 @@ jobs:
 
       - name: Set up Docker Buildx
         if: ${{ env.BUILD_IMAGES == 'true' }}
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Build & push API
         if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_API == 'true' }}
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: ./app
           file: app/api/Dockerfile
@@ -175,7 +175,7 @@ jobs:
 
       - name: Build & push Worker
         if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_WORKER == 'true' }}
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: ./app
           file: app/worker/Dockerfile.sidecar
@@ -187,7 +187,7 @@ jobs:
 
       - name: Build & push ClamAV
         if: ${{ env.BUILD_IMAGES == 'true' && env.DEPLOY_CLAMAV == 'true' }}
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: ./app
           file: app/clamav/Dockerfile
@@ -271,7 +271,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Azure Login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
