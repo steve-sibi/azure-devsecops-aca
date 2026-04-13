@@ -75,7 +75,7 @@ jobs:
           fi
 
       - name: Azure Login (OIDC)
-        uses: azure/login@1384c340ab2dda50fed2bee3041d1d87018aa5e8 # v2
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -84,7 +84,7 @@ jobs:
       - uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
 
       - name: Cache Terraform plugins
-        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
         with:
           path: ${{ runner.temp }}/.terraform-plugin-cache
           key: terraform-${{ runner.os }}-${{ hashFiles('infra/.terraform.lock.hcl') }}
