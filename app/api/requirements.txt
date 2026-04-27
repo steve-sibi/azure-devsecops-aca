@@ -8,4 +8,4 @@ python-multipart>=0.0.9
 -r ../requirements-common.txt
 
 # Required for azure-* async clients (azure.data.tables.aio -> AioHttpTransport)
-aiohttp>=3.13
+aiohttp>=3.13.5
