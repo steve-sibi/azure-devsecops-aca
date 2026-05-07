@@ -20,4 +20,4 @@ azure-data-tables>=12.7,<13.0.0
 azure-storage-blob>=12.28,<13.0.0
 
 # Local dev backends (queue/results)
-redis>=7.1
+redis>=7.4.0
