@@ -200,7 +200,7 @@ jobs:
         if: ${{ steps.decide.outputs.should_check == 'true' }}
         id: login
         continue-on-error: true
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -286,7 +286,7 @@ jobs:
         with: { python-version: "3.11" }
 
       - name: Cache pip
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.cache/pip
           key: pip-ubuntu-python-quality-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
@@ -461,7 +461,7 @@ jobs:
 
       - name: Cache Terraform plugins
         if: ${{ needs.changes.outputs.infra_changed == 'true' }}
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ${{ env.TF_PLUGIN_CACHE_DIR }}
           key: terraform-ubuntu-${{ hashFiles('infra/.terraform.lock.hcl') }}
@@ -473,7 +473,7 @@ jobs:
           ${{ needs.changes.outputs.infra_changed == 'true'
             && (github.event_name == 'push' && github.ref == 'refs/heads/main'
               || needs.changes.outputs.run_pr_scans == 'true') }}
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.cache/pip
           key: pip-ubuntu-checkov-${{ hashFiles('checkov.yml') }}
@@ -565,7 +565,7 @@ jobs:
           ${{ always()
             && steps.checkov_sarif.outputs.found == 'true'
             && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
-        uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13 # v4
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
         with:
           sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
           category: checkov-terraform
@@ -743,7 +743,7 @@ jobs:
         run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Trivy DB
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.cache/trivy
           key: trivy-db-ubuntu-${{ steps.week.outputs.week }}
@@ -850,7 +850,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Azure Login (OIDC)
-        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2
+        uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
@@ -879,7 +879,7 @@ jobs:
         run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Trivy DB
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
         with:
           path: ~/.cache/trivy
           key: trivy-db-ubuntu-${{ steps.week.outputs.week }}
