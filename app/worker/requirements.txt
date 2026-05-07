@@ -2,19 +2,19 @@
 -r ../requirements-common.txt
 
 # HTTP client for web fetching
-requests>=2.32
+requests>=2.33.1
 
 # HTML parsing
-beautifulsoup4>=4.14
+beautifulsoup4>=4.14.3
 
 # Ad/tracker detection
 adblockparser>=0.7
 
 # Domain extraction
-tldextract>=5.3
+tldextract>=5.3.1
 
 # YARA pattern matching
-yara-python>=4.5
+yara-python>=4.5.4
 
 # Browser automation for screenshots
 playwright>=1.57
