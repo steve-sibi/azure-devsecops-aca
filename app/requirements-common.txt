@@ -17,7 +17,7 @@ azure-monitor-opentelemetry-exporter==1.0.0b51
 azure-data-tables>=12.7,<13.0.0
 
 # Blob storage for screenshots
-azure-storage-blob>=12.28,<13.0.0
+azure-storage-blob>=12.29.0,<13.0.0
 
 # Local dev backends (queue/results)
 redis>=7.4.0
