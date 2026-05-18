@@ -2,7 +2,7 @@
 -r ../requirements-common.txt
 
 # HTTP client for web fetching
-requests>=2.33.1
+requests>=2.34.2
 
 # HTML parsing
 beautifulsoup4>=4.14.3
