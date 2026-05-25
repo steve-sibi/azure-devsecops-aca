@@ -457,7 +457,7 @@ jobs:
               || needs.changes.outputs.run_pr_scans == 'true') }}
         with: { python-version: "3.11" }
 
-      - uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
 
       - name: Cache Terraform plugins
         if: ${{ needs.changes.outputs.infra_changed == 'true' }}
@@ -565,7 +565,7 @@ jobs:
           ${{ always()
             && steps.checkov_sarif.outputs.found == 'true'
             && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        uses: github/codeql-action/upload-sarif@7211b7c8077ea37d8641b6271f6a365a22a5fbfa # v4
         with:
           sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
           category: checkov-terraform
@@ -735,7 +735,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Week number for cache rotation
         id: week
@@ -871,7 +871,7 @@ jobs:
           az acr login --name "${PREFIX}acr"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Week number for cache rotation
         id: week
