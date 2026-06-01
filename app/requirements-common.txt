@@ -6,18 +6,18 @@ azure-messaging-webpubsubservice>=1.3.0,<2.0.0
 
 # OpenTelemetry exporters (Azure Monitor + OTLP HTTP)
 # Pinned for compatibility; versions must stay in sync across API and Worker.
-# azure-monitor-opentelemetry-exporter==1.0.0b51 currently resolves against
+# azure-monitor-opentelemetry-exporter==1.0.0b52 currently resolves against
 # opentelemetry-api/sdk/exporters 1.39.0, not 1.39.1.
-opentelemetry-api==1.41.1
-opentelemetry-sdk==1.41.1
-opentelemetry-exporter-otlp-proto-http==1.41.1
-azure-monitor-opentelemetry-exporter==1.0.0b51
+opentelemetry-api==1.42.1
+opentelemetry-sdk==1.42.1
+opentelemetry-exporter-otlp-proto-http==1.42.1
+azure-monitor-opentelemetry-exporter==1.0.0b52
 
 # Table storage for scan results
 azure-data-tables>=12.7,<13.0.0
 
 # Blob storage for screenshots
-azure-storage-blob>=12.28,<13.0.0
+azure-storage-blob>=12.29.0,<13.0.0
 
 # Local dev backends (queue/results)
-redis>=7.4.0
+redis>=8.0.0
