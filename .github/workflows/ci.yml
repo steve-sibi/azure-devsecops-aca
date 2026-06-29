@@ -26,7 +26,7 @@ jobs:
       scan_matrix: ${{ steps.scan_matrix.outputs.scan_matrix }}
       scan_matrix_count: ${{ steps.scan_matrix.outputs.scan_matrix_count }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
 
@@ -132,7 +132,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Install shellcheck + actionlint
         shell: bash
@@ -280,13 +280,13 @@ jobs:
     env:
       LOG_DIR: .ci-logs
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with: { python-version: "3.11" }
 
       - name: Cache pip
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ~/.cache/pip
           key: pip-ubuntu-python-quality-${{ hashFiles('**/requirements*.txt', '**/pyproject.toml') }}
@@ -448,20 +448,20 @@ jobs:
       LOG_DIR: .ci-logs
       TF_PLUGIN_CACHE_DIR: ~/.terraform.d/plugin-cache
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
-      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         if: >-
           ${{ needs.changes.outputs.infra_changed == 'true'
             && (github.event_name == 'push' && github.ref == 'refs/heads/main'
               || needs.changes.outputs.run_pr_scans == 'true') }}
         with: { python-version: "3.11" }
 
-      - uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
 
       - name: Cache Terraform plugins
         if: ${{ needs.changes.outputs.infra_changed == 'true' }}
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ${{ env.TF_PLUGIN_CACHE_DIR }}
           key: terraform-ubuntu-${{ hashFiles('infra/.terraform.lock.hcl') }}
@@ -473,7 +473,7 @@ jobs:
           ${{ needs.changes.outputs.infra_changed == 'true'
             && (github.event_name == 'push' && github.ref == 'refs/heads/main'
               || needs.changes.outputs.run_pr_scans == 'true') }}
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ~/.cache/pip
           key: pip-ubuntu-checkov-${{ hashFiles('checkov.yml') }}
@@ -565,7 +565,7 @@ jobs:
           ${{ always()
             && steps.checkov_sarif.outputs.found == 'true'
             && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.fork == false) }}
-        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4
         with:
           sarif_file: ${{ steps.checkov_sarif.outputs.sarif_file }}
           category: checkov-terraform
@@ -732,10 +732,10 @@ jobs:
     env:
       LOG_DIR: .ci-logs
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Week number for cache rotation
         id: week
@@ -743,7 +743,7 @@ jobs:
         run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Trivy DB
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ~/.cache/trivy
           key: trivy-db-ubuntu-${{ steps.week.outputs.week }}
@@ -847,7 +847,7 @@ jobs:
       worker_image: ${{ steps.images.outputs.worker_image }}
       clamav_image: ${{ steps.images.outputs.clamav_image }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Azure Login (OIDC)
         uses: azure/login@532459ea530d8321f2fb9bb10d1e0bcf23869a43 # v3.0.0
@@ -871,7 +871,7 @@ jobs:
           az acr login --name "${PREFIX}acr"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
 
       - name: Week number for cache rotation
         id: week
@@ -879,7 +879,7 @@ jobs:
         run: echo "week=$(date +%Y-W%V)" >> "$GITHUB_OUTPUT"
 
       - name: Cache Trivy DB
-        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v5
         with:
           path: ~/.cache/trivy
           key: trivy-db-ubuntu-${{ steps.week.outputs.week }}
